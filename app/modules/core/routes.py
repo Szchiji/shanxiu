@@ -1163,9 +1163,18 @@ async def on_message(update: Update, context):
                         kw = txt[len(cmd):].strip()
                         is_search = True
                         break
+                # Check if there's an auto-reply trigger before treating as query keyword
                 if not is_search and 0 < len(txt) < 15 and not txt.startswith('/'):
-                    kw = txt
-                    is_search = True
+                    # Check if this text matches any auto-reply trigger
+                    has_auto_reply = AutoReply.query.filter_by(
+                        group_id=group.id,
+                        trigger_keyword=txt,
+                        is_active=True
+                    ).first() is not None
+                    
+                    if not has_auto_reply:
+                        kw = txt
+                        is_search = True
             
             if is_search:
                 fields = get_group_fields(group)

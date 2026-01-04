@@ -136,11 +136,25 @@ def page_users(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    users = GroupUser.query.filter_by(group_id=gid).order_by(GroupUser.id.desc()).limit(200).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 50), 50)
+    if per_page not in [20, 50, 100] or per_page <= 0: per_page = 50
+    if page < 1: page = 1
+    
+    # Get total count and paginated users
+    total_users = GroupUser.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_users / per_page) if total_users > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    users = GroupUser.query.filter_by(group_id=gid).order_by(GroupUser.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     for u in users:
         try: u.profile_dict = json.loads(u.profile_data) if u.profile_data else {}
         except: u.profile_dict = {}
-    return render_template('users.html', page='users', group=group, users=users, fields=get_group_fields(group))
+    
+    return render_template('users.html', page='users', group=group, users=users, fields=get_group_fields(group), 
+                         current_page=page, total_pages=total_pages, per_page=per_page, total_users=total_users)
 
 @core_bp.route('/group/<int:gid>/fields')
 def page_fields(gid):
@@ -877,7 +891,9 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
                     lines.append(re.sub(r'\{.*?\}', '', l))
                 except: continue
                 
+            # Add page number display at the end of text
             text = header + "\n\n" + "\n".join(lines)
+            text = text + f"\n\n📄 第 {page}/{total_pages} 页"
             
             # Sanitize HTML before sending to Telegram
             text = sanitize_html_for_telegram(text)
@@ -885,9 +901,8 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
             buttons = []
             nav_row = []
             safe_kw = kw if kw else "None"
-            if page > 1: nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"pg|{page-1}|{safe_kw}"))
-            nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
-            if page < total_pages: nav_row.append(InlineKeyboardButton("➡️", callback_data=f"pg|{page+1}|{safe_kw}"))
+            if page > 1: nav_row.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"pg|{page-1}|{safe_kw}"))
+            if page < total_pages: nav_row.append(InlineKeyboardButton("下一页 ➡️", callback_data=f"pg|{page+1}|{safe_kw}"))
             if nav_row: buttons.append(nav_row)
             
             custom_btns = conf.get('custom_buttons', '')

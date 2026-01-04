@@ -6,10 +6,13 @@
     #editor { 
         white-space: pre-wrap; 
         overflow-wrap: break-word;
-        min-height: 150px;
-        max-height: 500px;
+        min-height: 200px;
+        max-height: 400px;
         overflow-y: auto;
-        line-height: 1.6;
+        line-height: 1.8;
+        font-size: 14px;
+        font-family: 'Courier New', Consolas, monospace;
+        tab-size: 2;
     }
     .section-title { font-size: 0.85rem; font-weight: 700; color: #6c757d; text-transform: uppercase; margin-bottom: 0.5rem; }
     
@@ -251,7 +254,7 @@
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                 </div>
                 
-                <textarea id="editor" class="editor-content form-control" rows="10" style="border-radius: 0 0 10px 10px; min-height: 250px; padding: 1.5rem; background: white; font-family: monospace; line-height: 1.6;"></textarea>
+                <textarea id="editor" class="editor-content form-control" rows="12" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></textarea>
                 
                 <div class="p-3 border-top bg-light text-end">
                     <button class="btn btn-secondary" onclick="saveTmp()">

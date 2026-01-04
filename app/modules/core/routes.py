@@ -1150,8 +1150,8 @@ async def on_message(update: Update, context):
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
 
-            # 3. 自动回复检查 (优先级高于查询)
-            # Check for auto-reply first to avoid conflicts with query
+            # 3. 自动回复检查 (可与查询一起触发)
+            # Check for auto-reply, then continue to query check (both can trigger)
             auto_reply = AutoReply.query.filter_by(
                 group_id=group.id,
                 trigger_keyword=txt,
@@ -1206,7 +1206,7 @@ async def on_message(update: Update, context):
                         )
                 except Exception as e:
                     print(f"Auto reply error: {e}")
-                return
+                # Continue to check for query functionality instead of returning
             
             # 4. 查询功能
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]

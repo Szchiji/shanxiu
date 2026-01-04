@@ -114,6 +114,40 @@
             text-align: center;
         }
         
+        /* Dropdown menu styles for sidebar */
+        .sidebar .dropdown-menu {
+            background: rgba(45, 55, 72, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-left: 10px;
+            margin-right: 10px;
+            border-radius: 8px;
+        }
+        
+        .sidebar .dropdown-item {
+            color: rgba(255, 255, 255, 0.7);
+            padding: 10px 15px;
+            transition: all 0.3s ease;
+            border-radius: 6px;
+            margin: 2px 5px;
+        }
+        
+        .sidebar .dropdown-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            transform: translateX(3px);
+        }
+        
+        .sidebar .dropdown-item.active {
+            background: var(--primary-gradient);
+            color: #fff;
+        }
+        
+        .sidebar .dropdown-item i {
+            margin-right: 8px;
+            width: 18px;
+            text-align: center;
+        }
+        
         .sidebar-heading {
             color: rgba(255, 255, 255, 0.5);
             font-size: 0.75rem;
@@ -121,6 +155,9 @@
             letter-spacing: 1px;
             padding: 20px 20px 10px;
             font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         
         /* Responsive sidebar improvements */
@@ -283,7 +320,7 @@
 </head>
 <body>
     <header class="navbar navbar-dark sticky-top bg-dark flex-md-nowrap p-0 shadow">
-        <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="#">
+        <a class="navbar-brand col-md-2 col-lg-1 me-0 px-3" href="#">
             {% if session.get('logged_in') %}
             <button class="sidebar-toggle d-md-none me-2" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation">
                 <i class="fas fa-bars"></i>
@@ -304,11 +341,11 @@
         <div class="row">
             <!-- ⚡️ 修复点：无论登录状态，侧边栏始终显示，提供切换功能 -->
             {% if session.get('logged_in') %}
-            <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
+            <nav id="sidebarMenu" class="col-md-2 col-lg-1 d-md-block sidebar collapse">
                 <div class="position-sticky pt-3">
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
-                            <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title[:20] }}{% if current_group.title|length > 20 %}...{% endif %}
+                            <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title }}
                         {% else %}
                             <i class="fa-solid fa-circle text-warning" style="font-size: 8px;"></i> 未选择群组
                         {% endif %}
@@ -320,20 +357,29 @@
                                 <i class="fa-solid fa-chart-line"></i> 数据概览
                             </a>
                         </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/users" class="nav-link {% if page == 'users' %}active{% endif %}">
-                                <i class="fa-solid fa-users"></i> 用户管理
+                        <!-- Dropdown for management features -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'fields', 'settings'] %}active{% endif %}" 
+                               id="managementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-cog"></i> 管理功能
                             </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/fields" class="nav-link {% if page == 'fields' %}active{% endif %}">
-                                <i class="fa-solid fa-list-check"></i> 资料字段
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/settings" class="nav-link {% if page == 'settings' %}active{% endif %}">
-                                <i class="fa-solid fa-sliders"></i> 功能配置
-                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="managementDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/users" class="dropdown-item {% if page == 'users' %}active{% endif %}">
+                                        <i class="fa-solid fa-users"></i> 用户管理
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-sliders"></i> 功能配置
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/fields" class="dropdown-item {% if page == 'fields' %}active{% endif %}">
+                                        <i class="fa-solid fa-list-check"></i> 资料字段
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         {% endif %}
                         <li class="nav-item">
@@ -346,7 +392,7 @@
             </nav>
             {% endif %}
 
-            <main class="{% if session.get('logged_in') %}col-md-9 ms-sm-auto col-lg-10{% else %}col-md-12 ms-sm-auto col-lg-12{% endif %} px-md-4">
+            <main class="{% if session.get('logged_in') %}col-md-10 ms-sm-auto col-lg-11{% else %}col-md-12 ms-sm-auto col-lg-12{% endif %} px-md-4">
                 {% block content %}{% endblock %}
             </main>
         </div>

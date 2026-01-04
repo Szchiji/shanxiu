@@ -843,6 +843,7 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
                 header = conf.get('msg_query_header', '🔍 <b>今日在线：</b>')
                 
             # Requirement 4: Sort by check-in time (earliest first)
+            # Note: We're filtering by checkin_time >= today, so NULL values are already excluded
             users = base.order_by(GroupUser.checkin_time.asc()).all()
             if not users: return None, None, None
             

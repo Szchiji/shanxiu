@@ -155,6 +155,9 @@
             letter-spacing: 1px;
             padding: 20px 20px 10px;
             font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         
         /* Responsive sidebar improvements */
@@ -342,7 +345,7 @@
                 <div class="position-sticky pt-3">
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
-                            <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title[:15] }}{% if current_group.title|length > 15 %}...{% endif %}
+                            <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title }}
                         {% else %}
                             <i class="fa-solid fa-circle text-warning" style="font-size: 8px;"></i> 未选择群组
                         {% endif %}

@@ -30,6 +30,10 @@ def fix_database_schema(app):
                 except: pass
                 try: conn.execute(text("ALTER TABLE group_users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE"))
                 except: pass
+                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)"))
+                except: pass
+                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)"))
+                except: pass
                 conn.commit()
             print("✅ [后台] 数据库结构检查完成", flush=True)
         except Exception as e:

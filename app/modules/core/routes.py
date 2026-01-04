@@ -757,8 +757,17 @@ async def on_message(update: Update, context):
                                 )
                             except Exception as e:
                                 print(f"Failed to ban user {user.id}: {e}")
+                        # Send expiration notification privately to the user, not to the group
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期'))
-                        await msg.reply_html(msg_text)
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user.id,
+                                text=msg_text,
+                                parse_mode='HTML'
+                            )
+                        except Exception as e:
+                            # If private message fails, just log the error - don't send to group
+                            print(f"Failed to send expiration notification to user {user.id}: {e}")
                     else:
                         # Check if user has already checked in today
                         today = get_beijing_today()

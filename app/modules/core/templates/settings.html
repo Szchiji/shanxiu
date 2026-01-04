@@ -251,7 +251,7 @@
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                 </div>
                 
-                <div id="editor" class="editor-content" contenteditable="true"></div>
+                <textarea id="editor" class="editor-content form-control" rows="10" style="border-radius: 0 0 10px 10px; min-height: 250px; padding: 1.5rem; background: white; font-family: monospace; line-height: 1.6;"></textarea>
                 
                 <div class="p-3 border-top bg-light text-end">
                     <button class="btn btn-secondary" onclick="saveTmp()">
@@ -318,38 +318,83 @@
 
     function loadMsg() { 
         if(!msgs.msg_filter_header) msgs.msg_filter_header = "🔍 <b>筛选结果：</b>\n";
-        document.getElementById('editor').innerHTML = msgs[document.getElementById('msgSelector').value] || ''; 
+        document.getElementById('editor').value = msgs[document.getElementById('msgSelector').value] || ''; 
     }
     
     function saveTmp() { 
-        let content = document.getElementById('editor').innerHTML;
-        content = content.replace(/&nbsp;/g, ' '); 
+        let content = document.getElementById('editor').value;
         msgs[document.getElementById('msgSelector').value] = content;
         const btn = document.querySelector('.btn-secondary');
         btn.innerHTML = '已暂存'; setTimeout(() => btn.innerHTML = '暂存', 500);
     }
     
-    function cmd(c,v){ document.getElementById('editor').focus(); document.execCommand(c,false,v); }
+    function cmd(c,v){ 
+        const editor = document.getElementById('editor');
+        editor.focus();
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const text = editor.value;
+        const selected = text.substring(start, end);
+        
+        // Helper function to wrap selected text with HTML tags
+        function wrapWithTag(openTag, closeTag) {
+            editor.value = text.substring(0, start) + openTag + selected + closeTag + text.substring(end);
+            editor.selectionStart = start + openTag.length;
+            editor.selectionEnd = end + openTag.length;
+        }
+        
+        if (c === 'bold') {
+            wrapWithTag('<b>', '</b>');
+        } else if (c === 'italic') {
+            wrapWithTag('<i>', '</i>');
+        } else if (c === 'underline') {
+            wrapWithTag('<u>', '</u>');
+        } else if (c === 'strikethrough') {
+            wrapWithTag('<s>', '</s>');
+        } else if (c === 'insertUnorderedList') {
+            const lines = selected.split('\n').map(line => '• ' + line).join('\n');
+            editor.value = text.substring(0, start) + lines + text.substring(end);
+        } else if (c === 'unlink') {
+            // Remove HTML link tags from selection
+            const cleaned = selected.replace(/<a[^>]*>(.*?)<\/a>/gi, '$1');
+            editor.value = text.substring(0, start) + cleaned + text.substring(end);
+            editor.selectionStart = start;
+            editor.selectionEnd = start + cleaned.length;
+        } else if (c === 'removeFormat') {
+            const cleaned = selected.replace(/<[^>]*>/g, '');
+            editor.value = text.substring(0, start) + cleaned + text.substring(end);
+            editor.selectionStart = start;
+            editor.selectionEnd = start + cleaned.length;
+        }
+        editor.focus();
+    }
     
     function insert(text, e) {
         e.preventDefault();
-        const sel = window.getSelection();
-        if (sel.rangeCount > 0) {
-            const range = sel.getRangeAt(0);
-            range.deleteContents();
-            const textNode = document.createTextNode(text);
-            range.insertNode(textNode);
-            range.setStartAfter(textNode);
-            range.setEndAfter(textNode);
-            sel.removeAllRanges();
-            sel.addRange(range);
-        } else {
-             document.getElementById('editor').focus();
-             cmd('insertText', text);
-        }
+        const editor = document.getElementById('editor');
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const value = editor.value;
+        
+        editor.value = value.substring(0, start) + text + value.substring(end);
+        editor.selectionStart = editor.selectionEnd = start + text.length;
+        editor.focus();
     }
     
-    function link(){ let u=prompt('URL:'); if(u) cmd('createLink',u); }
+    function link(){ 
+        const editor = document.getElementById('editor');
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const selected = editor.value.substring(start, end);
+        let u = prompt('URL:'); 
+        if(u) {
+            const linkText = selected || 'link';
+            const link = '<a href="' + u + '">' + linkText + '</a>';
+            editor.value = editor.value.substring(0, start) + link + editor.value.substring(end);
+            editor.selectionStart = editor.selectionEnd = start + link.length;
+            editor.focus();
+        }
+    }
     
     function saveSettings() {
         saveTmp(); 

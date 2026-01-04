@@ -29,7 +29,7 @@ def fix_database_schema(app):
             # Auto replies table columns
             "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
             "CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)",
-            "ALTER TABLE auto_replies ADD COLUMN trigger_keyword VARCHAR(255)",
+            "ALTER TABLE auto_replies ADD COLUMN trigger_keyword VARCHAR(255) NOT NULL DEFAULT ''",
             "ALTER TABLE auto_replies ADD COLUMN media_type VARCHAR(20) DEFAULT 'text'",
             "ALTER TABLE auto_replies ADD COLUMN media_url TEXT",
             "ALTER TABLE auto_replies ADD COLUMN content TEXT",

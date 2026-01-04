@@ -21,30 +21,30 @@ def init_database(app):
 def fix_database_schema(app):
     """Add missing columns to existing tables (synchronous, runs before server starts)."""
     with app.app_context():
-        try:
-            with db.engine.connect() as conn:
-                try: conn.execute(text("ALTER TABLE bot_groups ADD COLUMN last_query_msg_id INTEGER"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE group_users ADD COLUMN expiration_date TIMESTAMP"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE group_users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)"))
-                except: pass
-                try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-                except: pass
-                try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-                except: pass
-                conn.commit()
-            print("✅ 数据库结构检查完成", flush=True)
-        except Exception as e:
-            print(f"⚠️ 数据库检查跳过: {e}", flush=True)
+        # List of ALTER TABLE statements to execute
+        alter_statements = [
+            "ALTER TABLE bot_groups ADD COLUMN last_query_msg_id INTEGER",
+            "ALTER TABLE group_users ADD COLUMN expiration_date TIMESTAMP",
+            "ALTER TABLE group_users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
+            "CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)",
+            "ALTER TABLE auto_replies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE auto_replies ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        ]
+        
+        # Execute each statement in its own transaction to handle PostgreSQL properly
+        for stmt in alter_statements:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(stmt))
+                    conn.commit()
+            except Exception:
+                # Column/index likely already exists, which is fine
+                pass
+        
+        print("✅ 数据库结构检查完成", flush=True)
 
 def run_flask():
     port = int(os.getenv('PORT', 5000))

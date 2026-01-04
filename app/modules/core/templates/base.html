@@ -144,14 +144,20 @@
         .sidebar-toggle {
             border: none;
             background-color: transparent;
-            color: rgba(255, 255, 255, 0.55);
-            padding: 0.25rem 0.75rem;
-            font-size: 1.25rem;
+            color: rgba(255, 255, 255, 0.8);
+            padding: 0.25rem 0.5rem;
+            font-size: 1.1rem;
             line-height: 1;
+            cursor: pointer;
         }
         
         .sidebar-toggle:hover {
-            color: rgba(255, 255, 255, 0.75);
+            color: rgba(255, 255, 255, 1);
+        }
+        
+        .navbar-brand {
+            display: flex;
+            align-items: center;
         }
         
         /* Enhanced cards */
@@ -277,12 +283,14 @@
 </head>
 <body>
     <header class="navbar navbar-dark sticky-top bg-dark flex-md-nowrap p-0 shadow">
-        <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="#">Bot Manager</a>
-        {% if session.get('logged_in') %}
-        <button class="sidebar-toggle d-md-none" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation">
-            <i class="fas fa-bars"></i>
-        </button>
-        {% endif %}
+        <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="#">
+            {% if session.get('logged_in') %}
+            <button class="sidebar-toggle d-md-none me-2" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation">
+                <i class="fas fa-bars"></i>
+            </button>
+            {% endif %}
+            <span>Bot Manager</span>
+        </a>
         <div class="navbar-nav">
             <div class="nav-item text-nowrap">
                 {% if session.get('logged_in') %}

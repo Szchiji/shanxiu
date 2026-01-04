@@ -16,6 +16,7 @@
             --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
             --hover-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
             --transition-speed: 0.3s;
+            --sidebar-width: 180px;
         }
         
         /* Transition for interactive elements only */
@@ -38,6 +39,9 @@
             padding: 48px 0 0; 
             background: var(--sidebar-bg);
             box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+            width: var(--sidebar-width);
+            flex: 0 0 var(--sidebar-width);
+            max-width: var(--sidebar-width);
         }
         
         .sidebar-sticky { 
@@ -74,6 +78,9 @@
             background: var(--primary-gradient);
             box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
             letter-spacing: 0.5px;
+            width: var(--sidebar-width);
+            flex: 0 0 var(--sidebar-width);
+            max-width: var(--sidebar-width);
         }
         
         .navbar .navbar-toggler { 
@@ -84,6 +91,16 @@
         main { 
             padding-top: 30px; 
             padding-bottom: 30px;
+        }
+        
+        /* Main content area with sidebar */
+        @media (min-width: 768px) {
+            main.col-md-9 {
+                margin-left: var(--sidebar-width) !important;
+                width: calc(100% - var(--sidebar-width));
+                max-width: calc(100% - var(--sidebar-width));
+                flex: 0 0 calc(100% - var(--sidebar-width));
+            }
         }
         
         /* Enhanced sidebar navigation */

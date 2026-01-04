@@ -14,6 +14,10 @@
         font-family: 'Courier New', Consolas, monospace;
         tab-size: 2;
     }
+    #editor a {
+        color: #007bff;
+        text-decoration: underline;
+    }
     .section-title { font-size: 0.85rem; font-weight: 700; color: #6c757d; text-transform: uppercase; margin-bottom: 0.5rem; }
     
     .settings-header {
@@ -254,7 +258,7 @@
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                 </div>
                 
-                <textarea id="editor" class="editor-content form-control" rows="12" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></textarea>
+                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
                 
                 <div class="p-3 border-top bg-light text-end">
                     <button class="btn btn-secondary" onclick="saveTmp()">
@@ -319,13 +323,40 @@
     function delBtn(i) { btnData.splice(i, 1); renderBtns(); }
     function updateBtn(i, key, val) { btnData[i][key] = val; }
 
+    // Convert stored template (with \n) to contenteditable HTML format
+    function templateToHtml(text) {
+        if (!text) return '';
+        // Split by newlines and wrap each line in a div
+        // First line is rendered as-is, subsequent lines are in divs
+        const lines = text.split('\n');
+        if (lines.length === 1) return text;
+        return lines[0] + lines.slice(1).map(line => '<div>' + (line || '<br>') + '</div>').join('');
+    }
+    
+    // Convert contenteditable HTML to template format (with \n)
+    function htmlToTemplate(html) {
+        if (!html) return '';
+        // Replace <div> tags with newlines
+        let text = html.replace(/<div><br><\/div>/gi, '\n');
+        text = text.replace(/<div>/gi, '\n');
+        text = text.replace(/<\/div>/gi, '');
+        // Replace <br> tags with newlines
+        text = text.replace(/<br\s*\/?>/gi, '\n');
+        // Clean up multiple consecutive newlines (but keep at least one)
+        text = text.replace(/\n\n+/g, '\n\n');
+        return text;
+    }
+
     function loadMsg() { 
         if(!msgs.msg_filter_header) msgs.msg_filter_header = "🔍 <b>筛选结果：</b>\n";
-        document.getElementById('editor').value = msgs[document.getElementById('msgSelector').value] || ''; 
+        const content = msgs[document.getElementById('msgSelector').value] || '';
+        document.getElementById('editor').innerHTML = templateToHtml(content); 
     }
     
     function saveTmp() { 
-        let content = document.getElementById('editor').value;
+        let content = document.getElementById('editor').innerHTML;
+        // Convert contenteditable HTML format back to template format with newlines
+        content = htmlToTemplate(content);
         msgs[document.getElementById('msgSelector').value] = content;
         const btn = document.querySelector('.btn-secondary');
         btn.innerHTML = '已暂存'; setTimeout(() => btn.innerHTML = '暂存', 500);
@@ -334,68 +365,24 @@
     function cmd(c,v){ 
         const editor = document.getElementById('editor');
         editor.focus();
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        const text = editor.value;
-        const selected = text.substring(start, end);
-        
-        // Helper function to wrap selected text with HTML tags
-        function wrapWithTag(openTag, closeTag) {
-            editor.value = text.substring(0, start) + openTag + selected + closeTag + text.substring(end);
-            editor.selectionStart = start + openTag.length;
-            editor.selectionEnd = end + openTag.length;
-        }
-        
-        if (c === 'bold') {
-            wrapWithTag('<b>', '</b>');
-        } else if (c === 'italic') {
-            wrapWithTag('<i>', '</i>');
-        } else if (c === 'underline') {
-            wrapWithTag('<u>', '</u>');
-        } else if (c === 'strikethrough') {
-            wrapWithTag('<s>', '</s>');
-        } else if (c === 'insertUnorderedList') {
-            const lines = selected.split('\n').map(line => '• ' + line).join('\n');
-            editor.value = text.substring(0, start) + lines + text.substring(end);
-        } else if (c === 'unlink') {
-            // Remove HTML link tags from selection
-            const cleaned = selected.replace(/<a[^>]*>(.*?)<\/a>/gi, '$1');
-            editor.value = text.substring(0, start) + cleaned + text.substring(end);
-            editor.selectionStart = start;
-            editor.selectionEnd = start + cleaned.length;
-        } else if (c === 'removeFormat') {
-            const cleaned = selected.replace(/<[^>]*>/g, '');
-            editor.value = text.substring(0, start) + cleaned + text.substring(end);
-            editor.selectionStart = start;
-            editor.selectionEnd = start + cleaned.length;
-        }
-        editor.focus();
+        document.execCommand(c, false, v);
     }
     
     function insert(text, e) {
         e.preventDefault();
         const editor = document.getElementById('editor');
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        const value = editor.value;
-        
-        editor.value = value.substring(0, start) + text + value.substring(end);
-        editor.selectionStart = editor.selectionEnd = start + text.length;
         editor.focus();
+        document.execCommand('insertText', false, text);
     }
     
     function link(){ 
         const editor = document.getElementById('editor');
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        const selected = editor.value.substring(start, end);
+        editor.focus();
+        const selection = window.getSelection();
+        const selected = selection.toString();
         let u = prompt('URL:'); 
         if(u) {
-            const linkText = selected || 'link';
-            const link = '<a href="' + u + '">' + linkText + '</a>';
-            editor.value = editor.value.substring(0, start) + link + editor.value.substring(end);
-            editor.selectionStart = editor.selectionEnd = start + link.length;
-            editor.focus();
+            document.execCommand('createLink', false, u);
         }
     }
     

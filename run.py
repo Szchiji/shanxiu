@@ -33,6 +33,14 @@ def fix_database_schema(app):
                 except: pass
                 try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)"))
                 except: pass
+                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                except: pass
+                try: conn.execute(text("ALTER TABLE auto_replies ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                except: pass
+                try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                except: pass
+                try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+                except: pass
                 conn.commit()
             print("✅ 数据库结构检查完成", flush=True)
         except Exception as e:

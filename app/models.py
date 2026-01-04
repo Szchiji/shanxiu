@@ -39,6 +39,48 @@ class AuthSession(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
     expires_at = db.Column(db.DateTime)
 
+class AutoReply(db.Model):
+    """自动回复规则"""
+    __tablename__ = 'auto_replies'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    trigger_keyword = db.Column(db.String(255), nullable=False)  # 触发关键词
+    media_type = db.Column(db.String(20), default='text')  # text, image, video
+    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
+    content = db.Column(db.Text, nullable=True)  # 富文本内容
+    links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
+    delete_after = db.Column(db.Integer, default=0)  # 删除上一条消息的时间(秒)，0表示不删除
+    remark = db.Column(db.Text, nullable=True)  # 备注
+    is_active = db.Column(db.Boolean, default=True)  # 是否启用
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='auto_replies', lazy=True)
+
+
+class ScheduledMessage(db.Model):
+    """定时消息"""
+    __tablename__ = 'scheduled_messages'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    media_type = db.Column(db.String(20), default='text')  # text, image, video
+    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
+    content = db.Column(db.Text, nullable=True)  # 富文本内容
+    links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
+    repeat_interval = db.Column(db.Integer, default=0)  # 重复间隔(分钟)，0表示不重复
+    delete_previous = db.Column(db.Boolean, default=False)  # 是否删除上一条
+    last_message_id = db.Column(db.BigInteger, nullable=True)  # 上一条消息ID，用于删除
+    start_time = db.Column(db.DateTime, nullable=True)  # 开始时间
+    stop_time = db.Column(db.DateTime, nullable=True)  # 停止时间
+    remark = db.Column(db.Text, nullable=True)  # 备注
+    is_active = db.Column(db.Boolean, default=True)  # 是否启用
+    last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='scheduled_messages', lazy=True)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

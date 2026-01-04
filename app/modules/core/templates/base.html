@@ -398,6 +398,25 @@
                                 </li>
                             </ul>
                         </li>
+                        <!-- Dropdown for automation features -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['auto_replies', 'scheduled_messages'] %}active{% endif %}" 
+                               id="automationDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-robot"></i> 自动化
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="automationDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/auto_replies" class="dropdown-item {% if page == 'auto_replies' %}active{% endif %}">
+                                        <i class="fa-solid fa-reply"></i> 自动回复
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="dropdown-item {% if page == 'scheduled_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-clock"></i> 定时消息
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
                         {% endif %}
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">

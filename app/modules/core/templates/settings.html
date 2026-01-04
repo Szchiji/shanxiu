@@ -334,35 +334,37 @@
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
         const text = editor.value;
+        const selected = text.substring(start, end);
+        
+        // Helper function to wrap selected text with HTML tags
+        function wrapWithTag(openTag, closeTag) {
+            editor.value = text.substring(0, start) + openTag + selected + closeTag + text.substring(end);
+            editor.selectionStart = start + openTag.length;
+            editor.selectionEnd = end + openTag.length;
+        }
         
         if (c === 'bold') {
-            const selected = text.substring(start, end);
-            editor.value = text.substring(0, start) + '<b>' + selected + '</b>' + text.substring(end);
-            editor.selectionStart = start + 3;
-            editor.selectionEnd = end + 3;
+            wrapWithTag('<b>', '</b>');
         } else if (c === 'italic') {
-            const selected = text.substring(start, end);
-            editor.value = text.substring(0, start) + '<i>' + selected + '</i>' + text.substring(end);
-            editor.selectionStart = start + 3;
-            editor.selectionEnd = end + 3;
+            wrapWithTag('<i>', '</i>');
         } else if (c === 'underline') {
-            const selected = text.substring(start, end);
-            editor.value = text.substring(0, start) + '<u>' + selected + '</u>' + text.substring(end);
-            editor.selectionStart = start + 3;
-            editor.selectionEnd = end + 3;
+            wrapWithTag('<u>', '</u>');
         } else if (c === 'strikethrough') {
-            const selected = text.substring(start, end);
-            editor.value = text.substring(0, start) + '<s>' + selected + '</s>' + text.substring(end);
-            editor.selectionStart = start + 3;
-            editor.selectionEnd = end + 3;
+            wrapWithTag('<s>', '</s>');
         } else if (c === 'insertUnorderedList') {
-            const selected = text.substring(start, end);
             const lines = selected.split('\n').map(line => '• ' + line).join('\n');
             editor.value = text.substring(0, start) + lines + text.substring(end);
+        } else if (c === 'unlink') {
+            // Remove HTML link tags from selection
+            const cleaned = selected.replace(/<a[^>]*>(.*?)<\/a>/gi, '$1');
+            editor.value = text.substring(0, start) + cleaned + text.substring(end);
+            editor.selectionStart = start;
+            editor.selectionEnd = start + cleaned.length;
         } else if (c === 'removeFormat') {
-            const selected = text.substring(start, end);
             const cleaned = selected.replace(/<[^>]*>/g, '');
             editor.value = text.substring(0, start) + cleaned + text.substring(end);
+            editor.selectionStart = start;
+            editor.selectionEnd = start + cleaned.length;
         }
         editor.focus();
     }

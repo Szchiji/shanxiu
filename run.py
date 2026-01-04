@@ -8,11 +8,21 @@ from sqlalchemy import text
 
 app = create_app()
 
-def fix_database_schema(app):
-    time.sleep(3)
+def init_database(app):
+    """Initialize database tables synchronously on startup."""
     with app.app_context():
         try:
             db.create_all()
+            print("✅ 数据库表初始化完成", flush=True)
+        except Exception as e:
+            print(f"❌ 数据库初始化失败: {e}", flush=True)
+            raise
+
+def fix_database_schema(app):
+    """Add missing columns to existing tables (background task)."""
+    time.sleep(3)
+    with app.app_context():
+        try:
             with db.engine.connect() as conn:
                 try: conn.execute(text("ALTER TABLE bot_groups ADD COLUMN last_query_msg_id INTEGER"))
                 except: pass
@@ -52,20 +62,23 @@ if __name__ == '__main__':
     mode = "Webhook" if domain else "Polling"
     print(f"🚀 系统启动中 ({mode} 模式)...", flush=True)
 
-    # 1. 启动 Web (Flask)
+    # 1. 初始化数据库表 (同步执行，确保表存在后再启动服务)
+    init_database(app)
+    
+    # 2. 启动 Web (Flask)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # 2. 数据库修复
+    # 3. 数据库修复 (后台添加缺失列)
     db_thread = threading.Thread(target=fix_database_schema, args=(app,), daemon=True)
     db_thread.start()
     
-    # 3. 启动机器人 (在独立线程中跑 loop_forever)
+    # 4. 启动机器人 (在独立线程中跑 loop_forever)
     # ⚡️ 修复点：将 app 传入机器人线程
     bot_thread = threading.Thread(target=start_bot_process_forever, args=(app,), daemon=True)
     bot_thread.start()
     
-    # 4. 主线程死循环保活
+    # 5. 主线程死循环保活
     try:
         while True:
             time.sleep(3600)

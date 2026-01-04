@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-    .btn-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
-    .btn-row .form-control { flex: 1; }
+    .btn-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+    .btn-row .form-control { flex: 1; min-width: 150px; }
     #editor { 
         white-space: pre-wrap; 
         overflow-wrap: break-word;
@@ -10,44 +10,104 @@
         max-height: 400px;
         overflow-y: auto;
         line-height: 1.8;
-        font-size: 14px;
+        font-size: 0.8rem;
         font-family: 'Courier New', Consolas, monospace;
         tab-size: 2;
     }
+    
+    @media (min-width: 768px) {
+        #editor {
+            font-size: 0.9rem;
+        }
+    }
+    
     #editor a {
         color: #007bff;
         text-decoration: underline;
     }
-    .section-title { font-size: 0.85rem; font-weight: 700; color: #6c757d; text-transform: uppercase; margin-bottom: 0.5rem; }
+    .section-title { 
+        font-size: 0.75rem; 
+        font-weight: 700; 
+        color: #6c757d; 
+        text-transform: uppercase; 
+        margin-bottom: 0.5rem; 
+    }
+    
+    @media (min-width: 768px) {
+        .section-title {
+            font-size: 0.85rem;
+        }
+    }
     
     .settings-header {
         background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
         color: white;
-        padding: 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(79, 172, 254, 0.3);
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header {
+            padding: 1.5rem 2rem;
+            border-radius: 15px;
+            margin-bottom: 2rem;
+        }
+    }
+    
+    .settings-header h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header h4 {
+            font-size: 1.5rem;
+        }
+    }
+    
+    .settings-header p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header p {
+            font-size: 1rem;
+        }
     }
     
     .config-card {
-        border-radius: 15px;
+        border-radius: 12px;
         border: none;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
         transition: all 0.3s ease;
     }
     
+    @media (min-width: 768px) {
+        .config-card {
+            border-radius: 15px;
+        }
+    }
+    
     .config-card:hover {
-        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
-        transform: translateY(-5px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
     }
     
     .config-section {
         background: white;
-        border-radius: 12px;
-        padding: 1.5rem;
+        border-radius: 10px;
+        padding: 1rem;
         margin-bottom: 1rem;
         border: 2px solid #f0f0f0;
         transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .config-section {
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
     }
     
     .config-section:hover {
@@ -58,21 +118,40 @@
     .editor-toolbar {
         background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         border-bottom: 2px solid #e0e0e0;
-        padding: 1rem;
+        padding: 0.75rem;
         border-radius: 10px 10px 0 0;
+    }
+    
+    @media (min-width: 768px) {
+        .editor-toolbar {
+            padding: 1rem;
+        }
     }
     
     .editor-content {
         border-radius: 0 0 10px 10px;
         min-height: 250px;
-        padding: 1.5rem;
+        padding: 1rem;
         background: white;
     }
     
+    @media (min-width: 768px) {
+        .editor-content {
+            padding: 1.5rem;
+        }
+    }
+    
     .form-switch .form-check-input {
-        width: 3em;
-        height: 1.5em;
+        width: 2.5em;
+        height: 1.25em;
         cursor: pointer;
+    }
+    
+    @media (min-width: 768px) {
+        .form-switch .form-check-input {
+            width: 3em;
+            height: 1.5em;
+        }
     }
     
     .form-switch .form-check-input:checked {
@@ -81,43 +160,97 @@
     }
     
     .template-selector {
-        border-radius: 10px;
+        border-radius: 8px;
         border: 2px solid #4facfe;
-        padding: 0.6rem 1rem;
+        padding: 0.5rem 0.75rem;
         font-weight: 600;
         background: white;
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .template-selector {
+            border-radius: 10px;
+            padding: 0.6rem 1rem;
+            font-size: 0.9rem;
+        }
     }
     
     .btn-toolbar-action {
         border: none;
         background: white;
-        padding: 0.5rem 0.8rem;
-        border-radius: 8px;
+        padding: 0.4rem 0.6rem;
+        border-radius: 6px;
         transition: all 0.3s ease;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .btn-toolbar-action {
+            padding: 0.5rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
     }
     
     .btn-toolbar-action:hover {
         background: #4facfe;
         color: white;
-        transform: scale(1.1);
+        transform: scale(1.05);
     }
     
     .badge-variable {
         cursor: pointer;
         transition: all 0.3s ease;
-        padding: 0.5rem 1rem;
+        padding: 0.4rem 0.75rem;
         font-weight: 600;
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .badge-variable {
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+        }
     }
     
     .badge-variable:hover {
-        transform: scale(1.1);
+        transform: scale(1.05);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .form-control {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+    }
+    
+    @media (min-width: 768px) {
+        .form-control {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
+    }
+    
+    .btn {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+    }
+    
+    @media (min-width: 768px) {
+        .btn {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
     }
 </style>
 
 <div class="settings-header">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-sliders me-2"></i>功能配置</h4>
             <p class="mb-0 opacity-75">{{ group.title }} - 配置机器人行为和界面</p>

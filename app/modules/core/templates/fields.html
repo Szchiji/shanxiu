@@ -4,20 +4,68 @@
     .page-header-fields {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         color: white;
-        padding: 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(240, 147, 251, 0.3);
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 20px rgba(240, 147, 251, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .page-header-fields {
+            padding: 1.5rem 2rem;
+            border-radius: 15px;
+            margin-bottom: 2rem;
+        }
+    }
+    
+    .page-header-fields h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header-fields h4 {
+            font-size: 1.5rem;
+        }
+    }
+    
+    .page-header-fields p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header-fields p {
+            font-size: 1rem;
+        }
+    }
+    
+    .btn {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .btn {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+        }
     }
     
     .field-item {
         background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
         border: 2px solid #e0e0e0;
-        border-radius: 15px;
-        padding: 1.5rem;
+        border-radius: 12px;
+        padding: 1rem;
         margin-bottom: 1rem;
         transition: all 0.3s ease;
         animation: slideIn 0.5s ease-out;
+    }
+    
+    @media (min-width: 768px) {
+        .field-item {
+            border-radius: 15px;
+            padding: 1.5rem;
+        }
     }
     
     @keyframes slideIn {
@@ -41,10 +89,17 @@
         border: 2px dashed #f093fb;
         background: transparent;
         color: #f093fb;
-        padding: 1.5rem;
-        border-radius: 15px;
+        padding: 1rem;
+        border-radius: 12px;
         transition: all 0.3s ease;
         font-weight: 600;
+    }
+    
+    @media (min-width: 768px) {
+        .add-field-btn {
+            padding: 1.5rem;
+            border-radius: 15px;
+        }
     }
     
     .add-field-btn:hover {
@@ -56,18 +111,49 @@
     
     .delete-field-btn {
         transition: all 0.3s ease;
+        font-size: 1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .delete-field-btn {
+            font-size: 1.2rem;
+        }
     }
     
     .delete-field-btn:hover {
         transform: rotate(90deg) scale(1.2);
     }
+    
+    .form-control {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+    }
+    
+    @media (min-width: 768px) {
+        .form-control {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
+    }
+    
+    label.small {
+        font-size: 0.75rem;
+    }
+    
+    @media (min-width: 768px) {
+        label.small {
+            font-size: 0.8rem;
+        }
+    }
 </style>
 
 <div class="page-header-fields">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-list-check me-2"></i>字段配置</h4>
-            <p class="mb-0 opacity-75">{{ group.title }} - 自定义用户资料字段</p>
+            <p class="mb-0 opacity-75 d-none d-md-block">{{ group.title }} - 自定义用户资料字段</p>
         </div>
         <button class="btn btn-light fw-bold px-4" onclick="saveFields()">
             <i class="fa-solid fa-save me-2"></i>保存配置

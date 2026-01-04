@@ -4,10 +4,38 @@
     .page-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .page-header {
+            padding: 1.5rem 2rem;
+            border-radius: 15px;
+            margin-bottom: 2rem;
+        }
+    }
+    
+    .page-header h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header h4 {
+            font-size: 1.5rem;
+        }
+    }
+    
+    .page-header p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header p {
+            font-size: 1rem;
+        }
     }
     
     .search-box {
@@ -15,48 +43,139 @@
         border-radius: 10px;
         padding: 0.5rem;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .search-box {
+            margin-bottom: 1.5rem;
+        }
     }
     
     .table-container {
         background: white;
-        border-radius: 15px;
+        border-radius: 12px;
         overflow: hidden;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    @media (min-width: 768px) {
+        .table-container {
+            border-radius: 15px;
+        }
+    }
+    
+    /* Mobile-friendly table */
+    .table {
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .table {
+            font-size: 0.95rem;
+        }
+    }
+    
+    .table th, .table td {
+        padding: 0.5rem 0.75rem;
+        vertical-align: middle;
+    }
+    
+    @media (min-width: 768px) {
+        .table th, .table td {
+            padding: 0.75rem 1rem;
+        }
+    }
+    
+    /* Hide some columns on mobile */
+    @media (max-width: 767px) {
+        .hide-mobile {
+            display: none !important;
+        }
     }
     
     .action-btn {
         transition: all 0.3s ease;
-        border-radius: 8px;
-        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .action-btn {
+            border-radius: 8px;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.9rem;
+        }
     }
     
     .action-btn:hover {
-        transform: scale(1.1);
+        transform: scale(1.05);
+    }
+    
+    .btn {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .btn {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+        }
     }
     
     .modal-content {
-        border-radius: 20px;
+        border-radius: 15px;
         border: none;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .modal-content {
+            border-radius: 20px;
+        }
     }
     
     .modal-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        border-radius: 20px 20px 0 0;
-        padding: 1.5rem;
+        border-radius: 15px 15px 0 0;
+        padding: 1rem 1.25rem;
+    }
+    
+    @media (min-width: 768px) {
+        .modal-header {
+            border-radius: 20px 20px 0 0;
+            padding: 1.5rem;
+        }
     }
     
     .modal-header .btn-close {
         filter: brightness(0) invert(1);
     }
+    
+    .form-control {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+    }
+    
+    @media (min-width: 768px) {
+        .form-control {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
+    }
 </style>
 
 <div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-users me-2"></i>认证用户管理</h4>
-            <p class="mb-0 opacity-75">管理群组内的所有认证用户</p>
+            <p class="mb-0 opacity-75 d-none d-md-block">管理群组内的所有认证用户</p>
         </div>
         <button class="btn btn-light fw-bold px-4" onclick="openAddUser()">
             <i class="fa-solid fa-plus me-2"></i>添加用户

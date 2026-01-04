@@ -1150,45 +1150,13 @@ async def on_message(update: Update, context):
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
 
-            # 3. 查询 + 自动回复检查
-            # First check for auto-reply to avoid duplicate DB queries
+            # 3. 自动回复检查 (优先级高于查询)
+            # Check for auto-reply first to avoid conflicts with query
             auto_reply = AutoReply.query.filter_by(
                 group_id=group.id,
                 trigger_keyword=txt,
                 is_active=True
             ).first()
-            
-            query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]
-            is_search = False
-            kw = None
-            
-            if conf.get('query_open') and txt in query_cmds:
-                is_search = True
-            elif conf.get('query_filter_open'):
-                for cmd in query_cmds:
-                    if txt.startswith(cmd + " "):
-                        kw = txt[len(cmd):].strip()
-                        is_search = True
-                        break
-                # Treat as query keyword only if not an auto-reply trigger
-                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/') and not auto_reply:
-                    kw = txt
-                    is_search = True
-            
-            if is_search:
-                fields = get_group_fields(group)
-                # 关键：在这里调用查询，上下文已在上方 with 块中建立
-                text_resp, markup, users = await do_query_page(chat.id, group.id, conf, fields, kw, 1)
-                
-                if users or (not kw and not users):
-                    if not text_resp: text_resp = "😢 暂无数据"
-                    sent = await msg.reply_html(text_resp, reply_markup=markup, disable_web_page_preview=True)
-                    del_time = safe_int(conf.get('query_del_time'), 60)
-                    if del_time > 0:
-                        context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=sent)
-                return
-            
-            # 4. 自动回复
             
             if auto_reply:
                 try:
@@ -1238,6 +1206,38 @@ async def on_message(update: Update, context):
                         )
                 except Exception as e:
                     print(f"Auto reply error: {e}")
+                return
+            
+            # 4. 查询功能
+            query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]
+            is_search = False
+            kw = None
+            
+            if conf.get('query_open') and txt in query_cmds:
+                is_search = True
+            elif conf.get('query_filter_open'):
+                for cmd in query_cmds:
+                    if txt.startswith(cmd + " "):
+                        kw = txt[len(cmd):].strip()
+                        is_search = True
+                        break
+                # Treat as placeholder query keyword (short text that's not a command)
+                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/'):
+                    kw = txt
+                    is_search = True
+            
+            if is_search:
+                fields = get_group_fields(group)
+                # 关键：在这里调用查询，上下文已在上方 with 块中建立
+                text_resp, markup, users = await do_query_page(chat.id, group.id, conf, fields, kw, 1)
+                
+                if users or (not kw and not users):
+                    if not text_resp: text_resp = "😢 暂无数据"
+                    sent = await msg.reply_html(text_resp, reply_markup=markup, disable_web_page_preview=True)
+                    del_time = safe_int(conf.get('query_del_time'), 60)
+                    if del_time > 0:
+                        context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=sent)
+                return
 
     except Exception as e:
         print(f"Msg Error: {e}")

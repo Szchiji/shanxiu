@@ -375,6 +375,16 @@
             font-size: 1rem;
         }
     }
+    
+    /* Search input */
+    .search-input {
+        min-width: 150px;
+    }
+    
+    /* Table cell styles */
+    .keyword-cell {
+        word-break: break-all;
+    }
 </style>
 
 <div class="page-header">
@@ -393,7 +403,7 @@
 <div class="search-box">
     <div class="d-flex align-items-center flex-wrap gap-2">
         <i class="fa-solid fa-search text-muted ms-2"></i>
-        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1" placeholder="搜索关键词或备注..." style="min-width: 150px;">
+        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索关键词或备注...">
         <button class="btn btn-primary btn-sm" onclick="searchItems()">
             <i class="fa-solid fa-search me-1"></i>搜索
         </button>
@@ -419,9 +429,9 @@
             </thead>
             <tbody id="dataTable">
                 {% for item in auto_replies %}
-                <tr data-id="{{ item.id }}" data-keyword="{{ item.trigger_keyword }}" data-remark="{{ item.remark or '' }}">
+                <tr data-id="{{ item.id }}">
                     <td class="ps-3 ps-md-4 fw-bold hide-mobile">{{ item.id }}</td>
-                    <td><code class="text-wrap" style="word-break: break-all;">{{ item.trigger_keyword }}</code></td>
+                    <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
                     <td class="hide-mobile">
                         {% if item.media_type == 'text' %}
                         <span class="badge bg-primary">文本</span>

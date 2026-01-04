@@ -399,6 +399,16 @@
             font-size: 1rem;
         }
     }
+    
+    /* Search input */
+    .search-input {
+        min-width: 150px;
+    }
+    
+    /* Table cell styles */
+    .remark-cell {
+        max-width: 100px;
+    }
 </style>
 
 <div class="page-header">
@@ -417,7 +427,7 @@
 <div class="search-box">
     <div class="d-flex align-items-center flex-wrap gap-2">
         <i class="fa-solid fa-search text-muted ms-2"></i>
-        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1" placeholder="搜索备注内容..." style="min-width: 150px;">
+        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索备注内容...">
         <button class="btn btn-primary btn-sm" onclick="searchItems()">
             <i class="fa-solid fa-search me-1"></i>搜索
         </button>
@@ -445,7 +455,7 @@
             </thead>
             <tbody id="dataTable">
                 {% for item in scheduled_messages %}
-                <tr data-id="{{ item.id }}" data-remark="{{ item.remark or '' }}">
+                <tr data-id="{{ item.id }}">
                     <td class="ps-3 ps-md-4 fw-bold hide-mobile">{{ item.id }}</td>
                     <td class="hide-mobile">
                         {% if item.media_type == 'text' %}
@@ -465,7 +475,7 @@
                     </td>
                     <td class="hide-mobile">{{ item.start_time.strftime('%m-%d %H:%M') if item.start_time else '-' }}</td>
                     <td class="hide-mobile">{{ item.stop_time.strftime('%m-%d %H:%M') if item.stop_time else '-' }}</td>
-                    <td class="text-truncate" style="max-width: 100px;">{{ item.remark or '-' }}</td>
+                    <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>

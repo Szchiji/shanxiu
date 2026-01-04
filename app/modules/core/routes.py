@@ -1150,7 +1150,14 @@ async def on_message(update: Update, context):
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
 
-            # 3. 查询
+            # 3. 查询 + 自动回复检查
+            # First check for auto-reply to avoid duplicate DB queries
+            auto_reply = AutoReply.query.filter_by(
+                group_id=group.id,
+                trigger_keyword=txt,
+                is_active=True
+            ).first()
+            
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]
             is_search = False
             kw = None
@@ -1163,18 +1170,10 @@ async def on_message(update: Update, context):
                         kw = txt[len(cmd):].strip()
                         is_search = True
                         break
-                # Check if there's an auto-reply trigger before treating as query keyword
-                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/'):
-                    # Check if this text matches any auto-reply trigger
-                    has_auto_reply = AutoReply.query.filter_by(
-                        group_id=group.id,
-                        trigger_keyword=txt,
-                        is_active=True
-                    ).first() is not None
-                    
-                    if not has_auto_reply:
-                        kw = txt
-                        is_search = True
+                # Treat as query keyword only if not an auto-reply trigger
+                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/') and not auto_reply:
+                    kw = txt
+                    is_search = True
             
             if is_search:
                 fields = get_group_fields(group)
@@ -1190,11 +1189,6 @@ async def on_message(update: Update, context):
                 return
             
             # 4. 自动回复
-            auto_reply = AutoReply.query.filter_by(
-                group_id=group.id,
-                trigger_keyword=txt,
-                is_active=True
-            ).first()
             
             if auto_reply:
                 try:

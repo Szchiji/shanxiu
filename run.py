@@ -19,8 +19,7 @@ def init_database(app):
             raise
 
 def fix_database_schema(app):
-    """Add missing columns to existing tables (background task)."""
-    time.sleep(3)
+    """Add missing columns to existing tables (synchronous, runs before server starts)."""
     with app.app_context():
         try:
             with db.engine.connect() as conn:
@@ -35,9 +34,9 @@ def fix_database_schema(app):
                 try: conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)"))
                 except: pass
                 conn.commit()
-            print("✅ [后台] 数据库结构检查完成", flush=True)
+            print("✅ 数据库结构检查完成", flush=True)
         except Exception as e:
-            print(f"⚠️ [后台] 数据库检查跳过: {e}", flush=True)
+            print(f"⚠️ 数据库检查跳过: {e}", flush=True)
 
 def run_flask():
     port = int(os.getenv('PORT', 5000))
@@ -69,13 +68,12 @@ if __name__ == '__main__':
     # 1. 初始化数据库表 (同步执行，确保表存在后再启动服务)
     init_database(app)
     
-    # 2. 启动 Web (Flask)
+    # 2. 数据库修复 (同步执行，确保列存在后再启动 Web 服务)
+    fix_database_schema(app)
+    
+    # 3. 启动 Web (Flask)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    
-    # 3. 数据库修复 (后台添加缺失列)
-    db_thread = threading.Thread(target=fix_database_schema, args=(app,), daemon=True)
-    db_thread.start()
     
     # 4. 启动机器人 (在独立线程中跑 loop_forever)
     # ⚡️ 修复点：将 app 传入机器人线程

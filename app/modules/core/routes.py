@@ -842,7 +842,8 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
             else:
                 header = conf.get('msg_query_header', '🔍 <b>今日在线：</b>')
                 
-            users = base.order_by(GroupUser.id.desc()).all()
+            # Requirement 4: Sort by check-in time (earliest first)
+            users = base.order_by(GroupUser.checkin_time.asc()).all()
             if not users: return None, None, None
             
             page_size = safe_int(conf.get('page_size'), 10)

@@ -3,7 +3,15 @@
 <style>
     .btn-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
     .btn-row .form-control { flex: 1; }
-    #editor { white-space: pre-wrap; word-break: break-word; }
+    #editor { 
+        white-space: pre-wrap; 
+        word-break: break-word; 
+        overflow-wrap: break-word;
+        min-height: 250px;
+        max-height: 500px;
+        overflow-y: auto;
+        line-height: 1.6;
+    }
     .section-title { font-size: 0.85rem; font-weight: 700; color: #6c757d; text-transform: uppercase; margin-bottom: 0.5rem; }
     
     .settings-header {

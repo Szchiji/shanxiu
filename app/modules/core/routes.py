@@ -140,7 +140,7 @@ def page_users(gid):
     # Pagination parameters
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 50), 50)
-    if per_page not in [20, 50, 100]: per_page = 50
+    if per_page not in [20, 50, 100] or per_page <= 0: per_page = 50
     if page < 1: page = 1
     
     # Get total count and paginated users

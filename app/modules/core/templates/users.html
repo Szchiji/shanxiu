@@ -167,17 +167,20 @@
 </div>
 
 <script>
-    function goToPage(page) {
+    function updateUrl(params) {
         const url = new URL(window.location.href);
-        url.searchParams.set('page', page);
+        for (const [key, value] of Object.entries(params)) {
+            url.searchParams.set(key, value);
+        }
         window.location.href = url.toString();
     }
     
+    function goToPage(page) {
+        updateUrl({ page: page });
+    }
+    
     function changePerPage(perPage) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('per_page', perPage);
-        url.searchParams.set('page', 1); // Reset to first page when changing per_page
-        window.location.href = url.toString();
+        updateUrl({ per_page: perPage, page: 1 }); // Reset to first page when changing per_page
     }
 
     async function searchUsers() {

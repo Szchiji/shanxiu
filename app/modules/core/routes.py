@@ -5,7 +5,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io
 from datetime import datetime, timedelta
 import pytz
 
@@ -387,6 +387,11 @@ def api_save_user():
     
     u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
     add = safe_int(d.get('add_days'))
+    
+    # Validate add_days parameter (reasonable bounds: -3650 to 3650 days / 10 years)
+    if add < -3650 or add > 3650:
+        return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
+    
     if add != 0:
         base = u.expiration_date or get_beijing_now()
         u.expiration_date = base + timedelta(days=add)
@@ -424,6 +429,10 @@ def api_bulk_import_users():
     group_id = d.get('group_id')
     users_data = d.get('users', [])
     add_days = safe_int(d.get('add_days', 0), 0)
+    
+    # Validate add_days parameter (reasonable bounds: 0-3650 days / 10 years)
+    if add_days < 0 or add_days > 3650:
+        return jsonify({'status':'error', 'msg':'有效天数必须在 0-3650 之间'})
     
     if not group_id or not users_data:
         return jsonify({'status':'error', 'msg':'缺少必要参数'})
@@ -495,15 +504,16 @@ def api_export_users():
     fields = get_group_fields(group)
     users = GroupUser.query.filter_by(group_id=group_id).order_by(GroupUser.id.desc()).all()
     
-    # Create CSV content
-    csv_lines = []
+    # Create CSV content using csv module for proper escaping
+    output = io.StringIO()
+    csv_writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
     
     # Header row
     header = ['TG_ID']
     for field in fields:
         header.append(field['label'])
     header.extend(['状态', '过期时间', '禁言'])
-    csv_lines.append(','.join(header))
+    csv_writer.writerow(header)
     
     # Data rows
     for user in users:
@@ -515,11 +525,7 @@ def api_export_users():
         row = [str(user.tg_id)]
         for field in fields:
             value = profile.get(field['key'], '')
-            # Escape commas and quotes in CSV
-            value_str = str(value)
-            if ',' in value_str or '"' in value_str:
-                value_str = '"' + value_str.replace('"', '""') + '"'
-            row.append(value_str)
+            row.append(str(value))
         
         # Status
         if user.is_banned:
@@ -537,9 +543,10 @@ def api_export_users():
         # Banned
         row.append('是' if user.is_banned else '否')
         
-        csv_lines.append(','.join(row))
+        csv_writer.writerow(row)
     
-    csv_content = '\n'.join(csv_lines)
+    csv_content = output.getvalue()
+    output.close()
     
     return jsonify({
         'status': 'ok',

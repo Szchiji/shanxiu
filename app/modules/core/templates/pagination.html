@@ -137,18 +137,25 @@
 </div>
 
 <script>
-    function goToPage(page) {
-        if (page < 1 || page > {{ total_pages }}) return;
-        const params = new URLSearchParams(window.location.search);
-        params.set('{{ page_name }}', page);
-        window.location.search = params.toString();
-    }
-    
-    function changePerPage(perPage) {
-        const params = new URLSearchParams(window.location.search);
-        params.set('per_page', perPage);
-        params.set('{{ page_name }}', 1); // Reset to first page
-        window.location.search = params.toString();
-    }
+    // Use IIFE to avoid polluting global scope
+    (function() {
+        // Pagination functions - assigned to window for onclick handlers
+        // Note: These will be overwritten if pagination macro is used multiple times,
+        // but that's acceptable as all pagination controls navigate to the same page
+        window.goToPage = function(page) {
+            // Remove hardcoded limit - let the server handle validation
+            if (page < 1) return;
+            const params = new URLSearchParams(window.location.search);
+            params.set('{{ page_name }}', page);
+            window.location.search = params.toString();
+        };
+        
+        window.changePerPage = function(perPage) {
+            const params = new URLSearchParams(window.location.search);
+            params.set('per_page', perPage);
+            params.set('{{ page_name }}', 1); // Reset to first page
+            window.location.search = params.toString();
+        };
+    })();
 </script>
 {% endmacro %}

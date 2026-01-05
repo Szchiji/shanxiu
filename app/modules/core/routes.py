@@ -5,7 +5,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io
 from datetime import datetime, timedelta
 import pytz
 
@@ -177,8 +177,8 @@ def page_users(gid):
     
     # Pagination parameters
     page = safe_int(request.args.get('page', 1), 1)
-    per_page = safe_int(request.args.get('per_page', 50), 50)
-    if per_page not in [20, 50, 100] or per_page <= 0: per_page = 50
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated users
@@ -387,6 +387,11 @@ def api_save_user():
     
     u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
     add = safe_int(d.get('add_days'))
+    
+    # Validate add_days parameter (reasonable bounds: -3650 to 3650 days / 10 years)
+    if add < -3650 or add > 3650:
+        return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
+    
     if add != 0:
         base = u.expiration_date or get_beijing_now()
         u.expiration_date = base + timedelta(days=add)
@@ -414,6 +419,140 @@ def api_delete_user():
     GroupUser.query.filter_by(id=request.json['id']).delete()
     db.session.commit()
     return jsonify({'status':'ok'})
+
+@core_bp.route('/api/bulk_import_users', methods=['POST'])
+def api_bulk_import_users():
+    """Bulk import users from CSV/Excel data"""
+    if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
+    
+    d = request.json
+    group_id = d.get('group_id')
+    users_data = d.get('users', [])
+    add_days = safe_int(d.get('add_days', 0), 0)
+    
+    # Validate add_days parameter (reasonable bounds: 0-3650 days / 10 years)
+    if add_days < 0 or add_days > 3650:
+        return jsonify({'status':'error', 'msg':'有效天数必须在 0-3650 之间'})
+    
+    if not group_id or not users_data:
+        return jsonify({'status':'error', 'msg':'缺少必要参数'})
+    
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status':'error', 'msg':'群组不存在'})
+    
+    success_count = 0
+    skipped_count = 0
+    
+    try:
+        for user_data in users_data:
+            tg_id = user_data.get('tg_id')
+            profile = user_data.get('profile', {})
+            
+            if not tg_id:
+                continue
+            
+            # Check if user already exists
+            existing_user = GroupUser.query.filter_by(group_id=group_id, tg_id=tg_id).first()
+            if existing_user:
+                skipped_count += 1
+                continue
+            
+            # Create new user
+            expiration_date = None
+            if add_days > 0:
+                expiration_date = get_beijing_now() + timedelta(days=add_days)
+            
+            new_user = GroupUser(
+                group_id=group_id,
+                tg_id=tg_id,
+                profile_data=json.dumps(profile, ensure_ascii=False),
+                expiration_date=expiration_date,
+                is_banned=False,
+                online=False
+            )
+            db.session.add(new_user)
+            success_count += 1
+        
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'ok',
+            'success_count': success_count,
+            'skipped_count': skipped_count
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in bulk_import_users: {e}")
+        return jsonify({'status':'error', 'msg': f'导入失败: {str(e)}'})
+
+@core_bp.route('/api/export_users', methods=['POST'])
+def api_export_users():
+    """Export users to CSV format"""
+    if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
+    
+    d = request.json
+    group_id = d.get('group_id')
+    
+    if not group_id:
+        return jsonify({'status':'error', 'msg':'缺少必要参数'})
+    
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status':'error', 'msg':'群组不存在'})
+    
+    fields = get_group_fields(group)
+    users = GroupUser.query.filter_by(group_id=group_id).order_by(GroupUser.id.desc()).all()
+    
+    # Create CSV content using csv module for proper escaping
+    output = io.StringIO()
+    csv_writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    
+    # Header row
+    header = ['TG_ID']
+    for field in fields:
+        header.append(field['label'])
+    header.extend(['状态', '过期时间', '禁言'])
+    csv_writer.writerow(header)
+    
+    # Data rows
+    for user in users:
+        try:
+            profile = json.loads(user.profile_data) if user.profile_data else {}
+        except:
+            profile = {}
+        
+        row = [str(user.tg_id)]
+        for field in fields:
+            value = profile.get(field['key'], '')
+            row.append(str(value))
+        
+        # Status
+        if user.is_banned:
+            status = '封禁'
+        elif user.expiration_date:
+            status = '正常'
+        else:
+            status = '永久'
+        row.append(status)
+        
+        # Expiration date
+        exp_date = user.expiration_date.strftime('%Y-%m-%d %H:%M:%S') if user.expiration_date else ''
+        row.append(exp_date)
+        
+        # Banned
+        row.append('是' if user.is_banned else '否')
+        
+        csv_writer.writerow(row)
+    
+    csv_content = output.getvalue()
+    output.close()
+    
+    return jsonify({
+        'status': 'ok',
+        'csv_content': csv_content
+    })
+
 
 @core_bp.route('/api/search_users', methods=['POST'])
 def api_search_users():
@@ -770,8 +909,10 @@ def auth_verify_page(session_token):
         if get_beijing_now() > auth_session.expires_at:
             return "验证链接已过期", 403
         
-        # Check if already verified
+        # Check if already verified - redirect directly if already logged in via cookie
         if auth_session.is_verified:
+            session['logged_in'] = True
+            session.permanent = True  # Make session persistent
             return redirect('/core/select_group')
         
         return render_template('auth_verify.html', 
@@ -802,8 +943,9 @@ def api_check_auth_status():
         
         # Check if verified
         if auth_session.is_verified:
-            # Set session as logged in
+            # Set session as logged in with persistent cookie
             session['logged_in'] = True
+            session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'

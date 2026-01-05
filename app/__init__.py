@@ -2,6 +2,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 import os
 import json
+from datetime import timedelta
 
 db = SQLAlchemy()
 
@@ -25,6 +26,12 @@ def create_app():
     if secret_key == 'default_secret_key':
         print("⚠️ WARNING: Using default SECRET_KEY. Please set SECRET_KEY environment variable for production!", flush=True)
     app.config['SECRET_KEY'] = secret_key
+    
+    # Session configuration for persistent login
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)  # Session lasts 7 days
+    app.config['SESSION_COOKIE_SECURE'] = os.getenv('RAILWAY_PUBLIC_DOMAIN') is not None  # Only use HTTPS in production
+    app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent JavaScript access to session cookie
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
     
     db.init_app(app)
     

@@ -333,6 +333,7 @@ class GroupBottomButton(db.Model):
     button_text = db.Column(db.String(255), nullable=False)
     button_url = db.Column(db.Text, nullable=True)
     button_callback = db.Column(db.String(255), nullable=True)  # Callback data for inline button
+    trigger_keyword = db.Column(db.String(255), nullable=True)  # 触发关键词，支持逗号分隔多个
     button_order = db.Column(db.Integer, default=0)  # 显示顺序
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
@@ -399,6 +400,8 @@ class BotClone(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     clone_name = db.Column(db.String(255), nullable=False)  # 克隆机器人名称
     bot_token = db.Column(db.String(255), nullable=False)  # Bot Token (removed unique constraint for flexibility)
+    owner_user_id = db.Column(db.BigInteger, nullable=True)  # 克隆机器人拥有者的用户ID
+    admin_user_ids = db.Column(db.Text, default='[]')  # 管理员用户ID列表，JSON格式
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     expiration_date = db.Column(db.DateTime, nullable=True)  # 有效期
     webhook_url = db.Column(db.String(500), nullable=True)  # Webhook URL

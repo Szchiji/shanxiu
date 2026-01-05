@@ -425,21 +425,21 @@
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4 hide-mobile">ID</th>
+                    <th class="ps-3 ps-md-4">ID</th>
                     <th>关键词</th>
-                    <th class="hide-mobile">类型</th>
-                    <th class="hide-mobile">备注</th>
+                    <th>类型</th>
+                    <th>备注</th>
                     <th>状态</th>
-                    <th class="hide-mobile">更新时间</th>
+                    <th>更新时间</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
             <tbody id="dataTable">
                 {% for item in auto_replies %}
                 <tr data-id="{{ item.id }}">
-                    <td class="ps-3 ps-md-4 fw-bold hide-mobile">{{ item.id }}</td>
+                    <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
-                    <td class="hide-mobile">
+                    <td>
                         {% if item.media_type == 'text' %}
                         <span class="badge bg-primary">文本</span>
                         {% elif item.media_type == 'image' %}
@@ -448,7 +448,7 @@
                         <span class="badge bg-warning text-dark">视频</span>
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">{{ item.remark or '-' }}</td>
+                    <td>{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>
@@ -456,7 +456,7 @@
                         <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">{{ item.updated_at.strftime('%m-%d %H:%M') if item.updated_at else '-' }}</td>
+                    <td>{{ item.updated_at.strftime('%m-%d %H:%M') if item.updated_at else '-' }}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                             <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>

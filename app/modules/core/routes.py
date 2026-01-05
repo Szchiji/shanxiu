@@ -1466,7 +1466,15 @@ def api_import_scheduled_messages():
                 item.media_url = row[1] if len(row) > 1 else None
                 item.content = row[2] if len(row) > 2 else None
                 item.links = row[3] if len(row) > 3 and row[3] else '[]'
-                item.repeat_interval = int(row[4]) if len(row) > 4 and row[4] else 0
+                
+                # Handle repeat_interval - only convert to int if it's a valid number
+                item.repeat_interval = 0  # Default value
+                if len(row) > 4 and row[4]:
+                    try:
+                        item.repeat_interval = int(row[4])
+                    except (ValueError, TypeError):
+                        pass  # Keep default value of 0
+                    
                 item.delete_previous = (row[5] == '是') if len(row) > 5 and row[5] else False
                 
                 # Parse dates
@@ -5048,7 +5056,7 @@ async def on_message(update: Update, context):
                     info_lines.append(f"   姓氏: {forwarded_user.last_name}")
                 if forwarded_user.username:
                     info_lines.append(f"🔗 Username: @{forwarded_user.username}")
-                info_lines.append(f"🆔 用户ID: {forwarded_user.id}")
+                info_lines.append(f"🆔 用户ID: <code>{forwarded_user.id}</code>")
                 info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
                 
                 # Try to get user's group membership info
@@ -5088,7 +5096,7 @@ async def on_message(update: Update, context):
                     if len(user_groups) > 5:
                         info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
                 
-                await msg.reply_text("\n".join(info_lines))
+                await msg.reply_text("\n".join(info_lines), parse_mode='HTML')
                 return
             
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))

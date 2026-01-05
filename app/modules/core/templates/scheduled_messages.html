@@ -482,22 +482,22 @@
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4 hide-mobile">ID</th>
-                    <th class="hide-mobile">类型</th>
+                    <th class="ps-3 ps-md-4">ID</th>
+                    <th>类型</th>
                     <th>间隔</th>
-                    <th class="hide-mobile">开始</th>
-                    <th class="hide-mobile">停止</th>
+                    <th>开始</th>
+                    <th>停止</th>
                     <th>备注</th>
                     <th>状态</th>
-                    <th class="hide-mobile">上次发送</th>
+                    <th>上次发送</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
             <tbody id="dataTable">
                 {% for item in scheduled_messages %}
                 <tr data-id="{{ item.id }}">
-                    <td class="ps-3 ps-md-4 fw-bold hide-mobile">{{ item.id }}</td>
-                    <td class="hide-mobile">
+                    <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
+                    <td>
                         {% if item.media_type == 'text' %}
                         <span class="badge bg-primary">文本</span>
                         {% elif item.media_type == 'image' %}
@@ -513,8 +513,8 @@
                         <span class="text-muted">-</span>
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">{{ item.start_time.strftime('%m-%d %H:%M') if item.start_time else '-' }}</td>
-                    <td class="hide-mobile">{{ item.stop_time.strftime('%m-%d %H:%M') if item.stop_time else '-' }}</td>
+                    <td>{{ item.start_time.strftime('%m-%d %H:%M') if item.start_time else '-' }}</td>
+                    <td>{{ item.stop_time.strftime('%m-%d %H:%M') if item.stop_time else '-' }}</td>
                     <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
@@ -523,7 +523,7 @@
                         <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">{{ item.last_sent_at.strftime('%m-%d %H:%M') if item.last_sent_at else '-' }}</td>
+                    <td>{{ item.last_sent_at.strftime('%m-%d %H:%M') if item.last_sent_at else '-' }}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                             <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>

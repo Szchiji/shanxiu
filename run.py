@@ -70,6 +70,8 @@ def fix_database_schema(app):
             "ALTER TABLE start_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             # Group bottom button table columns
             "ALTER TABLE group_bottom_button ADD COLUMN trigger_keyword VARCHAR(255) NULL",
+            # Bot clones table columns
+            "ALTER TABLE bot_clones ADD COLUMN owner_user_id BIGINT",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

@@ -1967,12 +1967,12 @@ def api_save_group_vote():
         if d.get('start_time'):
             try:
                 vote.start_time = datetime.fromisoformat(d['start_time'].replace('Z', '+00:00'))
-            except:
+            except (ValueError, AttributeError):
                 pass
         if d.get('end_time'):
             try:
                 vote.end_time = datetime.fromisoformat(d['end_time'].replace('Z', '+00:00'))
-            except:
+            except (ValueError, AttributeError):
                 pass
         
         db.session.commit()
@@ -3201,12 +3201,12 @@ async def track_message_statistics(update: Update, context):
                 
                 today = datetime.now().date()
                 
-                # Get or create statistics record
+                # Use upsert-like pattern to avoid race conditions
                 stats = MessageStatistics.query.filter_by(
                     group_id=group.id,
                     user_id=user.id,
                     date=today
-                ).first()
+                ).with_for_update().first()
                 
                 if not stats:
                     stats = MessageStatistics(
@@ -3222,6 +3222,18 @@ async def track_message_statistics(update: Update, context):
                         voice_count=0
                     )
                     db.session.add(stats)
+                    try:
+                        db.session.flush()
+                    except:
+                        # Another thread created it, re-fetch
+                        db.session.rollback()
+                        stats = MessageStatistics.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id,
+                            date=today
+                        ).first()
+                        if not stats:
+                            return
                 
                 # Update counts
                 stats.message_count += 1
@@ -3279,7 +3291,8 @@ async def check_keyword_filter(update: Update, context):
                     elif kf.match_type == 'regex':
                         try:
                             matched = re.search(kf.keyword, msg.text, re.IGNORECASE) is not None
-                        except:
+                        except re.error:
+                            # Invalid regex pattern, skip this filter
                             pass
                     
                     # Blacklist: if matched, take action

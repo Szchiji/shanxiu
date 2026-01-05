@@ -23,7 +23,7 @@ class GroupUser(db.Model):
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
     checkin_time = db.Column(db.DateTime)
-    last_activity = db.Column(db.DateTime, default=datetime.now)  # Track last message activity
+    last_activity = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)  # Track last message activity
     online = db.Column(db.Boolean, default=False)
     __table_args__ = (db.UniqueConstraint('group_id', 'tg_id', name='_group_user_uc'),)
     

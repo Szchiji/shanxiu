@@ -175,10 +175,11 @@ def page_users(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated users
@@ -215,10 +216,11 @@ def page_auto_replies(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results
@@ -252,10 +254,11 @@ def page_scheduled_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results
@@ -292,10 +295,11 @@ def page_start_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results

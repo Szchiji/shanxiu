@@ -1,0 +1,154 @@
+<!-- Unified Pagination Component -->
+{% macro pagination(current_page, total_pages, per_page, total_items, page_name='page', per_page_options=[10, 20, 50, 100]) %}
+<style>
+    .pagination-container {
+        background: white;
+        border-radius: 15px;
+        padding: 1rem;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+        margin-top: 1rem;
+    }
+    
+    .pagination-info {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+    
+    .pagination-info strong {
+        color: #495057;
+        font-weight: 600;
+    }
+    
+    .btn-pagination {
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        border: 2px solid #e9ecef;
+        background: white;
+        color: #495057;
+    }
+    
+    .btn-pagination:not(:disabled):hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        border-color: #667eea;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    .btn-pagination:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background: #f8f9fa;
+        border-color: #e9ecef;
+    }
+    
+    .btn-pagination i {
+        font-size: 0.75rem;
+    }
+    
+    .per-page-select {
+        border-radius: 8px;
+        border: 2px solid #e9ecef;
+        padding: 0.375rem 0.75rem;
+        font-size: 0.875rem;
+        transition: all 0.3s ease;
+    }
+    
+    .per-page-select:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+    }
+    
+    .page-number-display {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 0.875rem;
+    }
+    
+    @media (max-width: 767.98px) {
+        .pagination-container {
+            padding: 0.75rem;
+        }
+        
+        .pagination-controls {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        
+        .btn-pagination {
+            padding: 0.5rem 0.875rem;
+            font-size: 0.813rem;
+        }
+        
+        .per-page-select {
+            font-size: 0.813rem;
+        }
+        
+        .page-number-display {
+            font-size: 0.813rem;
+            padding: 0.4rem 0.875rem;
+        }
+    }
+</style>
+
+<div class="pagination-container">
+    <div class="pagination-controls d-flex flex-column flex-md-row justify-content-between align-items-center gap-3">
+        <!-- Left side: Per page selector and total count -->
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <div class="d-flex align-items-center gap-2">
+                <label class="pagination-info mb-0">每页:</label>
+                <select class="form-select per-page-select" style="width: auto; min-width: 70px;" 
+                        onchange="changePerPage(this.value)" id="perPageSelect">
+                    {% for option in per_page_options %}
+                    <option value="{{ option }}" {{ 'selected' if per_page == option else '' }}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <span class="pagination-info">
+                共 <strong>{{ total_items }}</strong> 条
+            </span>
+        </div>
+        
+        <!-- Right side: Navigation buttons and page info -->
+        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-center">
+            <span class="page-number-display">
+                {{ current_page }}/{{ total_pages }}
+            </span>
+            
+            <button class="btn btn-pagination" 
+                    onclick="goToPage({{ current_page - 1 }})"
+                    {{ 'disabled' if current_page <= 1 else '' }}>
+                <i class="fa-solid fa-chevron-left me-1"></i>上一页
+            </button>
+            
+            <button class="btn btn-pagination" 
+                    onclick="goToPage({{ current_page + 1 }})"
+                    {{ 'disabled' if current_page >= total_pages else '' }}>
+                下一页<i class="fa-solid fa-chevron-right ms-1"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function goToPage(page) {
+        if (page < 1 || page > {{ total_pages }}) return;
+        const params = new URLSearchParams(window.location.search);
+        params.set('{{ page_name }}', page);
+        window.location.search = params.toString();
+    }
+    
+    function changePerPage(perPage) {
+        const params = new URLSearchParams(window.location.search);
+        params.set('per_page', perPage);
+        params.set('{{ page_name }}', 1); // Reset to first page
+        window.location.search = params.toString();
+    }
+</script>
+{% endmacro %}

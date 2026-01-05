@@ -3,7 +3,7 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, OtherSettings)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -482,6 +482,29 @@ def page_sync_group_messages(gid):
         db.session.add(settings)
         db.session.commit()
     return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
+
+
+@core_bp.route('/group/<int:gid>/sync_message_logs')
+def page_sync_message_logs(gid):
+    """同步消息日志"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50, 100]: per_page = 20
+    
+    # Query sync logs ordered by most recent first
+    query = SyncMessageLog.query.filter_by(source_group_id=gid).order_by(SyncMessageLog.synced_at.desc())
+    total = query.count()
+    logs = query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    total_pages = math.ceil(total / per_page) if total > 0 else 1
+    
+    return render_template('sync_message_logs.html', page='sync_message_logs', group=group,
+                         logs=logs, current_page=page, per_page=per_page,
+                         total_pages=total_pages, total_items=total)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -1905,6 +1928,7 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("pin", cmd_pin))
     app.add_handler(CommandHandler("unpin", cmd_unpin))
     app.add_handler(CommandHandler("warn", cmd_warn))
+    app.add_handler(CommandHandler("userinfo", cmd_userinfo))
     
     # Add periodic job to check expired users
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -2197,6 +2221,125 @@ async def cmd_warn(update: Update, context):
     
     warning_text = f"⚠️ 警告\n\n用户: {target_user.first_name}\n原因: {reason}\n\n请遵守群规，避免再次违规！"
     await update.message.reply_text(warning_text)
+
+
+async def cmd_userinfo(update: Update, context):
+    """查询用户详细信息命令 /userinfo"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message or forwarded message
+    target_user = None
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+    elif update.message.forward_from:
+        target_user = update.message.forward_from
+    
+    if not target_user:
+        await update.message.reply_text("❌ 请回复或转发用户的消息来查看详情")
+        return
+    
+    # Get user info from database
+    def _get_user_info():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, None, None
+            
+            group_user = GroupUser.query.filter_by(
+                group_id=group.id,
+                tg_id=target_user.id
+            ).first()
+            
+            # Get user points if available
+            user_points = None
+            try:
+                user_points = UserPoints.query.filter_by(
+                    group_id=group.id,
+                    user_id=target_user.id
+                ).first()
+            except:
+                pass
+            
+            return group_user, user_points, group
+    
+    group_user, user_points, group = await asyncio.get_running_loop().run_in_executor(None, _get_user_info)
+    
+    # Build user info message
+    info_lines = ["👤 用户详细信息\n"]
+    info_lines.append(f"━━━━━━━━━━━━━━━━")
+    info_lines.append(f"📛 用户名: {target_user.first_name or '-'}")
+    if target_user.last_name:
+        info_lines.append(f"   姓氏: {target_user.last_name}")
+    if target_user.username:
+        info_lines.append(f"🔗 Username: @{target_user.username}")
+    info_lines.append(f"🆔 用户ID: {target_user.id}")
+    info_lines.append(f"🤖 机器人: {'是' if target_user.is_bot else '否'}")
+    
+    if group_user:
+        info_lines.append(f"\n📊 群组信息")
+        info_lines.append(f"━━━━━━━━━━━━━━━━")
+        
+        # Parse profile data
+        try:
+            profile_data = json.loads(group_user.profile_data or '{}')
+            if profile_data:
+                for key, value in profile_data.items():
+                    info_lines.append(f"   {key}: {value}")
+        except:
+            pass
+        
+        if group_user.expiration_date:
+            info_lines.append(f"⏰ 到期时间: {group_user.expiration_date.strftime('%Y-%m-%d %H:%M')}")
+        
+        info_lines.append(f"🚫 封禁状态: {'已封禁' if group_user.is_banned else '正常'}")
+        
+        if group_user.checkin_time:
+            info_lines.append(f"✅ 最后签到: {group_user.checkin_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        info_lines.append(f"🟢 在线状态: {'在线' if group_user.online else '离线'}")
+    
+    if user_points:
+        info_lines.append(f"\n💰 积分信息")
+        info_lines.append(f"━━━━━━━━━━━━━━━━")
+        info_lines.append(f"💎 当前积分: {user_points.points}")
+        info_lines.append(f"📈 总获得: {user_points.total_earned}")
+        info_lines.append(f"📉 总消耗: {user_points.total_spent}")
+    
+    # Get member info from Telegram
+    try:
+        member = await context.bot.get_chat_member(chat.id, target_user.id)
+        info_lines.append(f"\n👥 群组权限")
+        info_lines.append(f"━━━━━━━━━━━━━━━━")
+        info_lines.append(f"📌 身份: {member.status}")
+        if member.status == 'creator':
+            info_lines.append(f"   (群主)")
+        elif member.status == 'administrator':
+            info_lines.append(f"   (管理员)")
+        elif member.status == 'member':
+            info_lines.append(f"   (普通成员)")
+        elif member.status == 'restricted':
+            info_lines.append(f"   (受限用户)")
+        elif member.status == 'left':
+            info_lines.append(f"   (已退出)")
+        elif member.status == 'kicked':
+            info_lines.append(f"   (已被移除)")
+    except Exception as e:
+        print(f"Error getting member info: {e}")
+    
+    info_text = "\n".join(info_lines)
+    await update.message.reply_text(info_text)
 
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")

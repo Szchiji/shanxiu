@@ -434,7 +434,12 @@
                         </li>
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}">
-                                <i class="fa-solid fa-sync"></i> 同步消息
+                                <i class="fa-solid fa-sync"></i> 同步设置
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}">
+                                <i class="fa-solid fa-list"></i> 同步日志
                             </a>
                         </li>
                         <li class="nav-item">

@@ -945,6 +945,11 @@ async def check_scheduled_messages(context):
                     if not msg.group or not msg.group.is_active:
                         continue
                     
+                    # 检查模块是否启用
+                    conf = get_group_conf(msg.group)
+                    if not conf.get('scheduled_msg_open', True):
+                        continue
+                    
                     # 检查开始时间
                     if msg.start_time and now < msg.start_time:
                         continue

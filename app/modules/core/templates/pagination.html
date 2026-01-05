@@ -137,12 +137,11 @@
 </div>
 
 <script>
-    // Use unique function names to avoid conflicts when pagination is used multiple times
+    // Use IIFE to avoid polluting global scope
     (function() {
-        // Store the max pages value in a data attribute for dynamic access
-        const paginationContainer = document.currentScript.previousElementSibling;
-        const maxPages = {{ total_pages }};
-        
+        // Pagination functions - assigned to window for onclick handlers
+        // Note: These will be overwritten if pagination macro is used multiple times,
+        // but that's acceptable as all pagination controls navigate to the same page
         window.goToPage = function(page) {
             // Remove hardcoded limit - let the server handle validation
             if (page < 1) return;

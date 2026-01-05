@@ -448,7 +448,7 @@ def page_group_bottom_button(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.button_order).all()
+    buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.row_position, GroupBottomButton.button_order).all()
     
     # Convert buttons to JSON-serializable dictionaries
     buttons_json = json.dumps([{
@@ -457,6 +457,8 @@ def page_group_bottom_button(gid):
         'button_url': b.button_url,
         'button_callback': b.button_callback,
         'button_order': b.button_order,
+        'row_position': b.row_position,
+        'trigger_keyword': b.trigger_keyword,
         'is_active': b.is_active
     } for b in buttons], ensure_ascii=False)
     
@@ -2018,6 +2020,7 @@ def api_save_group_bottom_button():
         button.button_callback = d.get('button_callback')
         button.trigger_keyword = d.get('trigger_keyword', '').strip() or None
         button.button_order = d.get('button_order', 0)
+        button.row_position = d.get('row_position', 0)
         button.is_active = d.get('is_active', True)
         
         db.session.commit()
@@ -2093,11 +2096,11 @@ def api_push_group_bottom_buttons():
         group = BotGroup.query.get(d['group_id'])
         if not group: return jsonify({'status':'error','msg':'Group not found'})
         
-        # Get active buttons ordered by button_order
+        # Get active buttons ordered by row_position, then button_order
         buttons = GroupBottomButton.query.filter_by(
             group_id=group.id,
             is_active=True
-        ).order_by(GroupBottomButton.button_order).all()
+        ).order_by(GroupBottomButton.row_position, GroupBottomButton.button_order).all()
         
         if not buttons:
             return jsonify({'status':'error','msg':'没有可推送的按钮'})
@@ -2106,26 +2109,90 @@ def api_push_group_bottom_buttons():
         if not global_ptb_app or not global_bot_loop:
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
         
-        # Send message with reply keyboard to group
+        # Check if any button has URL or callback - if so, use inline keyboard
+        has_url_or_callback = any(btn.button_url or btn.button_callback for btn in buttons)
+        
+        # Send message with keyboard to group
         async def _send_menu_keyboard():
             try:
-                # Build reply keyboard
-                keyboard = []
-                for button in buttons:
-                    keyboard.append([KeyboardButton(button.button_text)])
-                
-                reply_markup = ReplyKeyboardMarkup(
-                    keyboard,
-                    resize_keyboard=True,
-                    one_time_keyboard=False
-                )
-                
-                # Send message with menu keyboard
-                await global_ptb_app.bot.send_message(
-                    chat_id=group.chat_id,
-                    text="📋 群组菜单已更新，请点击下方按钮使用功能：",
-                    reply_markup=reply_markup
-                )
+                if has_url_or_callback:
+                    # Use InlineKeyboardMarkup for buttons with URLs/callbacks
+                    keyboard = []
+                    if buttons:  # Only proceed if there are buttons
+                        current_row = []
+                        current_row_num = buttons[0].row_position
+                        
+                        for button in buttons:
+                            # Start a new row if row_position changes
+                            if button.row_position != current_row_num:
+                                if current_row:
+                                    keyboard.append(current_row)
+                                current_row = []
+                                current_row_num = button.row_position
+                            
+                            # Add button with URL or callback
+                            if button.button_url:
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    url=button.button_url
+                                ))
+                            elif button.button_callback:
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    callback_data=button.button_callback
+                                ))
+                            else:
+                                # For buttons without URL or callback, use text as callback
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    callback_data=f"btn_{button.id}"
+                                ))
+                        
+                        # Add the last row
+                        if current_row:
+                            keyboard.append(current_row)
+                    
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Send message with inline keyboard
+                    await global_ptb_app.bot.send_message(
+                        chat_id=group.chat_id,
+                        text="📋 群组菜单已更新，请点击下方按钮使用功能：",
+                        reply_markup=reply_markup
+                    )
+                else:
+                    # Use ReplyKeyboardMarkup for text-only buttons
+                    keyboard = []
+                    if buttons:  # Only proceed if there are buttons
+                        current_row = []
+                        current_row_num = buttons[0].row_position
+                        
+                        for button in buttons:
+                            # Start a new row if row_position changes
+                            if button.row_position != current_row_num:
+                                if current_row:
+                                    keyboard.append(current_row)
+                                current_row = []
+                                current_row_num = button.row_position
+                            
+                            current_row.append(KeyboardButton(button.button_text))
+                        
+                        # Add the last row
+                        if current_row:
+                            keyboard.append(current_row)
+                    
+                    reply_markup = ReplyKeyboardMarkup(
+                        keyboard,
+                        resize_keyboard=True,
+                        one_time_keyboard=False
+                    )
+                    
+                    # Send message with reply keyboard
+                    await global_ptb_app.bot.send_message(
+                        chat_id=group.chat_id,
+                        text="📋 群组菜单已更新，请点击下方按钮使用功能：",
+                        reply_markup=reply_markup
+                    )
                 return True
             except Exception as e:
                 print(f"Error pushing buttons to group: {e}")
@@ -4840,7 +4907,7 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
                 buttons = GroupBottomButton.query.filter_by(
                     group_id=group.id,
                     is_active=True
-                ).order_by(GroupBottomButton.button_order).all()
+                ).order_by(GroupBottomButton.row_position, GroupBottomButton.button_order).all()
                 
                 return buttons
         
@@ -4852,9 +4919,23 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
         if use_reply_keyboard:
             # Build reply keyboard (menu keyboard) - only button text, no URLs
             keyboard = []
+            current_row = []
+            current_row_num = buttons[0].row_position  # Safe because we checked buttons is not empty
+            
             for button in buttons:
+                # Start a new row if row_position changes
+                if button.row_position != current_row_num:
+                    if current_row:
+                        keyboard.append(current_row)
+                    current_row = []
+                    current_row_num = button.row_position
+                
                 # Reply keyboard buttons don't support URLs, just text
-                keyboard.append([KeyboardButton(button.button_text)])
+                current_row.append(KeyboardButton(button.button_text))
+            
+            # Add the last row
+            if current_row:
+                keyboard.append(current_row)
             
             if keyboard:
                 return ReplyKeyboardMarkup(
@@ -4866,17 +4947,31 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
         else:
             # Build inline keyboard (original behavior)
             keyboard = []
+            current_row = []
+            current_row_num = buttons[0].row_position  # Safe because we checked buttons is not empty
+            
             for button in buttons:
+                # Start a new row if row_position changes
+                if button.row_position != current_row_num:
+                    if current_row:
+                        keyboard.append(current_row)
+                    current_row = []
+                    current_row_num = button.row_position
+                
                 if button.button_url:
-                    keyboard.append([InlineKeyboardButton(
+                    current_row.append(InlineKeyboardButton(
                         button.button_text,
                         url=button.button_url
-                    )])
+                    ))
                 elif button.button_callback:
-                    keyboard.append([InlineKeyboardButton(
+                    current_row.append(InlineKeyboardButton(
                         button.button_text,
                         callback_data=button.button_callback
-                    )])
+                    ))
+            
+            # Add the last row
+            if current_row:
+                keyboard.append(current_row)
             
             if keyboard:
                 return InlineKeyboardMarkup(keyboard)

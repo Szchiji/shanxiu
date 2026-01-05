@@ -15,10 +15,11 @@ This feature allows administrators to visually edit group bottom buttons and the
 3. 选择"群底部按钮"模块
 4. 添加/编辑/排序按钮：
    - **按钮文本**: 显示在键盘上的文字
-   - **按钮URL**: 点击按钮打开的链接（可选）
+   - **按钮URL**: 点击按钮打开的链接（可选）- 🆕 有URL的按钮将显示为可点击的内联按钮
    - **回调数据**: 内联按钮的回调数据（可选）
    - **触发关键词**: 用户发送此关键词时自动显示按钮（可选）
-   - **显示顺序**: 控制按钮的显示顺序
+   - **行号**: 🆕 设置按钮所在的行，同一行的按钮会并排显示
+   - **列顺序**: 控制同一行内按钮的显示顺序
    - **启用/禁用**: 控制按钮是否激活
 
 ### 步骤 2: 推送到群组 (Step 2: Push to Group)
@@ -53,10 +54,12 @@ This feature allows administrators to visually edit group bottom buttons and the
 - 支持多行按钮布局
 
 ### ✅ 灵活配置 (Flexible Configuration)
-- 支持 URL 链接
+- 🆕 支持多按钮并排显示（同一行可放置多个按钮）
+- 🆕 支持可点击的 URL 链接（使用内联键盘）
 - 支持内联回调
 - 支持关键词触发
 - 支持启用/禁用控制
+- 自动选择最佳键盘类型（内联或回复键盘）
 
 ## 技术实现 (Technical Implementation)
 
@@ -72,10 +75,14 @@ This feature allows administrators to visually edit group bottom buttons and the
 - **错误处理**: 完善的错误捕获和提示
 
 ### Telegram Bot
-- **ReplyKeyboardMarkup**: 持久化菜单键盘
+- **InlineKeyboardMarkup**: 🆕 内联键盘（支持URL链接）
+- **InlineKeyboardButton**: 🆕 可点击的链接按钮
+- **ReplyKeyboardMarkup**: 持久化菜单键盘（仅文本按钮）
 - **KeyboardButton**: 按钮文本
 - **resize_keyboard**: 自适应键盘大小
 - **one_time_keyboard=False**: 持久显示
+- 🆕 **智能键盘选择**: 有URL时自动使用内联键盘，纯文本时使用回复键盘
+- 🆕 **多按钮行布局**: 根据 row_position 自动排列按钮
 
 ## 示例场景 (Example Scenarios)
 
@@ -87,13 +94,18 @@ This feature allows administrators to visually edit group bottom buttons and the
 - 💰 抽奖活动
 - 🎯 每日签到
 
-### 场景 2: 快速链接菜单
+### 场景 2: 快速链接菜单（带URL）
 配置按钮：
-- 🌐 官方网站
-- 📱 下载APP
-- 💬 客服支持
-- 📢 最新公告
-- ⚙️ 设置
+- 🌐 官方网站 (row: 0, URL: https://example.com)
+- 📱 下载APP (row: 0, URL: https://app.example.com)
+- 💬 客服支持 (row: 1, URL: https://support.example.com)
+- 📢 最新公告 (row: 1, URL: https://news.example.com)
+
+布局效果：
+```
+[🌐 官方网站] [📱 下载APP]
+[💬 客服支持] [📢 最新公告]
+```
 
 ### 场景 3: 功能入口菜单
 配置按钮：
@@ -102,6 +114,19 @@ This feature allows administrators to visually edit group bottom buttons and the
 - 🗳️ 参与投票
 - 🏆 竞拍专区
 - 📈 数据统计
+
+### 场景 4: 🆕 多按钮行布局
+配置按钮：
+- ✅ 是 (row: 0, col: 0)
+- ❌ 否 (row: 0, col: 1)
+- ❓ 不确定 (row: 0, col: 2)
+- 📊 查看结果 (row: 1, col: 0)
+
+布局效果：
+```
+[✅ 是] [❌ 否] [❓ 不确定]
+     [📊 查看结果]
+```
 
 ## API 说明 (API Documentation)
 
@@ -165,6 +190,14 @@ This feature allows administrators to visually edit group bottom buttons and the
 - ✅ 所有现代浏览器
 
 ## 版本历史 (Version History)
+
+### v1.1.0 (2026-01-05)
+- 🆕 支持多按钮并排显示（添加 row_position 字段）
+- 🆕 支持可点击的 URL 链接（自动使用 InlineKeyboardMarkup）
+- 🆕 智能键盘类型选择（有URL时用内联键盘，纯文本时用回复键盘）
+- 🆕 改进的按钮布局控制（行号 + 列顺序）
+- ✅ 修复：有URL的按钮现在可以正常跳转
+- ✅ 修复：一行可以显示多个按钮
 
 ### v1.0.0 (2026-01-05)
 - ✨ 初始版本发布

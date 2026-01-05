@@ -335,6 +335,7 @@ class GroupBottomButton(db.Model):
     button_callback = db.Column(db.String(255), nullable=True)  # Callback data for inline button
     trigger_keyword = db.Column(db.String(255), nullable=True)  # 触发关键词，支持逗号分隔多个
     button_order = db.Column(db.Integer, default=0)  # 显示顺序
+    row_position = db.Column(db.Integer, default=0)  # 行号，同一行的按钮会并排显示
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)

@@ -1401,53 +1401,53 @@ async def on_message(update: Update, context):
                 ).first()
                 
                 if auto_reply:
-                try:
-                    # 构建按钮
-                    buttons = []
                     try:
-                        links = json.loads(auto_reply.links or '[]')
-                        for link in links:
-                            if link.get('text') and link.get('url'):
-                                buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
-                    except:
-                        pass
-                    
-                    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-                    
-                    # 发送回复
-                    sent_reply = None
-                    content = sanitize_html_for_telegram(auto_reply.content or '')
-                    
-                    if auto_reply.media_type == 'image' and auto_reply.media_url:
-                        sent_reply = await msg.reply_photo(
-                            photo=auto_reply.media_url,
-                            caption=content,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup
-                        )
-                    elif auto_reply.media_type == 'video' and auto_reply.media_url:
-                        sent_reply = await msg.reply_video(
-                            video=auto_reply.media_url,
-                            caption=content,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup
-                        )
-                    elif content:
-                        sent_reply = await msg.reply_html(
-                            content,
-                            reply_markup=reply_markup,
-                            disable_web_page_preview=True
-                        )
-                    
-                    # 自动删除回复
-                    if sent_reply and auto_reply.delete_after > 0:
-                        context.job_queue.run_once(
-                            lambda c: c.job.data.delete(),
-                            auto_reply.delete_after,
-                            data=sent_reply
-                        )
-                except Exception as e:
-                    print(f"Auto reply error: {e}")
+                        # 构建按钮
+                        buttons = []
+                        try:
+                            links = json.loads(auto_reply.links or '[]')
+                            for link in links:
+                                if link.get('text') and link.get('url'):
+                                    buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                        except:
+                            pass
+                        
+                        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+                        
+                        # 发送回复
+                        sent_reply = None
+                        content = sanitize_html_for_telegram(auto_reply.content or '')
+                        
+                        if auto_reply.media_type == 'image' and auto_reply.media_url:
+                            sent_reply = await msg.reply_photo(
+                                photo=auto_reply.media_url,
+                                caption=content,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        elif auto_reply.media_type == 'video' and auto_reply.media_url:
+                            sent_reply = await msg.reply_video(
+                                video=auto_reply.media_url,
+                                caption=content,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        elif content:
+                            sent_reply = await msg.reply_html(
+                                content,
+                                reply_markup=reply_markup,
+                                disable_web_page_preview=True
+                            )
+                        
+                        # 自动删除回复
+                        if sent_reply and auto_reply.delete_after > 0:
+                            context.job_queue.run_once(
+                                lambda c: c.job.data.delete(),
+                                auto_reply.delete_after,
+                                data=sent_reply
+                            )
+                    except Exception as e:
+                        print(f"Auto reply error: {e}")
                 # Continue to check for query functionality instead of returning
             
             # 4. 查询功能

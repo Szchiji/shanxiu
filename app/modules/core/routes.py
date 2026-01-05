@@ -1157,9 +1157,22 @@ def api_save_invitation_activity():
         settings.reward_points = d.get('reward_points', 10)
         settings.minimum_invites = d.get('minimum_invites', 1)
         if d.get('activity_start'):
-            settings.activity_start = datetime.fromisoformat(d['activity_start'].replace('Z', '+00:00'))
+            try:
+                # Handle datetime-local input format (YYYY-MM-DDTHH:MM)
+                activity_start = d['activity_start']
+                if 'Z' in activity_start:
+                    activity_start = activity_start.replace('Z', '+00:00')
+                settings.activity_start = datetime.fromisoformat(activity_start)
+            except (ValueError, TypeError):
+                pass
         if d.get('activity_end'):
-            settings.activity_end = datetime.fromisoformat(d['activity_end'].replace('Z', '+00:00'))
+            try:
+                activity_end = d['activity_end']
+                if 'Z' in activity_end:
+                    activity_end = activity_end.replace('Z', '+00:00')
+                settings.activity_end = datetime.fromisoformat(activity_end)
+            except (ValueError, TypeError):
+                pass
         settings.description = d.get('description')
         
         db.session.commit()
@@ -1301,9 +1314,21 @@ def api_save_points_auction():
         auction.item_description = d.get('item_description')
         auction.starting_price = d.get('starting_price', 100)
         if d.get('auction_start'):
-            auction.auction_start = datetime.fromisoformat(d['auction_start'].replace('Z', '+00:00'))
+            try:
+                auction_start = d['auction_start']
+                if 'Z' in auction_start:
+                    auction_start = auction_start.replace('Z', '+00:00')
+                auction.auction_start = datetime.fromisoformat(auction_start)
+            except (ValueError, TypeError):
+                pass
         if d.get('auction_end'):
-            auction.auction_end = datetime.fromisoformat(d['auction_end'].replace('Z', '+00:00'))
+            try:
+                auction_end = d['auction_end']
+                if 'Z' in auction_end:
+                    auction_end = auction_end.replace('Z', '+00:00')
+                auction.auction_end = datetime.fromisoformat(auction_end)
+            except (ValueError, TypeError):
+                pass
         auction.status = d.get('status', 'pending')
         
         db.session.commit()
@@ -1350,9 +1375,21 @@ def api_save_group_lottery():
         lottery.min_messages = d.get('min_messages', 10)
         lottery.top_n_winners = d.get('top_n_winners', 3)
         if d.get('start_time'):
-            lottery.start_time = datetime.fromisoformat(d['start_time'].replace('Z', '+00:00'))
+            try:
+                start_time = d['start_time']
+                if 'Z' in start_time:
+                    start_time = start_time.replace('Z', '+00:00')
+                lottery.start_time = datetime.fromisoformat(start_time)
+            except (ValueError, TypeError):
+                pass
         if d.get('end_time'):
-            lottery.end_time = datetime.fromisoformat(d['end_time'].replace('Z', '+00:00'))
+            try:
+                end_time = d['end_time']
+                if 'Z' in end_time:
+                    end_time = end_time.replace('Z', '+00:00')
+                lottery.end_time = datetime.fromisoformat(end_time)
+            except (ValueError, TypeError):
+                pass
         lottery.status = d.get('status', 'pending')
         
         db.session.commit()

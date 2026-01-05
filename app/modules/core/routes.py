@@ -2761,11 +2761,14 @@ async def track_user_name_change(update: Update, context):
                     
                     # 🆕 Send alert message in group
                     try:
+                        # Sanitize names for HTML safety
+                        old_name_safe = sanitize_html_for_telegram(last_change.new_name)
+                        new_name_safe = sanitize_html_for_telegram(current_name)
                         alert_message = (
                             f"📝 用户改名提醒\n\n"
                             f"用户ID: <code>{user.id}</code>\n"
-                            f"旧昵称: {last_change.new_name}\n"
-                            f"新昵称: {current_name}\n"
+                            f"旧昵称: {old_name_safe}\n"
+                            f"新昵称: {new_name_safe}\n"
                             f"时间: {get_beijing_now().strftime('%Y-%m-%d %H:%M:%S')}"
                         )
                         await context.bot.send_message(

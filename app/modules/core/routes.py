@@ -2175,7 +2175,7 @@ def api_push_group_bottom_buttons():
         # Get the input field placeholder from the first button that has one
         input_placeholder = None
         for button in buttons:
-            if hasattr(button, 'input_field_placeholder') and button.input_field_placeholder:
+            if button.input_field_placeholder:
                 input_placeholder = button.input_field_placeholder
                 break
         

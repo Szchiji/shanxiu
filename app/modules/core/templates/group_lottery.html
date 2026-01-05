@@ -198,8 +198,8 @@ function editLottery(id, lottery) {
     document.getElementById('min_messages').value = lottery.min_messages || 10;
     document.getElementById('top_n_winners').value = lottery.top_n_winners || 3;
     document.getElementById('prize_description').value = lottery.prize_description || '';
-    document.getElementById('start_time').value = lottery.start_time ? lottery.start_time.substring(0, 16) : '';
-    document.getElementById('end_time').value = lottery.end_time ? lottery.end_time.substring(0, 16) : '';
+    document.getElementById('start_time').value = (lottery.start_time && lottery.start_time.length >= 16) ? lottery.start_time.substring(0, 16) : '';
+    document.getElementById('end_time').value = (lottery.end_time && lottery.end_time.length >= 16) ? lottery.end_time.substring(0, 16) : '';
     document.getElementById('status').value = lottery.status || 'pending';
     toggleLotteryFields();
     lotteryModal.show();

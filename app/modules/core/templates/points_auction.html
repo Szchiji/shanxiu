@@ -171,8 +171,8 @@ function editAuction(id, auction) {
     document.getElementById('item_name').value = auction.item_name || '';
     document.getElementById('item_description').value = auction.item_description || '';
     document.getElementById('starting_price').value = auction.starting_price || 100;
-    document.getElementById('auction_start').value = auction.auction_start ? auction.auction_start.substring(0, 16) : '';
-    document.getElementById('auction_end').value = auction.auction_end ? auction.auction_end.substring(0, 16) : '';
+    document.getElementById('auction_start').value = (auction.auction_start && auction.auction_start.length >= 16) ? auction.auction_start.substring(0, 16) : '';
+    document.getElementById('auction_end').value = (auction.auction_end && auction.auction_end.length >= 16) ? auction.auction_end.substring(0, 16) : '';
     document.getElementById('status').value = auction.status || 'pending';
     auctionModal.show();
 }

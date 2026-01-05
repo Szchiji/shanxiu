@@ -2066,11 +2066,13 @@ def api_save_group_bottom_button():
             button = GroupBottomButton(group_id=d['group_id'])
             db.session.add(button)
         
+        # Active UI fields
         button.button_text = d.get('button_text', '')
         button.input_field_placeholder = d.get('input_field_placeholder', '').strip() or None
         button.button_order = d.get('button_order', 0)
         button.row_position = d.get('row_position', 0)
         button.is_active = d.get('is_active', True)
+        
         # Keep these fields for backward compatibility but don't expose in UI
         button.button_url = d.get('button_url')
         button.button_callback = d.get('button_callback')

@@ -76,6 +76,7 @@ def fix_database_schema(app):
             "ALTER TABLE bot_clones ADD COLUMN owner_user_id BIGINT",
             "ALTER TABLE bot_clones ADD COLUMN admin_user_ids TEXT DEFAULT '[]'",
             # User points table columns - add current_level_id to track member levels
+            # Column is nullable, so existing records will have NULL until update_member_levels runs
             "ALTER TABLE user_points ADD COLUMN current_level_id INTEGER REFERENCES member_level(id)",
         ]
         

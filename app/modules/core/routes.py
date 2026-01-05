@@ -1715,15 +1715,24 @@ async def check_expired_users(context):
     
     # Now perform all async Telegram operations with rate limiting
     async def ban_user_async(user, group, ban_msg):
-        """Ban a single user and send notification"""
+        """Mute an expired user and send notification"""
         try:
-            # Ban the user in the group
+            # Mute the user in the group with comprehensive restrictions
             await context.bot.restrict_chat_member(
                 chat_id=group.chat_id,
                 user_id=user.tg_id,
-                permissions=ChatPermissions(can_send_messages=False)
+                permissions=ChatPermissions(
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_polls=False,
+                    can_send_other_messages=False,
+                    can_add_web_page_previews=False,
+                    can_change_info=False,
+                    can_invite_users=False,
+                    can_pin_messages=False
+                )
             )
-            print(f"⛔️ Banned expired user {user.tg_id} in group {group.title}", flush=True)
+            print(f"⛔️ Muted expired user {user.tg_id} in group {group.title}", flush=True)
             
             # Try to send notification to user privately
             try:
@@ -1739,7 +1748,7 @@ async def check_expired_users(context):
                 print(f"Failed to send ban notification to user {user.tg_id}: {e}")
                 
         except Exception as e:
-            print(f"Error banning user {user.tg_id}: {e}")
+            print(f"Error muting user {user.tg_id}: {e}")
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -1895,6 +1904,678 @@ async def check_scheduled_messages(context):
         except Exception as e:
             print(f"Error sending scheduled message: {e}")
 
+# 🆕 New Feature Handlers
+
+async def handle_new_chat_member(update: Update, context):
+    """Handle new members joining the group - Entry verification, welcome messages, etc."""
+    if not global_flask_app or not update.message or not update.message.new_chat_members:
+        return
+    
+    try:
+        chat = update.effective_chat
+        if chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return
+            
+            settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
+            if not settings:
+                return
+            
+            for new_member in update.message.new_chat_members:
+                if new_member.is_bot:
+                    continue
+                
+                # Entry verification
+                if settings.entry_verification_enabled and settings.verification_question:
+                    try:
+                        # Send verification question
+                        question_text = f"👋 欢迎 {new_member.first_name}!\n\n"
+                        question_text += f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
+                        question_text += f"⏱ 超时时间: {settings.verification_timeout}秒"
+                        
+                        await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=question_text
+                        )
+                        # Note: Full verification logic would require storing pending verifications
+                        # and checking responses - simplified here for initial implementation
+                    except Exception as e:
+                        print(f"Error sending verification question: {e}")
+                
+                # Welcome message
+                if settings.welcome_enabled and settings.welcome_message:
+                    try:
+                        welcome_text = settings.welcome_message.replace('{username}', new_member.first_name)
+                        welcome_text = sanitize_html_for_telegram(welcome_text)
+                        
+                        if settings.welcome_media_type == 'image' and settings.welcome_media_url:
+                            await context.bot.send_photo(
+                                chat_id=chat.id,
+                                photo=settings.welcome_media_url,
+                                caption=welcome_text,
+                                parse_mode='HTML'
+                            )
+                        elif settings.welcome_media_type == 'video' and settings.welcome_media_url:
+                            await context.bot.send_video(
+                                chat_id=chat.id,
+                                video=settings.welcome_media_url,
+                                caption=welcome_text,
+                                parse_mode='HTML'
+                            )
+                        elif welcome_text:
+                            await context.bot.send_message(
+                                chat_id=chat.id,
+                                text=welcome_text,
+                                parse_mode='HTML'
+                            )
+                    except Exception as e:
+                        print(f"Error sending welcome message: {e}")
+                
+                # Track invitation for points system
+                if update.message.from_user and update.message.from_user.id != new_member.id:
+                    inviter_id = update.message.from_user.id
+                    invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
+                    
+                    if invitation_activity:
+                        # Award points to inviter
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=inviter_id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
+                                group_id=group.id,
+                                user_id=inviter_id,
+                                points_balance=0
+                            )
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += invitation_activity.reward_points
+                        
+                        # Log the points transaction
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=inviter_id,
+                            points_change=invitation_activity.reward_points,
+                            reason=f"邀请新成员: {new_member.first_name}",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
+                        
+    except Exception as e:
+        print(f"Error in handle_new_chat_member: {e}")
+
+async def handle_left_chat_member(update: Update, context):
+    """Handle members leaving the group - Exit ban functionality"""
+    if not global_flask_app or not update.message or not update.message.left_chat_member:
+        return
+    
+    try:
+        chat = update.effective_chat
+        if chat.type not in ['group', 'supergroup']:
+            return
+        
+        left_member = update.message.left_chat_member
+        if left_member.is_bot:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return
+            
+            settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
+            if not settings or not settings.exit_ban_enabled:
+                return
+            
+            # Ban user who left
+            try:
+                if settings.exit_ban_duration == 0:
+                    # Permanent ban
+                    await context.bot.ban_chat_member(chat.id, left_member.id)
+                else:
+                    # Temporary ban
+                    until_date = datetime.now() + timedelta(minutes=settings.exit_ban_duration)
+                    await context.bot.ban_chat_member(
+                        chat.id,
+                        left_member.id,
+                        until_date=until_date
+                    )
+                print(f"Banned user {left_member.id} for leaving group {chat.id}")
+            except Exception as e:
+                print(f"Error banning user who left: {e}")
+    
+    except Exception as e:
+        print(f"Error in handle_left_chat_member: {e}")
+
+async def check_spam_protection(update: Update, context):
+    """Monitor messages for spam protection rules"""
+    if not global_flask_app or not update.effective_message:
+        return False
+    
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return False
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return False
+            
+            protection = SpamProtection.query.filter_by(group_id=group.id, enabled=True).first()
+            if not protection:
+                return False
+            
+            # Check whitelist
+            try:
+                whitelist = json.loads(protection.whitelist_users or '[]')
+                if user.id in whitelist:
+                    return False
+            except json.JSONDecodeError as e:
+                print(f"Error parsing whitelist JSON: {e}")
+                # Continue with spam check if whitelist is invalid
+            
+            # Check for blocked content
+            should_punish = False
+            
+            # Block links
+            if protection.block_links and msg.text:
+                if 'http://' in msg.text or 'https://' in msg.text or 'www.' in msg.text:
+                    should_punish = True
+            
+            # Block forwards
+            if protection.block_forwards and msg.forward_date:
+                should_punish = True
+            
+            # Block stickers
+            if protection.block_stickers and msg.sticker:
+                should_punish = True
+            
+            if should_punish:
+                # Delete the message
+                try:
+                    await msg.delete()
+                except Exception as e:
+                    print(f"Failed to delete spam message: {e}")
+                
+                # Apply punishment
+                if protection.punishment_type == 'mute':
+                    until_date = datetime.now() + timedelta(minutes=protection.punishment_duration)
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat.id,
+                        user_id=user.id,
+                        permissions=ChatPermissions(can_send_messages=False),
+                        until_date=until_date
+                    )
+                elif protection.punishment_type == 'kick':
+                    await context.bot.ban_chat_member(chat.id, user.id)
+                    await context.bot.unban_chat_member(chat.id, user.id)
+                elif protection.punishment_type == 'ban':
+                    until_date = datetime.now() + timedelta(minutes=protection.punishment_duration)
+                    await context.bot.ban_chat_member(chat.id, user.id, until_date=until_date)
+                
+                return True
+            
+            return False
+            
+    except Exception as e:
+        print(f"Error in check_spam_protection: {e}")
+        return False
+
+async def check_timed_group_control(context):
+    """Background task to check and apply timed group controls"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_controls():
+            with global_flask_app.app_context():
+                return TimedGroupControl.query.filter_by(enabled=True).all()
+        
+        controls = await asyncio.get_running_loop().run_in_executor(None, _get_controls)
+        
+        for control in controls:
+            try:
+                # Get current time in the specified timezone
+                tz = pytz.timezone(control.timezone)
+                now = datetime.now(tz)
+                current_time = now.time()
+                
+                # Check if we should open or close the group
+                if control.open_time and control.close_time:
+                    # Determine if group should be open or closed
+                    should_be_open = False
+                    
+                    if control.open_time < control.close_time:
+                        # Normal case: open at 9am, close at 5pm
+                        should_be_open = control.open_time <= current_time < control.close_time
+                    else:
+                        # Overnight case: open at 9pm, close at 6am
+                        should_be_open = current_time >= control.open_time or current_time < control.close_time
+                    
+                    # Get group to check current state
+                    with global_flask_app.app_context():
+                        group = BotGroup.query.get(control.group_id)
+                        if not group:
+                            continue
+                        
+                        chat_id = int(group.chat_id)
+                        
+                        # Track state in group config to avoid repeated messages
+                        conf = get_group_conf(group)
+                        last_state = conf.get('_timed_control_state', None)
+                        
+                        # Only act if state has changed
+                        if last_state != should_be_open:
+                            try:
+                                if should_be_open:
+                                    # Open the group - allow all members to send messages
+                                    # Note: This requires bot to have appropriate admin rights
+                                    # For supergroups, we can't change permissions for all users at once
+                                    # Instead, we send the open message
+                                    if control.open_message:
+                                        open_text = sanitize_html_for_telegram(control.open_message)
+                                        await context.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=open_text,
+                                            parse_mode='HTML'
+                                        )
+                                else:
+                                    # Close the group - send close message
+                                    if control.close_message:
+                                        close_text = sanitize_html_for_telegram(control.close_message)
+                                        await context.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=close_text,
+                                            parse_mode='HTML'
+                                        )
+                                
+                                # Update state
+                                conf['_timed_control_state'] = should_be_open
+                                group.config = json.dumps(conf, ensure_ascii=False)
+                                db.session.commit()
+                                
+                            except Exception as e:
+                                print(f"Error applying timed control for group {chat_id}: {e}")
+                        
+            except Exception as e:
+                print(f"Error processing timed control for group {control.group_id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in check_timed_group_control: {e}")
+
+async def track_user_name_change(update: Update, context):
+    """Track when users change their names"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            # Get the last known name for this user
+            last_change = UserNameChange.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).order_by(UserNameChange.changed_at.desc()).first()
+            
+            current_name = user.first_name
+            if user.last_name:
+                current_name += f" {user.last_name}"
+            
+            # Check if name has changed
+            if last_change:
+                if last_change.new_name != current_name:
+                    # Name has changed
+                    name_change = UserNameChange(
+                        group_id=group.id,
+                        user_id=user.id,
+                        old_name=last_change.new_name,
+                        new_name=current_name,
+                        changed_at=get_beijing_now()
+                    )
+                    db.session.add(name_change)
+                    db.session.commit()
+            else:
+                # First time seeing this user, record initial name
+                name_change = UserNameChange(
+                    group_id=group.id,
+                    user_id=user.id,
+                    old_name=None,
+                    new_name=current_name,
+                    changed_at=get_beijing_now()
+                )
+                db.session.add(name_change)
+                db.session.commit()
+                
+    except Exception as e:
+        print(f"Error in track_user_name_change: {e}")
+
+async def handle_sync_group_messages(update: Update, context):
+    """Sync messages from source group to target groups"""
+    if not global_flask_app or not update.effective_message:
+        return
+    
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            # Find sync settings where this group is the source
+            sync_settings = SyncGroupMessages.query.filter_by(
+                source_group_id=group.id,
+                enabled=True
+            ).all()
+            
+            for sync_setting in sync_settings:
+                try:
+                    # Check keyword filters
+                    if msg.text and sync_setting.filter_keywords:
+                        try:
+                            keywords = json.loads(sync_setting.filter_keywords)
+                            if any(kw in msg.text for kw in keywords):
+                                continue  # Skip this message due to keyword filter
+                        except json.JSONDecodeError as e:
+                            print(f"Error parsing filter keywords JSON: {e}")
+                            # Continue with sync if filter is invalid
+                    
+                    # Skip forwards if not enabled
+                    if msg.forward_date and not sync_setting.sync_forwards:
+                        continue
+                    
+                    # Sync the message to target group
+                    # target_group_id is stored as string chat_id, not database id
+                    target_chat_id = sync_setting.target_group_id
+                    
+                    if msg.text:
+                        sent_msg = await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=msg.text
+                        )
+                    elif msg.photo and sync_setting.sync_media:
+                        sent_msg = await context.bot.send_photo(
+                            chat_id=target_chat_id,
+                            photo=msg.photo[-1].file_id,
+                            caption=msg.caption
+                        )
+                    elif msg.video and sync_setting.sync_media:
+                        sent_msg = await context.bot.send_video(
+                            chat_id=target_chat_id,
+                            video=msg.video.file_id,
+                            caption=msg.caption
+                        )
+                    else:
+                        continue
+                    
+                    # Log the sync
+                    log_entry = SyncMessageLog(
+                        source_group_id=group.id,
+                        target_group_id=target_chat_id,
+                        source_message_id=msg.message_id,
+                        target_message_id=sent_msg.message_id,
+                        user_id=user.id,
+                        username=user.username,
+                        message_type='text' if msg.text else ('photo' if msg.photo else 'video'),
+                        content_preview=msg.text[:100] if msg.text else None,
+                        status='success',
+                        synced_at=get_beijing_now()
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                    
+                except Exception as e:
+                    print(f"Error syncing message to {sync_setting.target_group_id}: {e}")
+                    # Log the failure
+                    log_entry = SyncMessageLog(
+                        source_group_id=group.id,
+                        target_group_id=sync_setting.target_group_id,
+                        source_message_id=msg.message_id,
+                        user_id=user.id,
+                        username=user.username,
+                        status='failed',
+                        error_message=str(e),
+                        synced_at=get_beijing_now()
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                    
+    except Exception as e:
+        print(f"Error in handle_sync_group_messages: {e}")
+
+async def handle_auto_delete_messages(update: Update, context):
+    """Auto-delete system messages based on settings"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        msg = update.message
+        chat = update.effective_chat
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not settings:
+                return
+            
+            should_delete = False
+            
+            # Check for join messages
+            if settings.auto_delete_join_msg and msg.new_chat_members:
+                should_delete = True
+            
+            # Check for leave messages
+            if settings.auto_delete_leave_msg and msg.left_chat_member:
+                should_delete = True
+            
+            # Check for pin messages
+            if settings.auto_delete_pin_msg and msg.pinned_message:
+                should_delete = True
+            
+            if should_delete:
+                try:
+                    await msg.delete()
+                except Exception as e:
+                    print(f"Error deleting message: {e}")
+                    
+    except Exception as e:
+        print(f"Error in handle_auto_delete_messages: {e}")
+
+async def check_channel_subscriptions(context):
+    """Background task to check forced channel subscriptions"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_subscription_settings():
+            with global_flask_app.app_context():
+                return ForcedChannelSubscription.query.filter_by(enabled=True).all()
+        
+        settings_list = await asyncio.get_running_loop().run_in_executor(None, _get_subscription_settings)
+        
+        for settings in settings_list:
+            try:
+                if not settings.channel_id:
+                    continue
+                
+                with global_flask_app.app_context():
+                    group = BotGroup.query.get(settings.group_id)
+                    if not group:
+                        continue
+                    
+                    chat_id = int(group.chat_id)
+                    
+                    # Get all group members (this is simplified - actual implementation 
+                    # would need to track active members)
+                    # Use configurable batch size to respect API rate limits
+                    SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Check 10 users per run
+                    group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
+                    
+                    for group_user in group_users:
+                        try:
+                            # Check if user is subscribed to the channel
+                            member = await context.bot.get_chat_member(
+                                settings.channel_id,
+                                group_user.tg_id
+                            )
+                            
+                            # If not subscribed (left or kicked), apply action
+                            if member.status in ['left', 'kicked']:
+                                if settings.unsubscribe_action == 'kick':
+                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
+                                    await context.bot.unban_chat_member(chat_id, group_user.tg_id)
+                                elif settings.unsubscribe_action == 'ban':
+                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
+                                elif settings.unsubscribe_action == 'mute':
+                                    await context.bot.restrict_chat_member(
+                                        chat_id=chat_id,
+                                        user_id=group_user.tg_id,
+                                        permissions=ChatPermissions(can_send_messages=False)
+                                    )
+                        except Exception as e:
+                            # User may not be in channel or bot doesn't have access
+                            print(f"Error checking subscription for user {group_user.tg_id}: {e}")
+                            
+            except Exception as e:
+                print(f"Error processing channel subscription for group {settings.group_id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in check_channel_subscriptions: {e}")
+
+async def update_member_levels(context):
+    """Background task to update member levels based on points"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _update_levels():
+            with global_flask_app.app_context():
+                # Get all users with points
+                user_points_list = UserPoints.query.all()
+                
+                for user_points in user_points_list:
+                    # Find the highest level this user qualifies for
+                    levels = MemberLevel.query.filter_by(
+                        group_id=user_points.group_id
+                    ).order_by(MemberLevel.required_points.desc()).all()
+                    
+                    current_level = None
+                    for level in levels:
+                        if user_points.points_balance >= level.required_points:
+                            current_level = level
+                            break
+                    
+                    # Store level info in user metadata or separate table
+                    # (This is simplified - would need a proper user_level tracking table)
+                
+                db.session.commit()
+                return len(user_points_list)
+        
+        count = await asyncio.get_running_loop().run_in_executor(None, _update_levels)
+        print(f"Updated member levels for {count} users")
+        
+    except Exception as e:
+        print(f"Error in update_member_levels: {e}")
+
+async def run_lottery_draws(context):
+    """Background task to run lottery draws when time is up"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_active_lotteries():
+            with global_flask_app.app_context():
+                now = get_beijing_now()
+                # Find lotteries that have ended but not yet drawn
+                return GroupLottery.query.filter(
+                    GroupLottery.status == 'active',
+                    GroupLottery.end_time <= now
+                ).all()
+        
+        lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
+        
+        for lottery in lotteries:
+            try:
+                with global_flask_app.app_context():
+                    group = BotGroup.query.get(lottery.group_id)
+                    if not group:
+                        continue
+                    
+                    chat_id = int(group.chat_id)
+                    winners = []
+                    
+                    if lottery.lottery_type == 'message_count':
+                        # Find users who sent enough messages (simplified)
+                        # In real implementation, would need message tracking
+                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                        if eligible_users:
+                            import random
+                            winner = random.choice(eligible_users)
+                            winners = [winner.tg_id]
+                    
+                    elif lottery.lottery_type == 'message_rank':
+                        # Find top N users (simplified)
+                        # In real implementation, would track message counts
+                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(lottery.top_n_winners).all()
+                        winners = [u.tg_id for u in top_users]
+                    
+                    # Update lottery with winners
+                    lottery.winner_ids = json.dumps(winners)
+                    lottery.status = 'ended'
+                    db.session.commit()
+                    
+                    # Announce winners
+                    if winners:
+                        winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winners]
+                        message = f"🎉 <b>抽奖结束！</b>\n\n"
+                        message += f"活动：{lottery.lottery_name}\n"
+                        message += f"获奖者：{', '.join(winner_mentions)}\n"
+                        if lottery.prize_description:
+                            message += f"奖品：{lottery.prize_description}\n"
+                        
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                        
+            except Exception as e:
+                print(f"Error running lottery {lottery.id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in run_lottery_draws: {e}")
+
 async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
@@ -1915,8 +2596,29 @@ async def run_bot(app_instance):
     global_ptb_app = app
 
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    # 🆕 New member/leave handlers (must come before general message handler)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
+    
+    # 🆕 Auto-delete system messages (must come early to delete before processing)
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS | 
+        filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+        filters.StatusUpdate.PINNED_MESSAGE,
+        handle_auto_delete_messages
+    ))
+    
+    # 🆕 Handle channel messages for pin control
+    app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+    
+    # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    
+    # Callback query handler
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
+    
+    # Command handlers
     app.add_handler(CommandHandler("start", cmd_start))
     
     # Group management commands (群管理机器人功能)
@@ -1930,11 +2632,17 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("userinfo", cmd_userinfo))
     
-    # Add periodic job to check expired users
-    app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
+    # 🆕 Points auction commands (积分竞拍命令)
+    app.add_handler(CommandHandler("bid", cmd_bid))
+    app.add_handler(CommandHandler("auction", cmd_auction))
     
-    # Add periodic job to check scheduled messages
+    # Periodic jobs
+    app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
+    app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)  # 🆕 Check every minute
+    app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
+    app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
+    app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
     
     await app.initialize()
     await app.start()
@@ -2333,6 +3041,28 @@ async def cmd_userinfo(update: Update, context):
         if total_earned > 0 or total_spent > 0:
             info_lines.append(f"📈 总获得: {total_earned}")
             info_lines.append(f"📉 总消耗: {total_spent}")
+        
+        # 🆕 Show member level badge
+        try:
+            def _get_member_level():
+                with global_flask_app.app_context():
+                    levels = MemberLevel.query.filter_by(
+                        group_id=group.id
+                    ).order_by(MemberLevel.required_points.desc()).all()
+                    
+                    current_level = None
+                    for level in levels:
+                        if user_points.points_balance >= level.required_points:
+                            current_level = level
+                            break
+                    return current_level
+            
+            member_level = await asyncio.get_running_loop().run_in_executor(None, _get_member_level)
+            if member_level:
+                badge = member_level.badge_emoji or "🎖️"
+                info_lines.append(f"{badge} 会员等级: {member_level.level_name}")
+        except Exception as e:
+            print(f"Error getting member level: {e}")
     
     # Get member info from Telegram
     try:
@@ -2357,6 +3087,270 @@ async def cmd_userinfo(update: Update, context):
     
     info_text = "\n".join(info_lines)
     await update.message.reply_text(info_text)
+
+async def cmd_bid(update: Update, context):
+    """积分竞拍出价命令 /bid <auction_id> <amount>"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Parse arguments
+    if len(context.args) < 2:
+        await update.message.reply_text("❌ 用法: /bid <竞拍ID> <出价金额>\n例如: /bid 1 100")
+        return
+    
+    try:
+        auction_id = int(context.args[0])
+        bid_amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 无效的参数，请输入数字")
+        return
+    
+    if bid_amount <= 0:
+        await update.message.reply_text("❌ 出价金额必须大于0")
+        return
+    
+    def _process_bid():
+        with global_flask_app.app_context():
+            try:
+                # Use pessimistic locking to prevent race conditions
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return "error", "群组未找到"
+                
+                # Get auction with row-level lock
+                auction = PointsAuction.query.filter_by(
+                    id=auction_id,
+                    group_id=group.id
+                ).with_for_update().first()
+                
+                if not auction:
+                    return "error", "竞拍不存在"
+                
+                if auction.status != 'active':
+                    return "error", "竞拍未激活或已结束"
+                
+                # Check if auction has ended
+                if auction.auction_end and get_beijing_now() > auction.auction_end:
+                    auction.status = 'ended'
+                    db.session.commit()
+                    return "error", "竞拍已结束"
+                
+                # Check if bid is higher than current
+                if bid_amount <= auction.current_bid:
+                    return "error", f"出价必须高于当前价格 {auction.current_bid} 积分"
+                
+                # Get user points with lock
+                user_points = UserPoints.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).with_for_update().first()
+                
+                if not user_points or user_points.points_balance < bid_amount:
+                    current_balance = user_points.points_balance if user_points else 0
+                    return "error", f"积分不足。当前积分: {current_balance}，需要: {bid_amount}"
+                
+                # Refund previous bidder if exists
+                if auction.current_bidder_id and auction.current_bidder_id != user.id:
+                    prev_bidder_points = UserPoints.query.filter_by(
+                        group_id=group.id,
+                        user_id=auction.current_bidder_id
+                    ).with_for_update().first()
+                    
+                    if prev_bidder_points:
+                        prev_bidder_points.points_balance += auction.current_bid
+                        
+                        # Log the refund
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=auction.current_bidder_id,
+                            points_change=auction.current_bid,
+                            reason=f"竞拍退款: {auction.item_name}",
+                            balance_after=prev_bidder_points.points_balance
+                        )
+                        db.session.add(points_log)
+                    else:
+                        # Previous bidder points record doesn't exist - log error but continue
+                        print(f"Warning: Previous bidder {auction.current_bidder_id} has no points record for refund")
+                
+                # Deduct points from current bidder
+                user_points.points_balance -= bid_amount
+                
+                # Log the bid
+                points_log = PointsLog(
+                    group_id=group.id,
+                    user_id=user.id,
+                    points_change=-bid_amount,
+                    reason=f"竞拍出价: {auction.item_name}",
+                    balance_after=user_points.points_balance
+                )
+                db.session.add(points_log)
+                
+                # Update auction
+                auction.current_bid = bid_amount
+                auction.current_bidder_id = user.id
+                
+                db.session.commit()
+                
+                return "success", auction.item_name, bid_amount, user_points.points_balance
+            
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error processing bid: {e}")
+                return "error", "出价处理失败，请重试"
+    
+    result = await asyncio.get_running_loop().run_in_executor(None, _process_bid)
+    
+    if result[0] == "error":
+        await update.message.reply_text(f"❌ {result[1]}")
+    else:
+        _, item_name, bid_amount, remaining_balance = result
+        await update.message.reply_text(
+            f"✅ 出价成功！\n\n"
+            f"📦 物品: {item_name}\n"
+            f"💰 出价: {bid_amount} 积分\n"
+            f"💎 剩余积分: {remaining_balance}"
+        )
+
+async def cmd_auction(update: Update, context):
+    """查看当前活跃的竞拍 /auction"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    def _get_auctions():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return []
+            
+            auctions = PointsAuction.query.filter_by(
+                group_id=group.id,
+                status='active'
+            ).order_by(PointsAuction.auction_end).all()
+            
+            return auctions
+    
+    auctions = await asyncio.get_running_loop().run_in_executor(None, _get_auctions)
+    
+    if not auctions:
+        await update.message.reply_text("📭 当前没有进行中的竞拍")
+        return
+    
+    message_lines = ["🏆 当前竞拍列表\n"]
+    message_lines.append("━━━━━━━━━━━━━━━━")
+    
+    for auction in auctions:
+        message_lines.append(f"\n📦 ID: {auction.id}")
+        message_lines.append(f"   物品: {auction.item_name}")
+        if auction.item_description:
+            message_lines.append(f"   描述: {auction.item_description}")
+        message_lines.append(f"   起拍价: {auction.starting_price} 积分")
+        message_lines.append(f"   当前价: {auction.current_bid} 积分")
+        if auction.current_bidder_id:
+            message_lines.append(f"   领先者: 用户 {auction.current_bidder_id}")
+        if auction.auction_end:
+            message_lines.append(f"   结束时间: {auction.auction_end.strftime('%Y-%m-%d %H:%M')}")
+        message_lines.append(f"\n   💡 出价: /bid {auction.id} <金额>")
+    
+    await update.message.reply_text("\n".join(message_lines))
+
+async def handle_channel_pin(update: Update, context):
+    """处理频道消息自动置顶 - 取消置顶"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        msg = update.message
+        chat = update.effective_chat
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        # Check if this is a channel post forwarded to the group
+        if not msg.sender_chat or msg.sender_chat.type != 'channel':
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not settings or not settings.cancel_channel_pin:
+                return
+            
+            # Wait a moment for Telegram to auto-pin the message
+            await asyncio.sleep(1)
+            
+            try:
+                # Get pinned messages in the chat
+                # If this channel message was just pinned, unpin it
+                await context.bot.unpin_chat_message(
+                    chat_id=chat.id,
+                    message_id=msg.message_id
+                )
+                print(f"Unpinned channel message {msg.message_id} in chat {chat.id}")
+            except Exception as e:
+                print(f"Error unpinning channel message: {e}")
+                    
+    except Exception as e:
+        print(f"Error in handle_channel_pin: {e}")
+
+async def display_bottom_buttons(chat_id, context):
+    """显示群底部按钮"""
+    if not global_flask_app:
+        return None
+    
+    try:
+        def _get_buttons():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat_id)).first()
+                if not group:
+                    return []
+                
+                buttons = GroupBottomButton.query.filter_by(
+                    group_id=group.id,
+                    is_active=True
+                ).order_by(GroupBottomButton.button_order).all()
+                
+                return buttons
+        
+        buttons = await asyncio.get_running_loop().run_in_executor(None, _get_buttons)
+        
+        if not buttons:
+            return None
+        
+        # Build inline keyboard
+        keyboard = []
+        for button in buttons:
+            if button.button_url:
+                keyboard.append([InlineKeyboardButton(
+                    button.button_text,
+                    url=button.button_url
+                )])
+            elif button.button_callback:
+                keyboard.append([InlineKeyboardButton(
+                    button.button_text,
+                    callback_data=button.button_callback
+                )])
+        
+        if keyboard:
+            return InlineKeyboardMarkup(keyboard)
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error displaying bottom buttons: {e}")
+        return None
 
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
@@ -2404,6 +3398,12 @@ async def cmd_start(update: Update, context):
                         buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
             except:
                 pass
+            
+            # 🆕 Add bottom buttons from group settings
+            bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+            if bottom_buttons_markup:
+                # Merge bottom buttons with start message buttons
+                buttons.extend(bottom_buttons_markup.inline_keyboard)
             
             reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
             
@@ -2523,8 +3523,73 @@ async def on_message(update: Update, context):
 
         txt = msg.text.strip()
         
+        # 🆕 Check spam protection first (may delete message and return early)
+        if chat.type in ['group', 'supergroup']:
+            spam_detected = await check_spam_protection(update, context)
+            if spam_detected:
+                return  # Message was deleted, stop processing
+            
+            # 🆕 Track user name changes
+            await track_user_name_change(update, context)
+            
+            # 🆕 Sync messages to other groups
+            await handle_sync_group_messages(update, context)
+        
         # Check if this is a verification code from admin in private chat
         if chat.type == 'private':
+            # 🆕 Handle forwarded messages - show detailed user info
+            if msg.forward_from:
+                forwarded_user = msg.forward_from
+                info_lines = ["🔍 转发消息详细信息\n"]
+                info_lines.append("━━━━━━━━━━━━━━━━")
+                info_lines.append(f"📛 用户名: {forwarded_user.first_name or '-'}")
+                if forwarded_user.last_name:
+                    info_lines.append(f"   姓氏: {forwarded_user.last_name}")
+                if forwarded_user.username:
+                    info_lines.append(f"🔗 Username: @{forwarded_user.username}")
+                info_lines.append(f"🆔 用户ID: {forwarded_user.id}")
+                info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
+                
+                # Try to get user's group membership info
+                def _get_forwarded_user_info():
+                    with global_flask_app.app_context():
+                        # Find all groups where this user is a member
+                        group_users = GroupUser.query.filter_by(tg_id=forwarded_user.id).all()
+                        results = []
+                        for gu in group_users:
+                            group = BotGroup.query.get(gu.group_id)
+                            if group:
+                                user_points = UserPoints.query.filter_by(
+                                    group_id=group.id,
+                                    user_id=forwarded_user.id
+                                ).first()
+                                
+                                results.append({
+                                    'group_name': group.title,
+                                    'banned': gu.is_banned,
+                                    'expiration': gu.expiration_date,
+                                    'points': user_points.points_balance if user_points else 0
+                                })
+                        return results
+                
+                user_groups = await asyncio.get_running_loop().run_in_executor(None, _get_forwarded_user_info)
+                
+                if user_groups:
+                    info_lines.append(f"\n📊 群组信息 ({len(user_groups)}个群)")
+                    info_lines.append("━━━━━━━━━━━━━━━━")
+                    for idx, info in enumerate(user_groups[:5], 1):  # Show max 5 groups
+                        info_lines.append(f"\n{idx}. {info['group_name']}")
+                        info_lines.append(f"   状态: {'🚫 已封禁' if info['banned'] else '✅ 正常'}")
+                        if info['expiration']:
+                            info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M')}")
+                        info_lines.append(f"   积分: {info['points']}")
+                    
+                    if len(user_groups) > 5:
+                        info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
+                
+                await msg.reply_text("\n".join(info_lines))
+                return
+            
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
             if user.id == admin_id and txt.isdigit() and len(txt) == 6:
                 # Try to verify the code using constant-time comparison
@@ -2566,6 +3631,44 @@ async def on_message(update: Update, context):
                 return
             
             conf = get_group_conf(group)
+            
+            # 🆕 Award points for messages (if rule exists and user is registered)
+            if chat.type in ['group', 'supergroup']:
+                message_rule = PointsRule.query.filter_by(
+                    group_id=group.id,
+                    rule_type='message',
+                    is_active=True
+                ).first()
+                
+                if message_rule:
+                    db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+                    if db_user:
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
+                                group_id=group.id,
+                                user_id=user.id,
+                                points_balance=0
+                            )
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += message_rule.points_amount
+                        
+                        # Log the points transaction
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_change=message_rule.points_amount,
+                            reason="发送消息",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
+            
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
@@ -2581,30 +3684,45 @@ async def on_message(update: Update, context):
                     msg_text = sanitize_html_for_telegram(conf.get('msg_not_registered', '未认证'))
                     await msg.reply_html(msg_text)
                 else:
-                    # Check if user is expired and should be banned
+                     # Check if user is expired and should be banned
                     if db_user.expiration_date and get_beijing_now() > db_user.expiration_date:
                         if not db_user.is_banned:
                             db_user.is_banned = True
                             db.session.commit()
                             try:
+                                # Mute with comprehensive restrictions
                                 await context.bot.restrict_chat_member(
                                     chat_id=chat.id,
                                     user_id=user.id,
-                                    permissions=ChatPermissions(can_send_messages=False)
+                                    permissions=ChatPermissions(
+                                        can_send_messages=False,
+                                        can_send_media_messages=False,
+                                        can_send_polls=False,
+                                        can_send_other_messages=False,
+                                        can_add_web_page_previews=False,
+                                        can_change_info=False,
+                                        can_invite_users=False,
+                                        can_pin_messages=False
+                                    )
                                 )
+                                print(f"⛔️ Muted expired user {user.id} in group {chat.id}")
                             except Exception as e:
-                                print(f"Failed to ban user {user.id}: {e}")
-                        # Send expiration notification privately to the user, not to the group
-                        msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期'))
+                                print(f"Failed to mute user {user.id}: {e}")
+                        
+                        # 🆕 Send ephemeral message in group (visible only to that user)
+                        msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))
                         try:
-                            await context.bot.send_message(
-                                chat_id=user.id,
-                                text=msg_text,
-                                parse_mode='HTML'
+                            # Send a reply that will be auto-deleted
+                            warning_msg = await msg.reply_html(msg_text)
+                            # Auto-delete after 30 seconds
+                            context.job_queue.run_once(
+                                lambda c: c.job.data.delete(),
+                                30,
+                                data=warning_msg
                             )
                         except Exception as e:
-                            # If private message fails, just log the error - don't send to group
-                            print(f"Failed to send expiration notification to user {user.id}: {e}")
+                            print(f"Failed to send expiration notification: {e}")
+                        return  # Stop processing, don't allow check-in
                     else:
                         # Check if user has already checked in today
                         today = get_beijing_today()
@@ -2620,6 +3738,41 @@ async def on_message(update: Update, context):
                             db_user.checkin_time = get_beijing_now()
                             db_user.online = True
                             db.session.commit()
+                            
+                            # 🆕 Award points for check-in
+                            checkin_rule = PointsRule.query.filter_by(
+                                group_id=group.id,
+                                rule_type='checkin',
+                                is_active=True
+                            ).first()
+                            
+                            if checkin_rule:
+                                user_points = UserPoints.query.filter_by(
+                                    group_id=group.id,
+                                    user_id=user.id
+                                ).first()
+                                
+                                if not user_points:
+                                    user_points = UserPoints(
+                                        group_id=group.id,
+                                        user_id=user.id,
+                                        points_balance=0
+                                    )
+                                    db.session.add(user_points)
+                                
+                                user_points.points_balance += checkin_rule.points_amount
+                                
+                                # Log the points transaction
+                                points_log = PointsLog(
+                                    group_id=group.id,
+                                    user_id=user.id,
+                                    points_change=checkin_rule.points_amount,
+                                    reason="每日打卡",
+                                    balance_after=user_points.points_balance
+                                )
+                                db.session.add(points_log)
+                                db.session.commit()
+                            
                             msg_text = sanitize_html_for_telegram(conf.get('msg_checkin_success', '打卡成功'))
                             r = await msg.reply_html(msg_text)
                             del_time = safe_int(conf.get('checkin_del_time'), 0)
@@ -2647,6 +3800,12 @@ async def on_message(update: Update, context):
                                     buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
                         except:
                             pass
+                        
+                        # 🆕 Add bottom buttons from group settings
+                        bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+                        if bottom_buttons_markup:
+                            # Merge bottom buttons with auto-reply buttons
+                            buttons.extend(bottom_buttons_markup.inline_keyboard)
                         
                         reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
                         

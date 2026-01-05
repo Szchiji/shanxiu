@@ -2781,6 +2781,359 @@ async def run_lottery_draws(context):
     except Exception as e:
         print(f"Error in run_lottery_draws: {e}")
 
+
+async def check_inactive_users(context):
+    """检查并处理不活跃用户 - Background task"""
+    if not global_flask_app: return
+    try:
+        def _check_inactive():
+            with global_flask_app.app_context():
+                # Get all groups with inactive user settings enabled
+                settings_list = InactiveUserSettings.query.filter_by(enabled=True).all()
+                
+                for settings in settings_list:
+                    try:
+                        group = BotGroup.query.get(settings.group_id)
+                        if not group or not group.is_active:
+                            continue
+                        
+                        # Calculate threshold date
+                        threshold_date = datetime.now() - timedelta(days=settings.inactivity_days)
+                        
+                        # Find inactive users
+                        inactive_users = GroupUser.query.filter(
+                            GroupUser.group_id == settings.group_id,
+                            GroupUser.last_activity < threshold_date,
+                            GroupUser.is_banned == False
+                        ).limit(10).all()  # Process in batches
+                        
+                        for user in inactive_users:
+                            try:
+                                # Take action based on settings
+                                if settings.action_type == 'kick':
+                                    asyncio.create_task(context.bot.ban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                    asyncio.create_task(context.bot.unban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                elif settings.action_type == 'ban':
+                                    asyncio.create_task(context.bot.ban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                    user.is_banned = True
+                                elif settings.action_type == 'mute':
+                                    asyncio.create_task(context.bot.restrict_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id,
+                                        permissions=ChatPermissions(can_send_messages=False)
+                                    ))
+                                
+                                db.session.commit()
+                            except Exception as e:
+                                print(f"Error handling inactive user {user.tg_id}: {e}")
+                                continue
+                                
+                    except Exception as e:
+                        print(f"Error processing group {settings.group_id}: {e}")
+                        continue
+        
+        await asyncio.get_running_loop().run_in_executor(None, _check_inactive)
+    except Exception as e:
+        print(f"Error in check_inactive_users: {e}")
+
+
+async def track_message_statistics(update: Update, context):
+    """跟踪消息统计 - Called from on_message"""
+    if not global_flask_app: return
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        def _track_stats():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return
+                
+                today = datetime.now().date()
+                
+                # Get or create statistics record
+                stats = MessageStatistics.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id,
+                    date=today
+                ).first()
+                
+                if not stats:
+                    stats = MessageStatistics(
+                        group_id=group.id,
+                        user_id=user.id,
+                        date=today,
+                        message_count=0,
+                        text_count=0,
+                        photo_count=0,
+                        video_count=0,
+                        sticker_count=0,
+                        document_count=0,
+                        voice_count=0
+                    )
+                    db.session.add(stats)
+                
+                # Update counts
+                stats.message_count += 1
+                
+                if msg.text:
+                    stats.text_count += 1
+                elif msg.photo:
+                    stats.photo_count += 1
+                elif msg.video:
+                    stats.video_count += 1
+                elif msg.sticker:
+                    stats.sticker_count += 1
+                elif msg.document:
+                    stats.document_count += 1
+                elif msg.voice:
+                    stats.voice_count += 1
+                
+                db.session.commit()
+        
+        await asyncio.get_running_loop().run_in_executor(None, _track_stats)
+    except Exception as e:
+        print(f"Error tracking message statistics: {e}")
+
+
+async def check_keyword_filter(update: Update, context):
+    """检查关键词过滤 - Called from on_message, returns True if message should be deleted"""
+    if not global_flask_app: return False
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not msg.text or chat.type not in ['group', 'supergroup']:
+            return False
+        
+        def _check_filters():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return None
+                
+                # Get active keyword filters
+                filters_list = KeywordFilter.query.filter_by(
+                    group_id=group.id,
+                    is_active=True
+                ).all()
+                
+                for kf in filters_list:
+                    matched = False
+                    
+                    if kf.match_type == 'exact':
+                        matched = msg.text.strip().lower() == kf.keyword.lower()
+                    elif kf.match_type == 'contains':
+                        matched = kf.keyword.lower() in msg.text.lower()
+                    elif kf.match_type == 'regex':
+                        try:
+                            matched = re.search(kf.keyword, msg.text, re.IGNORECASE) is not None
+                        except:
+                            pass
+                    
+                    # Blacklist: if matched, take action
+                    if matched and kf.filter_type == 'blacklist':
+                        return kf
+                    
+                return None
+        
+        matched_filter = await asyncio.get_running_loop().run_in_executor(None, _check_filters)
+        
+        if matched_filter:
+            # Take action based on filter settings
+            if matched_filter.action == 'delete':
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'warn':
+                await msg.reply_text(f"⚠️ 警告：消息包含禁止关键词")
+            elif matched_filter.action == 'mute':
+                await context.bot.restrict_chat_member(
+                    chat_id=chat.id,
+                    user_id=user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=datetime.now() + timedelta(minutes=10)
+                )
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'kick':
+                await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'ban':
+                await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                await msg.delete()
+                return True
+        
+        return False
+    except Exception as e:
+        print(f"Error in check_keyword_filter: {e}")
+        return False
+
+
+async def update_user_activity(update: Update, context):
+    """更新用户最后活动时间 - Called from on_message"""
+    if not global_flask_app: return
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        def _update_activity():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return
+                
+                group_user = GroupUser.query.filter_by(
+                    group_id=group.id,
+                    tg_id=user.id
+                ).first()
+                
+                if group_user:
+                    group_user.last_activity = datetime.now()
+                    db.session.commit()
+        
+        await asyncio.get_running_loop().run_in_executor(None, _update_activity)
+    except Exception as e:
+        print(f"Error updating user activity: {e}")
+
+
+async def cmd_vote(update: Update, context):
+    """创建投票命令 /vote"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能创建投票")
+        return
+    
+    await update.message.reply_text(
+        "📊 <b>创建投票</b>\n\n"
+        "格式：/vote 标题|选项1|选项2|选项3...\n\n"
+        "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
+        parse_mode='HTML'
+    )
+
+
+async def cmd_quiz(update: Update, context):
+    """启动问答游戏命令 /quiz"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _get_random_quiz():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None
+            
+            # Get a random active quiz
+            quiz = QuizGame.query.filter_by(
+                group_id=group.id,
+                is_active=True
+            ).order_by(db.func.random()).first()
+            
+            if quiz:
+                return {
+                    'id': quiz.id,
+                    'question': quiz.question,
+                    'answers': json.loads(quiz.answers),
+                    'time_limit': quiz.time_limit,
+                    'points_reward': quiz.points_reward
+                }
+            return None
+    
+    quiz_data = await asyncio.get_running_loop().run_in_executor(None, _get_random_quiz)
+    
+    if not quiz_data:
+        await update.message.reply_text("❌ 暂无可用的问答题目")
+        return
+    
+    # Create quiz session and send question
+    buttons = []
+    for idx, answer in enumerate(quiz_data['answers']):
+        buttons.append([InlineKeyboardButton(
+            f"{chr(65+idx)}. {answer}",
+            callback_data=f"quiz_answer_{quiz_data['id']}_{idx}"
+        )])
+    
+    keyboard = InlineKeyboardMarkup(buttons)
+    
+    message = await update.message.reply_text(
+        f"🎯 <b>问答题</b>\n\n"
+        f"{quiz_data['question']}\n\n"
+        f"⏱ 时限：{quiz_data['time_limit']}秒\n"
+        f"🎁 奖励：{quiz_data['points_reward']}积分",
+        reply_markup=keyboard,
+        parse_mode='HTML'
+    )
+    
+    # Create quiz session in database
+    def _create_session():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if group:
+                session = QuizSession(
+                    group_id=group.id,
+                    quiz_id=quiz_data['id'],
+                    message_id=message.message_id,
+                    start_time=datetime.now(),
+                    status='active'
+                )
+                db.session.add(session)
+                db.session.commit()
+    
+    await asyncio.get_running_loop().run_in_executor(None, _create_session)
+
+
+async def cmd_redpacket(update: Update, context):
+    """发红包命令 /redpacket"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    await update.message.reply_text(
+        "🧧 <b>发红包</b>\n\n"
+        "格式：/redpacket 总积分 红包数量 [祝福语]\n\n"
+        "示例：\n"
+        "/redpacket 100 10 新年快乐\n"
+        "/redpacket 200 5",
+        parse_mode='HTML'
+    )
+
+
 async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
@@ -2841,6 +3194,11 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("bid", cmd_bid))
     app.add_handler(CommandHandler("auction", cmd_auction))
     
+    # 🆕 Interactive features commands (互动功能命令)
+    app.add_handler(CommandHandler("vote", cmd_vote))
+    app.add_handler(CommandHandler("quiz", cmd_quiz))
+    app.add_handler(CommandHandler("redpacket", cmd_redpacket))
+    
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
@@ -2848,6 +3206,7 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
     app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
+    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
     
     await app.initialize()
     await app.start()
@@ -3733,6 +4092,17 @@ async def on_message(update: Update, context):
             spam_detected = await check_spam_protection(update, context)
             if spam_detected:
                 return  # Message was deleted, stop processing
+            
+            # 🆕 Check keyword filter (may delete message and return early)
+            keyword_filtered = await check_keyword_filter(update, context)
+            if keyword_filtered:
+                return  # Message was deleted, stop processing
+            
+            # 🆕 Update user last activity time
+            await update_user_activity(update, context)
+            
+            # 🆕 Track message statistics
+            await track_message_statistics(update, context)
             
             # 🆕 Track user name changes
             await track_user_name_change(update, context)

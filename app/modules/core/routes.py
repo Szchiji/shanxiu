@@ -989,11 +989,10 @@ def api_save_timed_group_control():
         
         settings.enabled = d.get('enabled', False)
         # Parse time strings to time objects
-        from datetime import datetime as dt
         if d.get('open_time'):
-            settings.open_time = dt.strptime(d['open_time'], '%H:%M').time()
+            settings.open_time = datetime.strptime(d['open_time'], '%H:%M').time()
         if d.get('close_time'):
-            settings.close_time = dt.strptime(d['close_time'], '%H:%M').time()
+            settings.close_time = datetime.strptime(d['close_time'], '%H:%M').time()
         settings.timezone = d.get('timezone', 'Asia/Shanghai')
         settings.close_message = d.get('close_message')
         settings.open_message = d.get('open_message')

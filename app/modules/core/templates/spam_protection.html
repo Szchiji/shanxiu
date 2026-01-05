@@ -103,7 +103,7 @@
                 <h6 class="fw-bold mb-3">白名单用户</h6>
                 <div class="mb-3">
                     <textarea class="form-control" id="whitelist_users" rows="4" 
-                              placeholder="每行一个用户ID">{{ '\n'.join(whitelist_users|map('string')) if whitelist_users else '' }}</textarea>
+                              placeholder="每行一个用户ID">{% if whitelist_users %}{{ '\n'.join(whitelist_users|map('string')) }}{% endif %}</textarea>
                     <div class="form-text">白名单用户不受垃圾防护限制</div>
                 </div>
             </div>
@@ -116,7 +116,18 @@
     
     function saveSettings() {
         const whitelistText = document.getElementById('whitelist_users').value.trim();
-        const whitelistArray = whitelistText ? whitelistText.split('\n').map(id => parseInt(id.trim())).filter(id => !isNaN(id)) : [];
+        const whitelistArray = whitelistText ? whitelistText.split('\n').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0) : [];
+        
+        // Warn user if there are invalid IDs
+        if (whitelistText) {
+            const allLines = whitelistText.split('\n').filter(l => l.trim());
+            if (allLines.length > whitelistArray.length) {
+                const invalidCount = allLines.length - whitelistArray.length;
+                if (!confirm(`检测到 ${invalidCount} 个无效的用户ID将被忽略。是否继续保存？`)) {
+                    return;
+                }
+            }
+        }
         
         const data = {
             group_id: groupId,

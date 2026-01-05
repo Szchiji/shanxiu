@@ -2876,7 +2876,7 @@ async def handle_sync_group_messages(update: Update, context):
                         source_message_id=msg.message_id,
                         target_message_id=sent_msg.message_id,
                         user_id=user.id if user else None,
-                        username=user.username if user else 'bot',
+                        username=user.username if user else None,
                         message_type='text' if msg.text else ('photo' if msg.photo else 'video'),
                         content_preview=msg.text[:100] if msg.text else None,
                         status='success',
@@ -2893,7 +2893,7 @@ async def handle_sync_group_messages(update: Update, context):
                         target_group_id=sync_setting.target_group_id,
                         source_message_id=msg.message_id,
                         user_id=user.id if user else None,
-                        username=user.username if user else 'bot',
+                        username=user.username if user else None,
                         status='failed',
                         error_message=str(e),
                         synced_at=get_beijing_now()
@@ -4814,7 +4814,8 @@ async def on_message(update: Update, context):
                 ).all()
                 
                 for pr in all_points_replies:
-                    keywords = [k.strip() for k in pr.trigger_keyword.split(',')]
+                    # Filter out empty keywords after stripping
+                    keywords = [k.strip() for k in pr.trigger_keyword.split(',') if k.strip()]
                     if txt in keywords:
                         points_reply = pr
                         break
@@ -4895,7 +4896,8 @@ async def on_message(update: Update, context):
                     ).all()
                     
                     for ar in all_auto_replies:
-                        keywords = [k.strip() for k in ar.trigger_keyword.split(',')]
+                        # Filter out empty keywords after stripping
+                        keywords = [k.strip() for k in ar.trigger_keyword.split(',') if k.strip()]
                         if txt in keywords:
                             auto_reply = ar
                             break

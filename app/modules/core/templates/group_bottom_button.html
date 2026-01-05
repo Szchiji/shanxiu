@@ -40,7 +40,7 @@
             <p class="mb-0 opacity-75">{{ group.title }}</p>
         </div>
         <div class="d-flex gap-2">
-            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup()" title="将按钮作为菜单键盘推送到群组">
+            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup(event)" title="将按钮作为菜单键盘推送到群组">
                 <i class="fa-solid fa-paper-plane me-2"></i>推送到群组
             </button>
             <button class="btn btn-light fw-bold" onclick="showAddModal()">
@@ -272,8 +272,14 @@ function moveButton(id, direction) {
     });
 }
 
-function pushButtonsToGroup() {
+function pushButtonsToGroup(event) {
     if (!confirm('确定要将当前按钮配置推送到群组作为菜单键盘吗？')) return;
+    
+    // Disable button and show loading state
+    const pushBtn = event.target.closest('button');
+    const originalHTML = pushBtn.innerHTML;
+    pushBtn.disabled = true;
+    pushBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-2"></i>推送中...';
     
     fetch('/core/api/push_group_bottom_buttons', {
         method: 'POST',
@@ -283,14 +289,51 @@ function pushButtonsToGroup() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            alert('✅ 按钮已成功推送到群组！');
+            // Show success feedback
+            pushBtn.innerHTML = '<i class="fa-solid fa-check me-2"></i>推送成功！';
+            
+            // Show alert
+            alert('✅ ' + (result.msg || '按钮已成功推送到群组！'));
+            
+            // Reset button after delay
+            setTimeout(() => {
+                pushBtn.innerHTML = originalHTML;
+                pushBtn.disabled = false;
+            }, 2000);
         } else {
+            // Show error feedback
+            pushBtn.innerHTML = '<i class="fa-solid fa-xmark me-2"></i>推送失败';
+            pushBtn.classList.remove('btn-success');
+            pushBtn.classList.add('btn-danger');
+            
             alert('❌ ' + (result.msg || '推送失败'));
+            
+            // Reset button after delay
+            setTimeout(() => {
+                pushBtn.innerHTML = originalHTML;
+                pushBtn.classList.remove('btn-danger');
+                pushBtn.classList.add('btn-success');
+                pushBtn.disabled = false;
+            }, 2000);
         }
     })
     .catch(err => {
         console.error(err);
-        alert('❌ 网络错误');
+        
+        // Show error feedback
+        pushBtn.innerHTML = '<i class="fa-solid fa-xmark me-2"></i>网络错误';
+        pushBtn.classList.remove('btn-success');
+        pushBtn.classList.add('btn-danger');
+        
+        alert('❌ 网络错误，请检查连接后重试');
+        
+        // Reset button after delay
+        setTimeout(() => {
+            pushBtn.innerHTML = originalHTML;
+            pushBtn.classList.remove('btn-danger');
+            pushBtn.classList.add('btn-success');
+            pushBtn.disabled = false;
+        }, 2000);
     });
 }
 </script>

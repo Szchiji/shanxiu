@@ -2107,7 +2107,10 @@ def api_push_group_bottom_buttons():
         
         # Check if bot is ready
         if not global_ptb_app or not global_bot_loop:
+            print(f"❌ Bot未就绪: global_ptb_app={bool(global_ptb_app)}, global_bot_loop={bool(global_bot_loop)}", flush=True)
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
+        
+        print(f"🔄 开始推送按钮到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
         
         # Check if any button has URL or callback - if so, use inline keyboard
         has_url_or_callback = any(btn.button_url or btn.button_callback for btn in buttons)
@@ -2155,11 +2158,12 @@ def api_push_group_bottom_buttons():
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
                     # Send message with inline keyboard
-                    await global_ptb_app.bot.send_message(
+                    msg = await global_ptb_app.bot.send_message(
                         chat_id=group.chat_id,
                         text="📋 群组菜单已更新，请点击下方按钮使用功能：",
                         reply_markup=reply_markup
                     )
+                    print(f"✅ 内联键盘推送成功，消息ID: {msg.message_id}", flush=True)
                 else:
                     # Use ReplyKeyboardMarkup for text-only buttons
                     keyboard = []
@@ -2188,26 +2192,41 @@ def api_push_group_bottom_buttons():
                     )
                     
                     # Send message with reply keyboard
-                    await global_ptb_app.bot.send_message(
+                    msg = await global_ptb_app.bot.send_message(
                         chat_id=group.chat_id,
                         text="📋 群组菜单已更新，请点击下方按钮使用功能：",
                         reply_markup=reply_markup
                     )
+                    print(f"✅ 回复键盘推送成功，消息ID: {msg.message_id}", flush=True)
                 return True
             except Exception as e:
-                print(f"Error pushing buttons to group: {e}")
+                import traceback
+                print(f"❌ 推送按钮时发生错误: {e}", flush=True)
+                print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
                 return False
         
         # Run async function in bot's event loop
-        future = asyncio.run_coroutine_threadsafe(_send_menu_keyboard(), global_bot_loop)
-        success = future.result(timeout=10)
-        
-        if success:
-            return jsonify({'status':'ok'})
-        else:
-            return jsonify({'status':'error','msg':'推送失败，请检查bot权限'})
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send_menu_keyboard(), global_bot_loop)
+            success = future.result(timeout=10)
+            
+            if success:
+                return jsonify({'status':'ok','msg':'按钮已成功推送到群组'})
+            else:
+                return jsonify({'status':'error','msg':'推送失败，请检查bot权限和群组ID是否正确'})
+        except asyncio.TimeoutError:
+            print("❌ 推送按钮超时", flush=True)
+            return jsonify({'status':'error','msg':'推送超时，请稍后再试'})
+        except Exception as e:
+            import traceback
+            print(f"❌ 异步调用失败: {e}", flush=True)
+            print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
+            return jsonify({'status':'error','msg':f'推送失败: {str(e)}'})
             
     except Exception as e:
+        import traceback
+        print(f"❌ API调用失败: {e}", flush=True)
+        print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/save_sync_group_messages', methods=['POST'])

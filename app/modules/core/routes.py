@@ -177,8 +177,8 @@ def page_users(gid):
     
     # Pagination parameters
     page = safe_int(request.args.get('page', 1), 1)
-    per_page = safe_int(request.args.get('per_page', 50), 50)
-    if per_page not in [20, 50, 100] or per_page <= 0: per_page = 50
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated users
@@ -770,8 +770,10 @@ def auth_verify_page(session_token):
         if get_beijing_now() > auth_session.expires_at:
             return "验证链接已过期", 403
         
-        # Check if already verified
+        # Check if already verified - redirect directly if already logged in via cookie
         if auth_session.is_verified:
+            session['logged_in'] = True
+            session.permanent = True  # Make session persistent
             return redirect('/core/select_group')
         
         return render_template('auth_verify.html', 
@@ -802,8 +804,9 @@ def api_check_auth_status():
         
         # Check if verified
         if auth_session.is_verified:
-            # Set session as logged in
+            # Set session as logged in with persistent cookie
             session['logged_in'] = True
+            session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'

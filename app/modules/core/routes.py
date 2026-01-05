@@ -1551,15 +1551,22 @@ def api_save_sync_group_messages():
     try:
         settings = SyncGroupMessages.query.filter_by(source_group_id=d['group_id']).first()
         if not settings:
-            settings = SyncGroupMessages(source_group_id=d['group_id'], target_group_id=target_group_id)
+            # Explicitly set all fields when creating new record to ensure consistent behavior
+            settings = SyncGroupMessages(
+                source_group_id=d['group_id'],
+                target_group_id=target_group_id,
+                enabled=d.get('enabled', False),
+                sync_media=d.get('sync_media', True),
+                sync_forwards=d.get('sync_forwards', True),
+                filter_keywords=d.get('filter_keywords', '[]')
+            )
             db.session.add(settings)
         else:
             settings.target_group_id = target_group_id
-        
-        settings.enabled = d.get('enabled', False)
-        settings.sync_media = d.get('sync_media', True)
-        settings.sync_forwards = d.get('sync_forwards', True)
-        settings.filter_keywords = d.get('filter_keywords', '[]')
+            settings.enabled = d.get('enabled', False)
+            settings.sync_media = d.get('sync_media', True)
+            settings.sync_forwards = d.get('sync_forwards', True)
+            settings.filter_keywords = d.get('filter_keywords', '[]')
         
         db.session.commit()
         return jsonify({'status':'ok'})

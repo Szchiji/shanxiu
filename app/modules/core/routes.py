@@ -129,7 +129,44 @@ def page_dashboard(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    stats = {'users': GroupUser.query.filter_by(group_id=gid).count(), 'online': GroupUser.query.filter_by(group_id=gid, online=True).count()}
+    
+    # Enhanced statistics
+    total_users = GroupUser.query.filter_by(group_id=gid).count()
+    online_users = GroupUser.query.filter_by(group_id=gid, online=True).count()
+    
+    # Get today's check-ins
+    today = get_beijing_today()
+    today_checkins = GroupUser.query.filter(
+        GroupUser.group_id == gid,
+        GroupUser.checkin_time >= today
+    ).count()
+    
+    # Get expired/banned users
+    now = get_beijing_now()
+    expired_users = GroupUser.query.filter(
+        GroupUser.group_id == gid,
+        GroupUser.expiration_date.isnot(None),
+        GroupUser.expiration_date < now
+    ).count()
+    
+    banned_users = GroupUser.query.filter_by(group_id=gid, is_banned=True).count()
+    
+    # Get module counts
+    auto_replies_count = AutoReply.query.filter_by(group_id=gid, is_active=True).count()
+    scheduled_msgs_count = ScheduledMessage.query.filter_by(group_id=gid, is_active=True).count()
+    start_msgs_count = StartMessage.query.filter_by(group_id=gid, is_active=True).count()
+    
+    stats = {
+        'users': total_users,
+        'online': online_users,
+        'today_checkins': today_checkins,
+        'expired': expired_users,
+        'banned': banned_users,
+        'auto_replies': auto_replies_count,
+        'scheduled_msgs': scheduled_msgs_count,
+        'start_msgs': start_msgs_count
+    }
+    
     return render_template('dashboard.html', page='dashboard', group=group, stats=stats)
 
 @core_bp.route('/group/<int:gid>/users')

@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
 from datetime import datetime, timedelta
 import pytz
 
@@ -1129,7 +1129,7 @@ def api_import_auto_replies():
                 db.session.add(item)
                 imported_count += 1
             except Exception as e:
-                print(f"Error importing auto reply: {e}")
+                logging.error(f"Error importing auto reply: {e}")
                 skipped_count += 1
                 continue
         
@@ -1284,11 +1284,16 @@ def api_import_scheduled_messages():
                 item.repeat_interval = item_data.get('repeat_interval', 0)
                 item.delete_previous = item_data.get('delete_previous', False)
                 
-                # Parse timestamps
-                start_time_str = item_data.get('start_time')
-                stop_time_str = item_data.get('stop_time')
-                item.start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
-                item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
+                # Parse timestamps with error handling
+                try:
+                    start_time_str = item_data.get('start_time')
+                    stop_time_str = item_data.get('stop_time')
+                    item.start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00')) if start_time_str else None
+                    item.stop_time = datetime.fromisoformat(stop_time_str.replace('Z', '+00:00')) if stop_time_str else None
+                except (ValueError, AttributeError) as date_error:
+                    logging.warning(f"Error parsing datetime for scheduled message: {date_error}")
+                    item.start_time = None
+                    item.stop_time = None
                 
                 item.remark = item_data.get('remark')
                 item.is_active = item_data.get('is_active', True)
@@ -1296,7 +1301,7 @@ def api_import_scheduled_messages():
                 db.session.add(item)
                 imported_count += 1
             except Exception as e:
-                print(f"Error importing scheduled message: {e}")
+                logging.error(f"Error importing scheduled message: {e}")
                 skipped_count += 1
                 continue
         

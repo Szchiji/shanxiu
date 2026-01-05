@@ -1024,7 +1024,7 @@ async function importData(items) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                group_id: {{ group.id }},
+                group_id: {{ group.id|tojson|safe }},
                 data: items
             })
         });

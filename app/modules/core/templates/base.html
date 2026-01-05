@@ -16,7 +16,7 @@
             --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
             --hover-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
             --transition-speed: 0.3s;
-            --sidebar-width: 180px;
+            --sidebar-width: 160px;
         }
         
         /* Transition for interactive elements only */
@@ -25,7 +25,7 @@
         }
         
         body { 
-            font-size: .875rem; 
+            font-size: .75rem; 
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             min-height: 100vh;
         }
@@ -51,6 +51,7 @@
             padding-top: .5rem; 
             overflow-x: hidden; 
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* Enable smooth scrolling on iOS */
         }
         
         .sidebar-sticky::-webkit-scrollbar {
@@ -71,9 +72,9 @@
         }
         
         .navbar-brand { 
-            padding-top: .75rem; 
-            padding-bottom: .75rem; 
-            font-size: 1.2rem;
+            padding-top: .5rem; 
+            padding-bottom: .5rem; 
+            font-size: 1rem;
             font-weight: 700;
             background: var(--primary-gradient);
             box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
@@ -89,8 +90,8 @@
         }
         
         main { 
-            padding-top: 20px; 
-            padding-bottom: 20px;
+            padding-top: 15px; 
+            padding-bottom: 15px;
         }
         
         /* Main content area with sidebar */
@@ -106,17 +107,18 @@
         /* Enhanced sidebar navigation */
         .sidebar .nav-link {
             color: rgba(255, 255, 255, 0.7);
-            padding: 12px 20px;
-            margin: 4px 10px;
-            border-radius: 8px;
+            padding: 8px 15px;
+            margin: 2px 8px;
+            border-radius: 6px;
             font-weight: 500;
+            font-size: 0.75rem;
             transition: all 0.3s ease;
         }
         
         .sidebar .nav-link:hover {
             color: #fff;
             background: rgba(255, 255, 255, 0.1);
-            transform: translateX(5px);
+            transform: translateX(3px);
         }
         
         .sidebar .nav-link.active {
@@ -126,51 +128,18 @@
         }
         
         .sidebar .nav-link i {
-            margin-right: 10px;
-            width: 20px;
-            text-align: center;
-        }
-        
-        /* Dropdown menu styles for sidebar */
-        .sidebar .dropdown-menu {
-            background: rgba(45, 55, 72, 0.95);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            margin-left: 10px;
-            margin-right: 10px;
-            border-radius: 8px;
-        }
-        
-        .sidebar .dropdown-item {
-            color: rgba(255, 255, 255, 0.7);
-            padding: 10px 15px;
-            transition: all 0.3s ease;
-            border-radius: 6px;
-            margin: 2px 5px;
-        }
-        
-        .sidebar .dropdown-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-            transform: translateX(3px);
-        }
-        
-        .sidebar .dropdown-item.active {
-            background: var(--primary-gradient);
-            color: #fff;
-        }
-        
-        .sidebar .dropdown-item i {
             margin-right: 8px;
-            width: 18px;
+            width: 16px;
             text-align: center;
+            font-size: 0.85rem;
         }
         
         .sidebar-heading {
             color: rgba(255, 255, 255, 0.5);
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             text-transform: uppercase;
-            letter-spacing: 1px;
-            padding: 20px 20px 10px;
+            letter-spacing: 0.5px;
+            padding: 15px 15px 8px;
             font-weight: 600;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -231,15 +200,17 @@
         .card-header {
             border-bottom: 2px solid #f0f0f0;
             background: transparent;
-            padding: 1.25rem 1.5rem;
+            padding: 1rem 1.25rem;
             font-weight: 600;
+            font-size: 0.85rem;
         }
         
         /* Enhanced buttons */
         .btn {
-            border-radius: 8px;
-            padding: 0.5rem 1.25rem;
+            border-radius: 6px;
+            padding: 0.4rem 1rem;
             font-weight: 600;
+            font-size: 0.75rem;
             transition: all 0.3s ease;
             border: none;
         }
@@ -276,9 +247,10 @@
         
         /* Enhanced forms */
         .form-control, .form-select {
-            border-radius: 8px;
+            border-radius: 6px;
             border: 2px solid #e0e0e0;
-            padding: 0.6rem 1rem;
+            padding: 0.5rem 0.85rem;
+            font-size: 0.75rem;
             transition: all 0.3s ease;
         }
         
@@ -298,7 +270,8 @@
             color: #fff;
             font-weight: 600;
             border: none;
-            padding: 1rem;
+            padding: 0.75rem;
+            font-size: 0.75rem;
         }
         
         .table tbody tr {
@@ -311,9 +284,10 @@
         
         /* Enhanced badges */
         .badge {
-            padding: 0.4rem 0.8rem;
+            padding: 0.3rem 0.6rem;
             font-weight: 600;
-            border-radius: 20px;
+            font-size: 0.65rem;
+            border-radius: 15px;
         }
         
         /* Animated header */
@@ -359,7 +333,7 @@
             <!-- ⚡️ 修复点：无论登录状态，侧边栏始终显示，提供切换功能 -->
             {% if session.get('logged_in') %}
             <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
-                <div class="position-sticky pt-3">
+                <div class="sidebar-sticky">
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
                             <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title }}
@@ -417,99 +391,83 @@
                             </a>
                         </li>
                         
-                        <!-- Group Management Dropdown -->
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" 
-                               id="groupManagementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-shield-halved"></i> 群组管理
+                        <!-- Group Management - Direct Links -->
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-user-shield"></i> 进退群设置
                             </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="groupManagementDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="dropdown-item {% if page == 'entry_exit_settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-shield"></i> 进退群设置
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/spam_protection" class="dropdown-item {% if page == 'spam_protection' %}active{% endif %}">
-                                        <i class="fa-solid fa-shield-virus"></i> 垃圾防护
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/timed_group_control" class="dropdown-item {% if page == 'timed_group_control' %}active{% endif %}">
-                                        <i class="fa-solid fa-clock"></i> 定时开关群
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/invitation_activity" class="dropdown-item {% if page == 'invitation_activity' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-plus"></i> 邀请活动
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="dropdown-item {% if page == 'forced_channel_subscription' %}active{% endif %}">
-                                        <i class="fa-solid fa-rss"></i> 强制订阅频道
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/member_level" class="dropdown-item {% if page == 'member_level' %}active{% endif %}">
-                                        <i class="fa-solid fa-medal"></i> 成员等级
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/user_name_change" class="dropdown-item {% if page == 'user_name_change' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-edit"></i> 用户改名监控
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="dropdown-item {% if page == 'group_bottom_button' %}active{% endif %}">
-                                        <i class="fa-solid fa-hand-pointer"></i> 群底部按钮
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="dropdown-item {% if page == 'sync_group_messages' %}active{% endif %}">
-                                        <i class="fa-solid fa-sync"></i> 同步群消息
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/other_settings" class="dropdown-item {% if page == 'other_settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-cog"></i> 其他设置
-                                    </a>
-                                </li>
-                            </ul>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}">
+                                <i class="fa-solid fa-shield-virus"></i> 垃圾防护
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}">
+                                <i class="fa-solid fa-clock"></i> 定时开关群
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}">
+                                <i class="fa-solid fa-user-plus"></i> 邀请活动
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="nav-link {% if page == 'forced_channel_subscription' %}active{% endif %}">
+                                <i class="fa-solid fa-rss"></i> 强制订阅
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}">
+                                <i class="fa-solid fa-medal"></i> 成员等级
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}">
+                                <i class="fa-solid fa-user-edit"></i> 改名监控
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="nav-link {% if page == 'group_bottom_button' %}active{% endif %}">
+                                <i class="fa-solid fa-hand-pointer"></i> 底部按钮
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}">
+                                <i class="fa-solid fa-sync"></i> 同步消息
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-cog"></i> 其他设置
+                            </a>
                         </li>
                         
-                        <!-- Points & Activities Dropdown -->
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" 
-                               id="pointsActivitiesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-star"></i> 积分与活动
+                        <!-- Points & Activities - Direct Links -->
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}">
+                                <i class="fa-solid fa-list-check"></i> 积分规则
                             </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsActivitiesDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
-                                        <i class="fa-solid fa-list-check"></i> 积分规则
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="dropdown-item {% if page == 'points_auto_reply' %}active{% endif %}">
-                                        <i class="fa-solid fa-comments-dollar"></i> 积分自动回复
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_auction" class="dropdown-item {% if page == 'points_auction' %}active{% endif %}">
-                                        <i class="fa-solid fa-gavel"></i> 积分竞拍
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_log" class="dropdown-item {% if page == 'points_log' %}active{% endif %}">
-                                        <i class="fa-solid fa-history"></i> 积分日志
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
-                                        <i class="fa-solid fa-trophy"></i> 群抽奖
-                                    </a>
-                                </li>
-                            </ul>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}">
+                                <i class="fa-solid fa-comments-dollar"></i> 积分回复
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/points_auction" class="nav-link {% if page == 'points_auction' %}active{% endif %}">
+                                <i class="fa-solid fa-gavel"></i> 积分竞拍
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}">
+                                <i class="fa-solid fa-history"></i> 积分日志
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}">
+                                <i class="fa-solid fa-trophy"></i> 群抽奖
+                            </a>
                         </li>
                         {% endif %}
                         <li class="nav-item">

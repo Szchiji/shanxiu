@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(67, 233, 123, 0.3);
+    }
+    
+    .buttons-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .button-item {
+        border-bottom: 1px solid #eee;
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    
+    .button-item:last-child {
+        border-bottom: none;
+    }
+    
+    .button-item:hover {
+        background-color: #f8f9fa;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-hand-pointer me-2"></i>群底部按钮</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>添加按钮
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="buttons-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>按钮列表
+            </div>
+            <div class="card-body p-0">
+                {% if buttons %}
+                    {% for button in buttons %}
+                    <div class="button-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ button.button_text }}</h6>
+                                <small class="text-muted">
+                                    顺序: {{ button.button_order }} | 
+                                    {% if button.button_url %}URL: {{ button.button_url[:50] }}{% if button.button_url|length > 50 %}...{% endif %}{% endif %}
+                                    {% if button.button_callback %}回调: {{ button.button_callback }}{% endif %}
+                                </small>
+                                <span class="badge {{ 'bg-success' if button.is_active else 'bg-secondary' }} ms-2">
+                                    {{ '启用' if button.is_active else '禁用' }}
+                                </span>
+                            </div>
+                            <div>
+                                <button class="btn btn-sm btn-primary" onclick='editButton({{ button.id }}, {{ button|tojson }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteButton({{ button.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无按钮设置</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="buttonModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-hand-pointer me-2"></i><span id="modalTitle">添加按钮</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="button_id">
+                <div class="mb-3">
+                    <label class="form-label">按钮文本</label>
+                    <input type="text" class="form-control" id="button_text" placeholder="例如：访问官网">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">按钮URL</label>
+                    <input type="text" class="form-control" id="button_url" placeholder="https://example.com">
+                    <small class="text-muted">外部链接地址（可选）</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">回调数据</label>
+                    <input type="text" class="form-control" id="button_callback" placeholder="callback_data">
+                    <small class="text-muted">内联按钮回调数据（可选）</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">显示顺序</label>
+                    <input type="number" class="form-control" id="button_order" value="0" min="0">
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label">启用按钮</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveButton()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let buttonModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    buttonModal = new bootstrap.Modal(document.getElementById('buttonModal'));
+});
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '添加按钮';
+    document.getElementById('button_id').value = '';
+    document.getElementById('button_text').value = '';
+    document.getElementById('button_url').value = '';
+    document.getElementById('button_callback').value = '';
+    document.getElementById('button_order').value = '0';
+    document.getElementById('is_active').checked = true;
+    buttonModal.show();
+}
+
+function editButton(id, button) {
+    document.getElementById('modalTitle').textContent = '编辑按钮';
+    document.getElementById('button_id').value = id;
+    document.getElementById('button_text').value = button.button_text || '';
+    document.getElementById('button_url').value = button.button_url || '';
+    document.getElementById('button_callback').value = button.button_callback || '';
+    document.getElementById('button_order').value = button.button_order || 0;
+    document.getElementById('is_active').checked = button.is_active;
+    buttonModal.show();
+}
+
+function saveButton() {
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('button_id').value || null,
+        button_text: document.getElementById('button_text').value,
+        button_url: document.getElementById('button_url').value,
+        button_callback: document.getElementById('button_callback').value,
+        button_order: parseInt(document.getElementById('button_order').value) || 0,
+        is_active: document.getElementById('is_active').checked
+    };
+    
+    fetch('/core/api/save_group_bottom_button', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 保存成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function deleteButton(id) {
+    if (!confirm('确定要删除这个按钮吗？')) return;
+    
+    fetch('/core/api/delete_group_bottom_button', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 删除成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

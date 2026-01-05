@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(240, 147, 251, 0.3);
+    }
+    
+    .auctions-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .auction-item {
+        border-bottom: 1px solid #eee;
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    
+    .auction-item:last-child {
+        border-bottom: none;
+    }
+    
+    .auction-item:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .status-badge {
+        font-size: 0.85rem;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-gavel me-2"></i>积分竞拍</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>创建竞拍
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="auctions-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>竞拍列表
+            </div>
+            <div class="card-body p-0">
+                {% if auctions %}
+                    {% for auction in auctions %}
+                    <div class="auction-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ auction.item_name }}</h6>
+                                <p class="text-muted mb-2 small">{{ auction.item_description or '暂无描述' }}</p>
+                                <div class="d-flex gap-3 flex-wrap">
+                                    <small class="text-muted">起拍价: {{ auction.starting_price }}</small>
+                                    <small class="text-muted">当前价: {{ auction.current_bid or '未出价' }}</small>
+                                    {% if auction.auction_start %}
+                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                    {% if auction.auction_end %}
+                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                </div>
+                                <span class="badge status-badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }} mt-2">
+                                    {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
+                                </span>
+                            </div>
+                            <div>
+                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auction|tojson }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteAuction({{ auction.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无竞拍活动</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="auctionModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-gavel me-2"></i><span id="modalTitle">创建竞拍</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="auction_id">
+                <div class="mb-3">
+                    <label class="form-label">物品名称</label>
+                    <input type="text" class="form-control" id="item_name" placeholder="例如：限量头像框">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">物品描述</label>
+                    <textarea class="form-control" id="item_description" rows="2" placeholder="物品详细描述"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">起拍价（积分）</label>
+                    <input type="number" class="form-control" id="starting_price" value="100" min="1">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">竞拍开始时间</label>
+                    <input type="datetime-local" class="form-control" id="auction_start">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">竞拍结束时间</label>
+                    <input type="datetime-local" class="form-control" id="auction_end">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">状态</label>
+                    <select class="form-control" id="status">
+                        <option value="pending">待开始</option>
+                        <option value="active">进行中</option>
+                        <option value="ended">已结束</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveAuction()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let auctionModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    auctionModal = new bootstrap.Modal(document.getElementById('auctionModal'));
+});
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '创建竞拍';
+    document.getElementById('auction_id').value = '';
+    document.getElementById('item_name').value = '';
+    document.getElementById('item_description').value = '';
+    document.getElementById('starting_price').value = '100';
+    document.getElementById('auction_start').value = '';
+    document.getElementById('auction_end').value = '';
+    document.getElementById('status').value = 'pending';
+    auctionModal.show();
+}
+
+function editAuction(id, auction) {
+    document.getElementById('modalTitle').textContent = '编辑竞拍';
+    document.getElementById('auction_id').value = id;
+    document.getElementById('item_name').value = auction.item_name || '';
+    document.getElementById('item_description').value = auction.item_description || '';
+    document.getElementById('starting_price').value = auction.starting_price || 100;
+    document.getElementById('auction_start').value = (auction.auction_start && auction.auction_start.length >= 16) ? auction.auction_start.substring(0, 16) : '';
+    document.getElementById('auction_end').value = (auction.auction_end && auction.auction_end.length >= 16) ? auction.auction_end.substring(0, 16) : '';
+    document.getElementById('status').value = auction.status || 'pending';
+    auctionModal.show();
+}
+
+function saveAuction() {
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('auction_id').value || null,
+        item_name: document.getElementById('item_name').value,
+        item_description: document.getElementById('item_description').value,
+        starting_price: parseInt(document.getElementById('starting_price').value) || 100,
+        auction_start: document.getElementById('auction_start').value || null,
+        auction_end: document.getElementById('auction_end').value || null,
+        status: document.getElementById('status').value
+    };
+    
+    fetch('/core/api/save_points_auction', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 保存成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function deleteAuction(id) {
+    if (!confirm('确定要删除这个竞拍吗？')) return;
+    
+    fetch('/core/api/delete_points_auction', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 删除成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

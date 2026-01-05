@@ -372,6 +372,117 @@ def page_other_settings(gid):
         db.session.commit()
     return render_template('other_settings.html', page='other_settings', group=group, settings=settings)
 
+@core_bp.route('/group/<int:gid>/invitation_activity')
+def page_invitation_activity(gid):
+    """邀请活动"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = InvitationActivity.query.filter_by(group_id=gid).first()
+    if not settings:
+        settings = InvitationActivity(group_id=gid)
+        db.session.add(settings)
+        db.session.commit()
+    return render_template('invitation_activity.html', page='invitation_activity', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/forced_channel_subscription')
+def page_forced_channel_subscription(gid):
+    """强制订阅频道"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = ForcedChannelSubscription.query.filter_by(group_id=gid).first()
+    if not settings:
+        settings = ForcedChannelSubscription(group_id=gid)
+        db.session.add(settings)
+        db.session.commit()
+    return render_template('forced_channel_subscription.html', page='forced_channel_subscription', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/points_rules')
+def page_points_rules(gid):
+    """积分规则"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    rules = PointsRule.query.filter_by(group_id=gid).all()
+    return render_template('points_rules.html', page='points_rules', group=group, rules=rules)
+
+@core_bp.route('/group/<int:gid>/points_auto_reply')
+def page_points_auto_reply(gid):
+    """积分自动回复"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    replies = PointsAutoReply.query.filter_by(group_id=gid).all()
+    return render_template('points_auto_reply.html', page='points_auto_reply', group=group, replies=replies)
+
+@core_bp.route('/group/<int:gid>/points_auction')
+def page_points_auction(gid):
+    """积分竞拍"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
+    return render_template('points_auction.html', page='points_auction', group=group, auctions=auctions)
+
+@core_bp.route('/group/<int:gid>/points_log')
+def page_points_log(gid):
+    """积分日志"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    logs = PointsLog.query.filter_by(group_id=gid).order_by(PointsLog.created_at.desc()).limit(100).all()
+    return render_template('points_log.html', page='points_log', group=group, logs=logs)
+
+@core_bp.route('/group/<int:gid>/group_lottery')
+def page_group_lottery(gid):
+    """群抽奖"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    lotteries = GroupLottery.query.filter_by(group_id=gid).order_by(GroupLottery.created_at.desc()).all()
+    return render_template('group_lottery.html', page='group_lottery', group=group, lotteries=lotteries)
+
+@core_bp.route('/group/<int:gid>/member_level')
+def page_member_level(gid):
+    """成员等级"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    levels = MemberLevel.query.filter_by(group_id=gid).order_by(MemberLevel.required_points).all()
+    return render_template('member_level.html', page='member_level', group=group, levels=levels)
+
+@core_bp.route('/group/<int:gid>/user_name_change')
+def page_user_name_change(gid):
+    """用户改名监控"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    changes = UserNameChange.query.filter_by(group_id=gid).order_by(UserNameChange.changed_at.desc()).limit(100).all()
+    return render_template('user_name_change.html', page='user_name_change', group=group, changes=changes)
+
+@core_bp.route('/group/<int:gid>/group_bottom_button')
+def page_group_bottom_button(gid):
+    """群底部按钮"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.button_order).all()
+    return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons)
+
+@core_bp.route('/group/<int:gid>/sync_group_messages')
+def page_sync_group_messages(gid):
+    """同步群消息"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
+    if not settings:
+        settings = SyncGroupMessages(source_group_id=gid)
+        db.session.add(settings)
+        db.session.commit()
+    return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
+
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
 def api_toggle_group():
@@ -1022,6 +1133,393 @@ def api_save_other_settings():
         settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
         settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
         settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_invitation_activity', methods=['POST'])
+def api_save_invitation_activity():
+    """保存邀请活动设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = InvitationActivity.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = InvitationActivity(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        settings.reward_points = d.get('reward_points', 10)
+        settings.minimum_invites = d.get('minimum_invites', 1)
+        if d.get('activity_start'):
+            try:
+                # Handle datetime-local input format (YYYY-MM-DDTHH:MM)
+                activity_start = d['activity_start']
+                if 'Z' in activity_start:
+                    activity_start = activity_start.replace('Z', '+00:00')
+                settings.activity_start = datetime.fromisoformat(activity_start)
+            except (ValueError, TypeError):
+                pass
+        if d.get('activity_end'):
+            try:
+                activity_end = d['activity_end']
+                if 'Z' in activity_end:
+                    activity_end = activity_end.replace('Z', '+00:00')
+                settings.activity_end = datetime.fromisoformat(activity_end)
+            except (ValueError, TypeError):
+                pass
+        settings.description = d.get('description')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_forced_channel_subscription', methods=['POST'])
+def api_save_forced_channel_subscription():
+    """保存强制订阅频道设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = ForcedChannelSubscription.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = ForcedChannelSubscription(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        settings.channel_id = d.get('channel_id')
+        settings.channel_username = d.get('channel_username')
+        settings.check_interval = d.get('check_interval', 3600)
+        settings.unsubscribe_action = d.get('unsubscribe_action', 'kick')
+        settings.verification_message = d.get('verification_message')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_points_rule', methods=['POST'])
+def api_save_points_rule():
+    """保存积分规则"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            rule = PointsRule.query.get(d['id'])
+            if not rule: return jsonify({'status':'error','msg':'Rule not found'})
+        else:
+            rule = PointsRule(group_id=d['group_id'])
+            db.session.add(rule)
+        
+        rule.rule_name = d.get('rule_name', '')
+        rule.rule_type = d.get('rule_type', 'message')
+        rule.points_amount = d.get('points_amount', 1)
+        rule.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_points_rule', methods=['POST'])
+def api_delete_points_rule():
+    """删除积分规则"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        rule = PointsRule.query.get(d['id'])
+        if not rule: return jsonify({'status':'error','msg':'Rule not found'})
+        db.session.delete(rule)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_points_auto_reply', methods=['POST'])
+def api_save_points_auto_reply():
+    """保存积分自动回复"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            reply = PointsAutoReply.query.get(d['id'])
+            if not reply: return jsonify({'status':'error','msg':'Reply not found'})
+        else:
+            reply = PointsAutoReply(group_id=d['group_id'])
+            db.session.add(reply)
+        
+        reply.trigger_keyword = d.get('trigger_keyword', '')
+        reply.points_cost = d.get('points_cost', 0)
+        reply.content = d.get('content')
+        reply.media_type = d.get('media_type', 'text')
+        reply.media_url = d.get('media_url')
+        reply.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_points_auto_reply', methods=['POST'])
+def api_delete_points_auto_reply():
+    """删除积分自动回复"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        reply = PointsAutoReply.query.get(d['id'])
+        if not reply: return jsonify({'status':'error','msg':'Reply not found'})
+        db.session.delete(reply)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_points_auction', methods=['POST'])
+def api_save_points_auction():
+    """保存积分竞拍"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            auction = PointsAuction.query.get(d['id'])
+            if not auction: return jsonify({'status':'error','msg':'Auction not found'})
+        else:
+            auction = PointsAuction(group_id=d['group_id'])
+            db.session.add(auction)
+        
+        auction.item_name = d.get('item_name', '')
+        auction.item_description = d.get('item_description')
+        auction.starting_price = d.get('starting_price', 100)
+        if d.get('auction_start'):
+            try:
+                auction_start = d['auction_start']
+                if 'Z' in auction_start:
+                    auction_start = auction_start.replace('Z', '+00:00')
+                auction.auction_start = datetime.fromisoformat(auction_start)
+            except (ValueError, TypeError):
+                pass
+        if d.get('auction_end'):
+            try:
+                auction_end = d['auction_end']
+                if 'Z' in auction_end:
+                    auction_end = auction_end.replace('Z', '+00:00')
+                auction.auction_end = datetime.fromisoformat(auction_end)
+            except (ValueError, TypeError):
+                pass
+        auction.status = d.get('status', 'pending')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_points_auction', methods=['POST'])
+def api_delete_points_auction():
+    """删除积分竞拍"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        auction = PointsAuction.query.get(d['id'])
+        if not auction: return jsonify({'status':'error','msg':'Auction not found'})
+        db.session.delete(auction)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_group_lottery', methods=['POST'])
+def api_save_group_lottery():
+    """保存群抽奖"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            lottery = GroupLottery.query.get(d['id'])
+            if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
+        else:
+            lottery = GroupLottery(group_id=d['group_id'])
+            db.session.add(lottery)
+        
+        lottery.lottery_name = d.get('lottery_name', '')
+        lottery.lottery_type = d.get('lottery_type', 'message_count')
+        lottery.prize_description = d.get('prize_description')
+        lottery.min_messages = d.get('min_messages', 10)
+        lottery.top_n_winners = d.get('top_n_winners', 3)
+        if d.get('start_time'):
+            try:
+                start_time = d['start_time']
+                if 'Z' in start_time:
+                    start_time = start_time.replace('Z', '+00:00')
+                lottery.start_time = datetime.fromisoformat(start_time)
+            except (ValueError, TypeError):
+                pass
+        if d.get('end_time'):
+            try:
+                end_time = d['end_time']
+                if 'Z' in end_time:
+                    end_time = end_time.replace('Z', '+00:00')
+                lottery.end_time = datetime.fromisoformat(end_time)
+            except (ValueError, TypeError):
+                pass
+        lottery.status = d.get('status', 'pending')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_group_lottery', methods=['POST'])
+def api_delete_group_lottery():
+    """删除群抽奖"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        lottery = GroupLottery.query.get(d['id'])
+        if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
+        db.session.delete(lottery)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_member_level', methods=['POST'])
+def api_save_member_level():
+    """保存成员等级"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            level = MemberLevel.query.get(d['id'])
+            if not level: return jsonify({'status':'error','msg':'Level not found'})
+        else:
+            level = MemberLevel(group_id=d['group_id'])
+            db.session.add(level)
+        
+        level.level_name = d.get('level_name', '')
+        level.required_points = d.get('required_points', 0)
+        level.permissions = d.get('permissions', '{}')
+        level.badge_emoji = d.get('badge_emoji')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_member_level', methods=['POST'])
+def api_delete_member_level():
+    """删除成员等级"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        level = MemberLevel.query.get(d['id'])
+        if not level: return jsonify({'status':'error','msg':'Level not found'})
+        db.session.delete(level)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_group_bottom_button', methods=['POST'])
+def api_save_group_bottom_button():
+    """保存群底部按钮"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        if d.get('id'):
+            button = GroupBottomButton.query.get(d['id'])
+            if not button: return jsonify({'status':'error','msg':'Button not found'})
+        else:
+            button = GroupBottomButton(group_id=d['group_id'])
+            db.session.add(button)
+        
+        button.button_text = d.get('button_text', '')
+        button.button_url = d.get('button_url')
+        button.button_callback = d.get('button_callback')
+        button.button_order = d.get('button_order', 0)
+        button.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_group_bottom_button', methods=['POST'])
+def api_delete_group_bottom_button():
+    """删除群底部按钮"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        button = GroupBottomButton.query.get(d['id'])
+        if not button: return jsonify({'status':'error','msg':'Button not found'})
+        db.session.delete(button)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_sync_group_messages', methods=['POST'])
+def api_save_sync_group_messages():
+    """保存同步群消息设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = SyncGroupMessages.query.filter_by(source_group_id=d['group_id']).first()
+        if not settings:
+            settings = SyncGroupMessages(source_group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.target_group_id = d.get('target_group_id', '')
+        settings.enabled = d.get('enabled', False)
+        settings.sync_media = d.get('sync_media', True)
+        settings.sync_forwards = d.get('sync_forwards', True)
+        settings.filter_keywords = d.get('filter_keywords', '[]')
         
         db.session.commit()
         return jsonify({'status':'ok'})

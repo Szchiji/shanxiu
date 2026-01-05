@@ -440,8 +440,73 @@
                                     </a>
                                 </li>
                                 <li>
+                                    <a href="/core/group/{{ current_group.id }}/invitation_activity" class="dropdown-item {% if page == 'invitation_activity' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-plus"></i> 邀请活动
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="dropdown-item {% if page == 'forced_channel_subscription' %}active{% endif %}">
+                                        <i class="fa-solid fa-rss"></i> 强制订阅频道
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/member_level" class="dropdown-item {% if page == 'member_level' %}active{% endif %}">
+                                        <i class="fa-solid fa-medal"></i> 成员等级
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/user_name_change" class="dropdown-item {% if page == 'user_name_change' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-edit"></i> 用户改名监控
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="dropdown-item {% if page == 'group_bottom_button' %}active{% endif %}">
+                                        <i class="fa-solid fa-hand-pointer"></i> 群底部按钮
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="dropdown-item {% if page == 'sync_group_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-sync"></i> 同步群消息
+                                    </a>
+                                </li>
+                                <li>
                                     <a href="/core/group/{{ current_group.id }}/other_settings" class="dropdown-item {% if page == 'other_settings' %}active{% endif %}">
                                         <i class="fa-solid fa-cog"></i> 其他设置
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+                        
+                        <!-- Points & Activities Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" 
+                               id="pointsActivitiesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-star"></i> 积分与活动
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsActivitiesDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
+                                        <i class="fa-solid fa-list-check"></i> 积分规则
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="dropdown-item {% if page == 'points_auto_reply' %}active{% endif %}">
+                                        <i class="fa-solid fa-comments-dollar"></i> 积分自动回复
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_auction" class="dropdown-item {% if page == 'points_auction' %}active{% endif %}">
+                                        <i class="fa-solid fa-gavel"></i> 积分竞拍
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_log" class="dropdown-item {% if page == 'points_log' %}active{% endif %}">
+                                        <i class="fa-solid fa-history"></i> 积分日志
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
+                                        <i class="fa-solid fa-trophy"></i> 群抽奖
                                     </a>
                                 </li>
                             </ul>

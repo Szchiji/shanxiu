@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(250, 112, 154, 0.3);
+    }
+    
+    .lotteries-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .lottery-item {
+        border-bottom: 1px solid #eee;
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    
+    .lottery-item:last-child {
+        border-bottom: none;
+    }
+    
+    .lottery-item:hover {
+        background-color: #f8f9fa;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-trophy me-2"></i>群抽奖</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>创建抽奖
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="lotteries-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>抽奖列表
+            </div>
+            <div class="card-body p-0">
+                {% if lotteries %}
+                    {% for lottery in lotteries %}
+                    <div class="lottery-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ lottery.lottery_name }}</h6>
+                                <p class="text-muted mb-2 small">{{ lottery.prize_description or '暂无奖品描述' }}</p>
+                                <div class="d-flex gap-3 flex-wrap">
+                                    <small class="text-muted">类型: {{ '发言数量' if lottery.lottery_type == 'message_count' else '发言排行' }}</small>
+                                    {% if lottery.lottery_type == 'message_count' %}
+                                    <small class="text-muted">最少发言: {{ lottery.min_messages }}</small>
+                                    {% else %}
+                                    <small class="text-muted">获奖人数: 前{{ lottery.top_n_winners }}名</small>
+                                    {% endif %}
+                                    {% if lottery.start_time %}
+                                    <small class="text-muted">开始: {{ lottery.start_time.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                    {% if lottery.end_time %}
+                                    <small class="text-muted">结束: {{ lottery.end_time.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                </div>
+                                <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }} mt-2">
+                                    {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else '已结束') }}
+                                </span>
+                            </div>
+                            <div>
+                                <button class="btn btn-sm btn-primary" onclick='editLottery({{ lottery.id }}, {{ lottery|tojson }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteLottery({{ lottery.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无抽奖活动</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="lotteryModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-trophy me-2"></i><span id="modalTitle">创建抽奖</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="lottery_id">
+                <div class="mb-3">
+                    <label class="form-label">抽奖名称</label>
+                    <input type="text" class="form-control" id="lottery_name" placeholder="例如：周末抽奖">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">抽奖类型</label>
+                    <select class="form-control" id="lottery_type" onchange="toggleLotteryFields()">
+                        <option value="message_count">发言数量抽奖</option>
+                        <option value="message_rank">发言排行抽奖</option>
+                    </select>
+                </div>
+                <div class="mb-3" id="min_messages_field">
+                    <label class="form-label">最少发言数</label>
+                    <input type="number" class="form-control" id="min_messages" value="10" min="1">
+                </div>
+                <div class="mb-3" id="top_n_winners_field" style="display:none;">
+                    <label class="form-label">获奖人数（前N名）</label>
+                    <input type="number" class="form-control" id="top_n_winners" value="3" min="1">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">奖品描述</label>
+                    <textarea class="form-control" id="prize_description" rows="2" placeholder="奖品详细描述"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">开始时间</label>
+                    <input type="datetime-local" class="form-control" id="start_time">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">结束时间</label>
+                    <input type="datetime-local" class="form-control" id="end_time">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">状态</label>
+                    <select class="form-control" id="status">
+                        <option value="pending">待开始</option>
+                        <option value="active">进行中</option>
+                        <option value="ended">已结束</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveLottery()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let lotteryModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    lotteryModal = new bootstrap.Modal(document.getElementById('lotteryModal'));
+});
+
+function toggleLotteryFields() {
+    const type = document.getElementById('lottery_type').value;
+    if (type === 'message_count') {
+        document.getElementById('min_messages_field').style.display = 'block';
+        document.getElementById('top_n_winners_field').style.display = 'none';
+    } else {
+        document.getElementById('min_messages_field').style.display = 'none';
+        document.getElementById('top_n_winners_field').style.display = 'block';
+    }
+}
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '创建抽奖';
+    document.getElementById('lottery_id').value = '';
+    document.getElementById('lottery_name').value = '';
+    document.getElementById('lottery_type').value = 'message_count';
+    document.getElementById('min_messages').value = '10';
+    document.getElementById('top_n_winners').value = '3';
+    document.getElementById('prize_description').value = '';
+    document.getElementById('start_time').value = '';
+    document.getElementById('end_time').value = '';
+    document.getElementById('status').value = 'pending';
+    toggleLotteryFields();
+    lotteryModal.show();
+}
+
+function editLottery(id, lottery) {
+    document.getElementById('modalTitle').textContent = '编辑抽奖';
+    document.getElementById('lottery_id').value = id;
+    document.getElementById('lottery_name').value = lottery.lottery_name || '';
+    document.getElementById('lottery_type').value = lottery.lottery_type || 'message_count';
+    document.getElementById('min_messages').value = lottery.min_messages || 10;
+    document.getElementById('top_n_winners').value = lottery.top_n_winners || 3;
+    document.getElementById('prize_description').value = lottery.prize_description || '';
+    document.getElementById('start_time').value = (lottery.start_time && lottery.start_time.length >= 16) ? lottery.start_time.substring(0, 16) : '';
+    document.getElementById('end_time').value = (lottery.end_time && lottery.end_time.length >= 16) ? lottery.end_time.substring(0, 16) : '';
+    document.getElementById('status').value = lottery.status || 'pending';
+    toggleLotteryFields();
+    lotteryModal.show();
+}
+
+function saveLottery() {
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('lottery_id').value || null,
+        lottery_name: document.getElementById('lottery_name').value,
+        lottery_type: document.getElementById('lottery_type').value,
+        min_messages: parseInt(document.getElementById('min_messages').value) || 10,
+        top_n_winners: parseInt(document.getElementById('top_n_winners').value) || 3,
+        prize_description: document.getElementById('prize_description').value,
+        start_time: document.getElementById('start_time').value || null,
+        end_time: document.getElementById('end_time').value || null,
+        status: document.getElementById('status').value
+    };
+    
+    fetch('/core/api/save_group_lottery', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 保存成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function deleteLottery(id) {
+    if (!confirm('确定要删除这个抽奖吗？')) return;
+    
+    fetch('/core/api/delete_group_lottery', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 删除成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

@@ -502,6 +502,20 @@
         }
     }
     
+    function showEmptyState() {
+        const tbody = document.querySelector('.table tbody');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">
+                        <i class="fa-solid fa-inbox fa-3x mb-3 d-block"></i>
+                        暂无 /start 消息，点击右上角添加
+                    </td>
+                </tr>
+            `;
+        }
+    }
+    
     async function deleteItem(id) {
         if (!confirm('确定要删除这条消息吗？')) return;
         
@@ -527,17 +541,10 @@
                 }
                 
                 // Check if table is now empty and show empty message
-                const tbody = document.querySelector('tbody');
-                const remainingRows = tbody.querySelectorAll('tr[data-id]');
+                const tbody = document.querySelector('.table tbody');
+                const remainingRows = tbody ? tbody.querySelectorAll('tr[data-id]') : [];
                 if (remainingRows.length === 0) {
-                    tbody.innerHTML = `
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">
-                                <i class="fa-solid fa-inbox fa-3x mb-3 d-block"></i>
-                                暂无 /start 消息，点击右上角添加
-                            </td>
-                        </tr>
-                    `;
+                    showEmptyState();
                 }
                 
                 // Show success message

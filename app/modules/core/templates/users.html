@@ -176,9 +176,17 @@
         <div>
             <h4 class="fw-bold mb-0"><i class="fa-solid fa-users me-2"></i>认证用户管理</h4>
         </div>
-        <button class="btn btn-light fw-bold px-3 py-2" onclick="openAddUser()">
-            <i class="fa-solid fa-plus me-2"></i>添加用户
-        </button>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-success px-3 py-2" onclick="exportUsers()">
+                <i class="fa-solid fa-file-export me-2"></i>导出
+            </button>
+            <button class="btn btn-outline-primary px-3 py-2" onclick="openBulkImport()">
+                <i class="fa-solid fa-file-import me-2"></i>批量导入
+            </button>
+            <button class="btn btn-light fw-bold px-3 py-2" onclick="openAddUser()">
+                <i class="fa-solid fa-plus me-2"></i>添加用户
+            </button>
+        </div>
     </div>
 </div>
 
@@ -533,5 +541,162 @@
             console.error('Error:', error);
         });
     }
+
+    // Open Bulk Import Modal
+    function openBulkImport() {
+        const modal = new bootstrap.Modal(document.getElementById('bulkImportModal'));
+        modal.show();
+    }
+
+    // Export Users to CSV
+    function exportUsers() {
+        // Get all users from current page or fetch all
+        fetch("/core/api/export_users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ group_id: {{ group.id|tojson }} }),
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                // Create CSV content
+                let csv = data.csv_content;
+                
+                // Create download link
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', `users_${Date.now()}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } else {
+                alert(data.msg || '导出失败');
+            }
+        })
+        .catch(error => {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        });
+    }
+
+    // Submit Bulk Import
+    async function submitBulkImport() {
+        const textarea = document.getElementById('bulkImportText');
+        const addDays = document.getElementById('bulkAddDays').value;
+        const text = textarea.value.trim();
+        
+        if (!text) {
+            alert('请输入用户数据');
+            return;
+        }
+        
+        const lines = text.split('\n').filter(line => line.trim());
+        const users = [];
+        const errors = [];
+        
+        lines.forEach((line, index) => {
+            const parts = line.trim().split(/[,\t]+/);
+            if (parts.length < 1) {
+                errors.push(`第 ${index + 1} 行: 格式错误`);
+                return;
+            }
+            
+            const tg_id = parts[0].trim();
+            if (!/^\d+$/.test(tg_id)) {
+                errors.push(`第 ${index + 1} 行: TG ID 必须是数字`);
+                return;
+            }
+            
+            const profile = {};
+            {% for field in fields %}
+            profile['{{ field.key }}'] = parts[{{ loop.index }}] || '';
+            {% endfor %}
+            
+            users.push({ tg_id, profile });
+        });
+        
+        if (errors.length > 0) {
+            alert('导入数据有误:\n' + errors.join('\n'));
+            return;
+        }
+        
+        if (users.length === 0) {
+            alert('没有有效的用户数据');
+            return;
+        }
+        
+        if (!confirm(`确认导入 ${users.length} 个用户？`)) {
+            return;
+        }
+        
+        try {
+            const res = await fetch("/core/api/bulk_import_users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    group_id: {{ group.id|tojson }},
+                    users: users,
+                    add_days: addDays
+                }),
+            });
+            
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            
+            const data = await res.json();
+            if (data.status === 'ok') {
+                alert(`成功导入 ${data.success_count} 个用户${data.skipped_count > 0 ? '，跳过 ' + data.skipped_count + ' 个已存在的用户' : ''}`);
+                location.reload();
+            } else {
+                alert(data.msg || '导入失败');
+            }
+        } catch (error) {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        }
+    }
 </script>
+
+<!-- Bulk Import Modal -->
+<div class="modal fade" id="bulkImportModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">批量导入用户</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="alert alert-info">
+                    <i class="fa-solid fa-info-circle me-2"></i>
+                    <strong>导入格式说明：</strong>每行一个用户，使用逗号或Tab键分隔字段<br>
+                    格式：<code>TG_ID{% for field in fields %}, {{ field.label }}{% endfor %}</code><br>
+                    示例：<code>123456789{% for field in fields %}, 示例{{ field.label }}{% endfor %}</code>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">添加天数</label>
+                    <input type="number" class="form-control" id="bulkAddDays" value="30" placeholder="设置有效天数">
+                    <small class="text-muted">所有导入用户的有效期</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">用户数据 <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="bulkImportText" rows="10" placeholder="粘贴用户数据，每行一个用户..."></textarea>
+                    <small class="text-muted">支持从Excel/CSV复制粘贴</small>
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary px-4" onclick="submitBulkImport()">
+                    <i class="fa-solid fa-upload me-2"></i>开始导入
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}

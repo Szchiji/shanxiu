@@ -415,6 +415,138 @@ def api_delete_user():
     db.session.commit()
     return jsonify({'status':'ok'})
 
+@core_bp.route('/api/bulk_import_users', methods=['POST'])
+def api_bulk_import_users():
+    """Bulk import users from CSV/Excel data"""
+    if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
+    
+    d = request.json
+    group_id = d.get('group_id')
+    users_data = d.get('users', [])
+    add_days = safe_int(d.get('add_days', 0), 0)
+    
+    if not group_id or not users_data:
+        return jsonify({'status':'error', 'msg':'缺少必要参数'})
+    
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status':'error', 'msg':'群组不存在'})
+    
+    success_count = 0
+    skipped_count = 0
+    
+    try:
+        for user_data in users_data:
+            tg_id = user_data.get('tg_id')
+            profile = user_data.get('profile', {})
+            
+            if not tg_id:
+                continue
+            
+            # Check if user already exists
+            existing_user = GroupUser.query.filter_by(group_id=group_id, tg_id=tg_id).first()
+            if existing_user:
+                skipped_count += 1
+                continue
+            
+            # Create new user
+            expiration_date = None
+            if add_days > 0:
+                expiration_date = get_beijing_now() + timedelta(days=add_days)
+            
+            new_user = GroupUser(
+                group_id=group_id,
+                tg_id=tg_id,
+                profile_data=json.dumps(profile, ensure_ascii=False),
+                expiration_date=expiration_date,
+                is_banned=False,
+                online=False
+            )
+            db.session.add(new_user)
+            success_count += 1
+        
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'ok',
+            'success_count': success_count,
+            'skipped_count': skipped_count
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in bulk_import_users: {e}")
+        return jsonify({'status':'error', 'msg': f'导入失败: {str(e)}'})
+
+@core_bp.route('/api/export_users', methods=['POST'])
+def api_export_users():
+    """Export users to CSV format"""
+    if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
+    
+    d = request.json
+    group_id = d.get('group_id')
+    
+    if not group_id:
+        return jsonify({'status':'error', 'msg':'缺少必要参数'})
+    
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status':'error', 'msg':'群组不存在'})
+    
+    fields = get_group_fields(group)
+    users = GroupUser.query.filter_by(group_id=group_id).order_by(GroupUser.id.desc()).all()
+    
+    # Create CSV content
+    csv_lines = []
+    
+    # Header row
+    header = ['TG_ID']
+    for field in fields:
+        header.append(field['label'])
+    header.extend(['状态', '过期时间', '禁言'])
+    csv_lines.append(','.join(header))
+    
+    # Data rows
+    for user in users:
+        try:
+            profile = json.loads(user.profile_data) if user.profile_data else {}
+        except:
+            profile = {}
+        
+        row = [str(user.tg_id)]
+        for field in fields:
+            value = profile.get(field['key'], '')
+            # Escape commas and quotes in CSV
+            value_str = str(value)
+            if ',' in value_str or '"' in value_str:
+                value_str = '"' + value_str.replace('"', '""') + '"'
+            row.append(value_str)
+        
+        # Status
+        if user.is_banned:
+            status = '封禁'
+        elif user.expiration_date:
+            status = '正常'
+        else:
+            status = '永久'
+        row.append(status)
+        
+        # Expiration date
+        exp_date = user.expiration_date.strftime('%Y-%m-%d %H:%M:%S') if user.expiration_date else ''
+        row.append(exp_date)
+        
+        # Banned
+        row.append('是' if user.is_banned else '否')
+        
+        csv_lines.append(','.join(row))
+    
+    csv_content = '\n'.join(csv_lines)
+    
+    return jsonify({
+        'status': 'ok',
+        'csv_content': csv_content
+    })
+
+
 @core_bp.route('/api/search_users', methods=['POST'])
 def api_search_users():
     if not session.get('logged_in'): return jsonify({'status':'error'})

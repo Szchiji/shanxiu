@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
@@ -198,15 +202,16 @@ function saveFilter() {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            alert('✅ 保存成功！');
-            location.reload();
+            showToast('保存成功！'', 'success');
+                setTimeout(() => location.reload(), 1000);
         } else {
-            alert('❌ 保存失败: ' + (d.msg || '未知错误'));
+            showToast('保存失败: ' + (d.msg || '未知错误'));
         }
     })
     .catch(e => {
         console.error(e);
-        alert('❌ 网络错误');
+        showToast('网络错误'', 'error');
+            console.error('操作失败:', e);
     });
 }
 
@@ -221,15 +226,16 @@ function deleteFilter(id) {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            alert('✅ 删除成功！');
-            location.reload();
+            showToast('删除成功！'', 'success');
+                setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ 删除失败: ' + (d.msg || '未知错误'));
         }
     })
     .catch(e => {
         console.error(e);
-        alert('❌ 网络错误');
+        showToast('网络错误'', 'error');
+            console.error('操作失败:', e);
     });
 }
 </script>

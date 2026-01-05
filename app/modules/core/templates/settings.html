@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .btn-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
     .btn-row .form-control { flex: 1; min-width: 150px; }
@@ -676,7 +680,7 @@
         };
         fetch('/core/api/save_settings', {
             method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)
-        }).then(()=>alert('✅ 配置已保存'));
+        }).then(()=>showToast('配置已保存'', 'success'));
     }
 </script>
 {% endblock %}

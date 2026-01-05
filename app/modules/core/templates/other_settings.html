@@ -1,5 +1,10 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -112,19 +117,24 @@
             cancel_channel_pin: document.getElementById('cancel_channel_pin').checked
         };
         
+        showLoading('保存设置中...');
+        
         fetch('/core/api/save_other_settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
+            hideLoading();
             if (result.status === 'ok') {
-                alert('✅ 设置已保存');
-                location.reload();
+                showToast('设置已保存'', 'success');
+                setTimeout(() => location.reload(), 1000);
             } else {
-                alert('❌ 保存失败: ' + (result.msg || '未知错误'));
+                showToast('保存失败: ' + (result.msg || '未知错误')', 'error');
             }
         }).catch(e => {
-            alert('❌ 网络错误，请重试');
+            hideLoading();
+            showToast('网络错误，请重试'', 'error');
+            console.error('保存设置失败:', e);
         });
     }
 </script>

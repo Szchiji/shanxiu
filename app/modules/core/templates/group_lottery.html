@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
@@ -227,15 +231,15 @@ function saveLottery() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            alert('✅ 保存成功！');
-            location.reload();
+            showToast('保存成功！'', 'success');
+                setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '保存失败'));
         }
     })
     .catch(err => {
         console.error(err);
-        alert('❌ 网络错误');
+        showToast('网络错误'', 'error');
     });
 }
 
@@ -250,15 +254,15 @@ function deleteLottery(id) {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            alert('✅ 删除成功！');
-            location.reload();
+            showToast('删除成功！'', 'success');
+                setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '删除失败'));
         }
     })
     .catch(err => {
         console.error(err);
-        alert('❌ 网络错误');
+        showToast('网络错误'', 'error');
     });
 }
 </script>

@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -136,14 +140,15 @@ function saveSettings() {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            alert('✅ 保存成功！');
+            showToast('保存成功！'', 'success');
         } else {
-            alert('❌ 保存失败: ' + (d.msg || '未知错误'));
+            showToast('保存失败: ' + (d.msg || '未知错误'));
         }
     })
     .catch(e => {
         console.error(e);
-        alert('❌ 网络错误');
+        showToast('网络错误'', 'error');
+            console.error('操作失败:', e);
     });
 }
 </script>

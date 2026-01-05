@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header-fields {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
@@ -224,7 +228,7 @@
             method:'POST', 
             headers:{'Content-Type':'application/json'}, 
             body:JSON.stringify(fields) 
-        }).then(()=>alert('✅ 字段配置已保存'));
+        }).then(()=>showToast('字段配置已保存'', 'success'));
     }
 
     render();

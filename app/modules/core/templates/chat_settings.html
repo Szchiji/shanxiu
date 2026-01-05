@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <div class="d-flex align-items-center mb-4">
     <a href="/core" class="btn btn-light me-3"><i class="fa-solid fa-arrow-left"></i> 返回</a>
     <h4 class="m-0 fw-bold">{{ chat.title }} <span class="badge bg-primary fs-6 align-middle ms-2">配置管理</span></h4>
@@ -132,7 +136,7 @@
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
-        }).then(() => alert('✅ 本群配置已保存！'));
+        }).then(() => showToast('本群配置已保存！'', 'success'));
     }
 </script>
 <style>

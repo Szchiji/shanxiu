@@ -5369,6 +5369,8 @@ async def cmd_start(update: Update, context):
     chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
     
+    print(f"📍 /start 调试: chat_type={chat.type}, chat_id={chat.id}, user_id={user_id}")
+    
     # Check if this is in a group/supergroup
     if chat.type in ['group', 'supergroup']:
         # Get custom /start message for the group
@@ -5376,10 +5378,17 @@ async def cmd_start(update: Update, context):
             with global_flask_app.app_context():
                 group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
                 if not group:
+                    print(f"⚠️ /start 调试: 未找到群组记录 chat_id={chat.id}")
                     return None, None
                 
+                print(f"📊 /start 调试: 找到群组 group_id={group.id}, title={group.title}")
+                
                 conf = get_group_conf(group)
-                if not conf.get('start_msg_open', True):
+                start_msg_open = conf.get('start_msg_open', True)
+                print(f"⚙️ /start 调试: start_msg_open={start_msg_open}")
+                
+                if not start_msg_open:
+                    print(f"⚠️ /start 调试: start_msg_open 已关闭")
                     return None, None
                 
                 # Check if user is admin in this group
@@ -5389,66 +5398,101 @@ async def cmd_start(update: Update, context):
                 
                 # Query for appropriate message type
                 message_type = 'admin' if is_admin else 'user'
+                print(f"👤 /start 调试: message_type={message_type}, is_admin={is_admin}")
+                
                 start_msg = StartMessage.query.filter_by(
                     group_id=group.id,
                     message_type=message_type,
                     is_active=True
                 ).first()
                 
+                if start_msg:
+                    print(f"✅ /start 调试: 找到自定义消息 id={start_msg.id}")
+                else:
+                    print(f"⚠️ /start 调试: 未找到 message_type={message_type} 的自定义消息")
+                    # 尝试查找所有该群组的 StartMessage
+                    all_msgs = StartMessage.query.filter_by(group_id=group.id).all()
+                    print(f"📋 /start 调试: 该群组共有 {len(all_msgs)} 条 StartMessage 记录")
+                    for msg in all_msgs:
+                        print(f"   - id={msg.id}, type={msg.message_type}, active={msg.is_active}")
+                
                 return start_msg, is_admin
         
         start_msg, is_admin = await asyncio.get_running_loop().run_in_executor(None, _get_start_message)
         
         if start_msg:
+            print(f"🎯 /start 调试: 准备发送自定义消息")
             # Build buttons
             buttons = []
             try:
                 links = json.loads(start_msg.links or '[]')
                 buttons = build_inline_keyboard_from_links(links)
-            except:
-                pass
+                print(f"🔘 /start 调试: 构建了 {len(buttons)} 行按钮（来自 start message）")
+            except Exception as e:
+                print(f"❌ /start 调试: 构建按钮失败: {e}")
             
             # 🆕 Add bottom buttons from group settings
             bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
             if bottom_buttons_markup:
                 # Merge bottom buttons with start message buttons
+                # bottom_buttons_markup.inline_keyboard is a list of button rows
+                print(f"🔘 /start 调试: 添加 {len(bottom_buttons_markup.inline_keyboard)} 行底部按钮")
                 buttons.extend(bottom_buttons_markup.inline_keyboard)
+                print(f"🔘 /start 调试: 合并后共有 {len(buttons)} 行按钮")
+            else:
+                print(f"🔘 /start 调试: 没有底部按钮")
             
             reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
             
             # Send custom message
             content = sanitize_html_for_telegram(start_msg.content or '')
+            print(f"📝 /start 调试: content={content[:50] if content else 'None'}...")
             
             # Handle different media types
             message_sent = False
-            if start_msg.media_type == 'image' and start_msg.media_url:
-                await update.message.reply_photo(
-                    photo=start_msg.media_url,
-                    caption=content or None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup
-                )
-                message_sent = True
-            elif start_msg.media_type == 'video' and start_msg.media_url:
-                await update.message.reply_video(
-                    video=start_msg.media_url,
-                    caption=content or None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup
-                )
-                message_sent = True
-            elif content or reply_markup:
-                # Send text message if there's content OR buttons (even with no text)
-                await update.message.reply_html(
-                    content or '👋',
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True
-                )
-                message_sent = True
+            try:
+                if start_msg.media_type == 'image' and start_msg.media_url:
+                    print(f"📷 /start 调试: 发送图片消息")
+                    await update.message.reply_photo(
+                        photo=start_msg.media_url,
+                        caption=content or None,
+                        parse_mode='HTML' if content else None,
+                        reply_markup=reply_markup
+                    )
+                    message_sent = True
+                elif start_msg.media_type == 'video' and start_msg.media_url:
+                    print(f"🎥 /start 调试: 发送视频消息")
+                    await update.message.reply_video(
+                        video=start_msg.media_url,
+                        caption=content or None,
+                        parse_mode='HTML' if content else None,
+                        reply_markup=reply_markup
+                    )
+                    message_sent = True
+                elif content or reply_markup:
+                    print(f"💬 /start 调试: 发送文本消息")
+                    # Send text message if there's content OR buttons (even with no text)
+                    await update.message.reply_html(
+                        content or '👋',
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+                    message_sent = True
+                else:
+                    print(f"⚠️ /start 调试: 没有内容或按钮，不发送消息")
+                
+                if message_sent:
+                    print(f"✅ /start 调试: 自定义消息发送成功")
+            except Exception as e:
+                print(f"❌ /start 调试: 发送消息失败: {e}")
+                import traceback
+                traceback.print_exc()
             
             # If we sent a custom message, return early
             if message_sent:
                 return
+        else:
+            print(f"⚠️ /start 调试: 没有找到自定义消息，使用默认行为")
     
     # Default behavior for private chat or when no custom message is set
     if user_id == admin_id:

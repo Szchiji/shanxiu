@@ -539,6 +539,139 @@ def page_bot_clones():
     
     return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now())
 
+@core_bp.route('/group/<int:gid>/inactive_user_settings')
+def page_inactive_user_settings(gid):
+    """不活跃用户设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
+    return render_template('inactive_user_settings.html', page='inactive_user_settings', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/keyword_filter')
+def page_keyword_filter(gid):
+    """关键词过滤"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    filters_list = KeywordFilter.query.filter_by(group_id=gid).order_by(KeywordFilter.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    filters_json = json.dumps([{
+        'id': f.id,
+        'keyword': f.keyword,
+        'filter_type': f.filter_type,
+        'match_type': f.match_type,
+        'action': f.action,
+        'is_active': f.is_active
+    } for f in filters_list], ensure_ascii=False)
+    
+    return render_template('keyword_filter.html', page='keyword_filter', group=group, 
+                         filters=filters_list, filters_json=filters_json)
+
+@core_bp.route('/group/<int:gid>/message_statistics')
+def page_message_statistics(gid):
+    """消息统计"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Get statistics for the last 7 days
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=7)
+    
+    stats = db.session.query(
+        MessageStatistics.date,
+        db.func.sum(MessageStatistics.message_count).label('total_messages'),
+        db.func.count(db.func.distinct(MessageStatistics.user_id)).label('active_users')
+    ).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date >= start_date,
+        MessageStatistics.date <= end_date
+    ).group_by(MessageStatistics.date).order_by(MessageStatistics.date.desc()).all()
+    
+    # Get top users
+    top_users = db.session.query(
+        MessageStatistics.user_id,
+        db.func.sum(MessageStatistics.message_count).label('total_messages')
+    ).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date >= start_date,
+        MessageStatistics.date <= end_date
+    ).group_by(MessageStatistics.user_id).order_by(
+        db.func.sum(MessageStatistics.message_count).desc()
+    ).limit(10).all()
+    
+    return render_template('message_statistics.html', page='message_statistics', 
+                         group=group, stats=stats, top_users=top_users, 
+                         start_date=start_date, end_date=end_date)
+
+@core_bp.route('/group/<int:gid>/group_votes')
+def page_group_votes(gid):
+    """群投票管理"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    votes = GroupVote.query.filter_by(group_id=gid).order_by(GroupVote.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    votes_json = json.dumps([{
+        'id': v.id,
+        'title': v.title,
+        'description': v.description,
+        'options': json.loads(v.options),
+        'vote_type': v.vote_type,
+        'max_choices': v.max_choices,
+        'is_anonymous': v.is_anonymous,
+        'allow_revote': v.allow_revote,
+        'start_time': v.start_time.isoformat() if v.start_time else None,
+        'end_time': v.end_time.isoformat() if v.end_time else None,
+        'status': v.status
+    } for v in votes], ensure_ascii=False)
+    
+    return render_template('group_votes.html', page='group_votes', group=group, 
+                         votes=votes, votes_json=votes_json)
+
+@core_bp.route('/group/<int:gid>/quiz_games')
+def page_quiz_games(gid):
+    """问答游戏管理"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    quizzes = QuizGame.query.filter_by(group_id=gid).order_by(QuizGame.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    quizzes_json = json.dumps([{
+        'id': q.id,
+        'question': q.question,
+        'answers': json.loads(q.answers),
+        'correct_answer_index': q.correct_answer_index,
+        'explanation': q.explanation,
+        'points_reward': q.points_reward,
+        'time_limit': q.time_limit,
+        'difficulty': q.difficulty,
+        'category': q.category,
+        'is_active': q.is_active
+    } for q in quizzes], ensure_ascii=False)
+    
+    return render_template('quiz_games.html', page='quiz_games', group=group, 
+                         quizzes=quizzes, quizzes_json=quizzes_json)
+
+@core_bp.route('/group/<int:gid>/red_packet_settings')
+def page_red_packet_settings(gid):
+    """红包设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Get recent red packets
+    packets = RedPacket.query.filter_by(group_id=gid).order_by(
+        RedPacket.created_at.desc()
+    ).limit(20).all()
+    
+    return render_template('red_packet_settings.html', page='red_packet_settings', 
+                         group=group, packets=packets)
+
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
 def api_toggle_group():
@@ -1712,6 +1845,209 @@ def api_toggle_bot_clone():
         clone = BotClone.query.get(d['id'])
         if not clone: return jsonify({'status':'error','msg':'Clone not found'})
         clone.is_active = not clone.is_active
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_inactive_user_settings', methods=['POST'])
+def api_save_inactive_user_settings():
+    """保存不活跃用户设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
+        if not settings:
+            settings = InactiveUserSettings(group_id=gid)
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        settings.inactivity_days = safe_int(d.get('inactivity_days', 30))
+        settings.action_type = d.get('action_type', 'kick')
+        settings.check_interval = safe_int(d.get('check_interval', 86400))
+        settings.warning_enabled = d.get('warning_enabled', False)
+        settings.warning_days = safe_int(d.get('warning_days', 7))
+        settings.warning_message = d.get('warning_message', '')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_keyword_filter', methods=['POST'])
+def api_save_keyword_filter():
+    """保存关键词过滤"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        filter_id = safe_int(d.get('id', 0))
+        if filter_id:
+            kf = KeywordFilter.query.get(filter_id)
+            if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+        else:
+            kf = KeywordFilter(group_id=gid)
+            db.session.add(kf)
+        
+        kf.keyword = d.get('keyword', '')
+        kf.filter_type = d.get('filter_type', 'blacklist')
+        kf.match_type = d.get('match_type', 'contains')
+        kf.action = d.get('action', 'delete')
+        kf.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_keyword_filter', methods=['POST'])
+def api_delete_keyword_filter():
+    """删除关键词过滤"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        kf = KeywordFilter.query.get(d['id'])
+        if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+        db.session.delete(kf)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_group_vote', methods=['POST'])
+def api_save_group_vote():
+    """保存群投票"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        vote_id = safe_int(d.get('id', 0))
+        if vote_id:
+            vote = GroupVote.query.get(vote_id)
+            if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+        else:
+            vote = GroupVote(group_id=gid)
+            db.session.add(vote)
+        
+        vote.title = d.get('title', '')
+        vote.description = d.get('description', '')
+        vote.options = json.dumps(d.get('options', []), ensure_ascii=False)
+        vote.vote_type = d.get('vote_type', 'single')
+        vote.max_choices = safe_int(d.get('max_choices', 1))
+        vote.is_anonymous = d.get('is_anonymous', False)
+        vote.allow_revote = d.get('allow_revote', True)
+        
+        # Parse dates
+        if d.get('start_time'):
+            try:
+                vote.start_time = datetime.fromisoformat(d['start_time'].replace('Z', '+00:00'))
+            except:
+                pass
+        if d.get('end_time'):
+            try:
+                vote.end_time = datetime.fromisoformat(d['end_time'].replace('Z', '+00:00'))
+            except:
+                pass
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_group_vote', methods=['POST'])
+def api_delete_group_vote():
+    """删除群投票"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        vote = GroupVote.query.get(d['id'])
+        if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+        db.session.delete(vote)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_quiz_game', methods=['POST'])
+def api_save_quiz_game():
+    """保存问答游戏"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        quiz_id = safe_int(d.get('id', 0))
+        if quiz_id:
+            quiz = QuizGame.query.get(quiz_id)
+            if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+        else:
+            quiz = QuizGame(group_id=gid)
+            db.session.add(quiz)
+        
+        quiz.question = d.get('question', '')
+        quiz.answers = json.dumps(d.get('answers', []), ensure_ascii=False)
+        quiz.correct_answer_index = safe_int(d.get('correct_answer_index', 0))
+        quiz.explanation = d.get('explanation', '')
+        quiz.points_reward = safe_int(d.get('points_reward', 10))
+        quiz.time_limit = safe_int(d.get('time_limit', 60))
+        quiz.difficulty = d.get('difficulty', 'medium')
+        quiz.category = d.get('category', '')
+        quiz.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_quiz_game', methods=['POST'])
+def api_delete_quiz_game():
+    """删除问答游戏"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        quiz = QuizGame.query.get(d['id'])
+        if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+        db.session.delete(quiz)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

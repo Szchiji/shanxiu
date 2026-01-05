@@ -3,7 +3,7 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -2702,19 +2702,48 @@ async def run_lottery_draws(context):
                     winners = []
                     
                     if lottery.lottery_type == 'message_count':
-                        # Find users who sent enough messages (simplified)
-                        # In real implementation, would need message tracking
-                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
-                        if eligible_users:
+                        # 🆕 Use actual message tracking data
+                        # Get all participants who sent at least one message
+                        message_counts = LotteryMessageCount.query.filter_by(
+                            lottery_id=lottery.id
+                        ).filter(LotteryMessageCount.message_count > 0).all()
+                        
+                        if message_counts:
+                            # Create weighted random selection based on message counts
+                            # Users with more messages have higher chance to win
                             import random
-                            winner = random.choice(eligible_users)
-                            winners = [winner.tg_id]
+                            participants = [(mc.user_id, mc.message_count) for mc in message_counts]
+                            
+                            # Weighted random selection
+                            total_messages = sum(count for _, count in participants)
+                            if total_messages > 0:
+                                rand_val = random.uniform(0, total_messages)
+                                cumulative = 0
+                                for user_id, count in participants:
+                                    cumulative += count
+                                    if cumulative >= rand_val:
+                                        winners = [user_id]
+                                        break
+                        else:
+                            # Fallback: if no one sent messages, pick from all group users
+                            eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                            if eligible_users:
+                                import random
+                                winner = random.choice(eligible_users)
+                                winners = [winner.tg_id]
                     
                     elif lottery.lottery_type == 'message_rank':
-                        # Find top N users (simplified)
-                        # In real implementation, would track message counts
-                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(lottery.top_n_winners).all()
-                        winners = [u.tg_id for u in top_users]
+                        # 🆕 Use actual message tracking data - top N senders
+                        top_senders = LotteryMessageCount.query.filter_by(
+                            lottery_id=lottery.id
+                        ).order_by(LotteryMessageCount.message_count.desc()).limit(lottery.top_n_winners or 1).all()
+                        
+                        winners = [mc.user_id for mc in top_senders]
+                        
+                        if not winners:
+                            # Fallback: if no tracking data, use all group users
+                            top_users = GroupUser.query.filter_by(group_id=group.id).limit(lottery.top_n_winners or 1).all()
+                            winners = [u.tg_id for u in top_users]
                     
                     # Update lottery with winners
                     lottery.winner_ids = json.dumps(winners)
@@ -3835,6 +3864,40 @@ async def on_message(update: Update, context):
                         db.session.add(points_log)
                         db.session.commit()
             
+            # 🆕 Track messages for active lotteries
+            if chat.type in ['group', 'supergroup']:
+                active_lotteries = GroupLottery.query.filter_by(
+                    group_id=group.id,
+                    status='active',
+                    lottery_type='message_count'
+                ).all()
+                
+                for lottery in active_lotteries:
+                    # Only track if lottery is still within its time window
+                    if lottery.start_time and lottery.end_time:
+                        now = get_beijing_now()
+                        if lottery.start_time <= now <= lottery.end_time:
+                            db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+                            if db_user:
+                                # Get or create message count record
+                                msg_count = LotteryMessageCount.query.filter_by(
+                                    lottery_id=lottery.id,
+                                    user_id=user.id
+                                ).first()
+                                
+                                if not msg_count:
+                                    msg_count = LotteryMessageCount(
+                                        lottery_id=lottery.id,
+                                        group_id=group.id,
+                                        user_id=user.id,
+                                        message_count=0
+                                    )
+                                    db.session.add(msg_count)
+                                
+                                msg_count.message_count += 1
+                                msg_count.updated_at = get_beijing_now()
+                                db.session.commit()
+            
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
@@ -4010,6 +4073,74 @@ async def on_message(update: Update, context):
                     except Exception as e:
                         print(f"Auto reply error: {e}")
                 # Continue to check for query functionality instead of returning
+            
+            # 3.5 积分自动回复检查 (Points-based Auto-Reply)
+            if conf.get('auto_reply_open', True):
+                points_reply = PointsAutoReply.query.filter_by(
+                    group_id=group.id,
+                    trigger_keyword=txt,
+                    is_active=True
+                ).first()
+                
+                if points_reply and points_reply.points_cost > 0:
+                    try:
+                        # Check user points
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id
+                        ).first()
+                        
+                        if not user_points or user_points.points_balance < points_reply.points_cost:
+                            current_balance = user_points.points_balance if user_points else 0
+                            await msg.reply_text(
+                                f"❌ 积分不足！\n"
+                                f"需要: {points_reply.points_cost} 积分\n"
+                                f"当前: {current_balance} 积分"
+                            )
+                        else:
+                            # Deduct points
+                            user_points.points_balance -= points_reply.points_cost
+                            
+                            # Log the transaction
+                            points_log = PointsLog(
+                                group_id=group.id,
+                                user_id=user.id,
+                                points_change=-points_reply.points_cost,
+                                reason=f"查看内容: {txt}",
+                                balance_after=user_points.points_balance
+                            )
+                            db.session.add(points_log)
+                            db.session.commit()
+                            
+                            # Send the content
+                            content = sanitize_html_for_telegram(points_reply.content or '')
+                            
+                            if points_reply.media_type == 'image' and points_reply.media_url:
+                                await msg.reply_photo(
+                                    photo=points_reply.media_url,
+                                    caption=content,
+                                    parse_mode='HTML'
+                                )
+                            elif points_reply.media_type == 'video' and points_reply.media_url:
+                                await msg.reply_video(
+                                    video=points_reply.media_url,
+                                    caption=content,
+                                    parse_mode='HTML'
+                                )
+                            elif content:
+                                await msg.reply_html(
+                                    content,
+                                    disable_web_page_preview=True
+                                )
+                            
+                            # Notify about deduction
+                            await msg.reply_text(
+                                f"💎 已扣除 {points_reply.points_cost} 积分\n"
+                                f"剩余: {user_points.points_balance} 积分"
+                            )
+                    except Exception as e:
+                        print(f"Points-based auto reply error: {e}")
+                        db.session.rollback()
             
             # 4. 查询功能
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]

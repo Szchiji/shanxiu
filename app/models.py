@@ -405,6 +405,25 @@ class BotClone(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
+class LotteryMessageCount(db.Model):
+    """抽奖消息计数 - 跟踪用户在抽奖期间发送的消息数"""
+    __tablename__ = 'lottery_message_count'
+    id = db.Column(db.Integer, primary_key=True)
+    lottery_id = db.Column(db.Integer, db.ForeignKey('group_lottery.id'), index=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, nullable=False)  # Telegram user ID
+    message_count = db.Column(db.Integer, default=0)  # Number of messages sent
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('lottery_id', 'user_id', name='_lottery_user_uc'),
+        db.Index('ix_lottery_message_count_lookup', 'lottery_id', 'group_id', 'user_id'),
+    )
+    
+    lottery = db.relationship('GroupLottery', backref='message_counts', lazy=True)
+    group = db.relationship('BotGroup', backref='lottery_message_counts', lazy=True)
+
 
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},

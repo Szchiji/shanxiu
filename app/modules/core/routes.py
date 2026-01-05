@@ -1665,6 +1665,7 @@ def api_save_group_bottom_button():
         button.button_text = d.get('button_text', '')
         button.button_url = d.get('button_url')
         button.button_callback = d.get('button_callback')
+        button.trigger_keyword = d.get('trigger_keyword', '').strip() or None
         button.button_order = d.get('button_order', 0)
         button.is_active = d.get('is_active', True)
         
@@ -1798,6 +1799,28 @@ def api_save_bot_clone():
         clone.is_active = d.get('is_active', True)
         clone.description = d.get('description', '').strip() or None
         clone.webhook_url = d.get('webhook_url', '').strip() or None
+        
+        # Handle owner_user_id
+        owner_user_id = d.get('owner_user_id', '').strip()
+        if owner_user_id:
+            try:
+                clone.owner_user_id = int(owner_user_id)
+            except (ValueError, TypeError):
+                clone.owner_user_id = None
+        else:
+            clone.owner_user_id = None
+        
+        # Handle admin_user_ids - convert comma-separated string to JSON array
+        admin_user_ids_str = d.get('admin_user_ids', '').strip()
+        if admin_user_ids_str:
+            try:
+                # Split by comma and convert to integers
+                admin_ids = [int(uid.strip()) for uid in admin_user_ids_str.split(',') if uid.strip().isdigit()]
+                clone.admin_user_ids = json.dumps(admin_ids)
+            except (ValueError, TypeError):
+                clone.admin_user_ids = '[]'
+        else:
+            clone.admin_user_ids = '[]'
         
         # Parse expiration date
         expiration_date_str = d.get('expiration_date')
@@ -4960,6 +4983,41 @@ async def on_message(update: Update, context):
                         except Exception as e:
                             print(f"Auto reply error: {e}")
                 # Continue to check for query functionality
+            
+            # 3.3 检查群底按钮触发关键词
+            try:
+                # 查找有触发关键词的按钮
+                buttons_with_keywords = GroupBottomButton.query.filter_by(
+                    group_id=group.id,
+                    is_active=True
+                ).filter(GroupBottomButton.trigger_keyword.isnot(None)).all()
+                
+                for btn in buttons_with_keywords:
+                    # Filter out empty keywords after stripping
+                    keywords = [k.strip() for k in btn.trigger_keyword.split(',') if k.strip()]
+                    if txt in keywords:
+                        # Build inline keyboard with this button
+                        keyboard = []
+                        if btn.button_url:
+                            keyboard.append([InlineKeyboardButton(
+                                btn.button_text,
+                                url=btn.button_url
+                            )])
+                        elif btn.button_callback:
+                            keyboard.append([InlineKeyboardButton(
+                                btn.button_text,
+                                callback_data=btn.button_callback
+                            )])
+                        
+                        if keyboard:
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+                            await msg.reply_text(
+                                "📋 群组按钮：",
+                                reply_markup=reply_markup
+                            )
+                        break  # Only show first matched button
+            except Exception as e:
+                print(f"Button keyword trigger error: {e}")
             
             # 4. 查询功能
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]

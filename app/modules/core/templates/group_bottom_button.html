@@ -60,6 +60,7 @@
                                 <h6 class="mb-1">{{ button.button_text }}</h6>
                                 <small class="text-muted">
                                     顺序: {{ button.button_order }} | 
+                                    {% if button.trigger_keyword %}<span class="badge bg-info">触发: {{ button.trigger_keyword }}</span> | {% endif %}
                                     {% if button.button_url %}URL: {{ button.button_url[:50] }}{% if button.button_url|length > 50 %}...{% endif %}{% endif %}
                                     {% if button.button_callback %}回调: {{ button.button_callback }}{% endif %}
                                 </small>
@@ -124,6 +125,11 @@
                     <small class="text-muted">内联按钮回调数据（可选）</small>
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">触发关键词</label>
+                    <input type="text" class="form-control" id="trigger_keyword" placeholder="例如：菜单,按钮">
+                    <small class="text-muted">用户发送此关键词时自动显示按钮，可用逗号分隔多个（可选）</small>
+                </div>
+                <div class="mb-3">
                     <label class="form-label">显示顺序</label>
                     <input type="number" class="form-control" id="button_order" value="0" min="0">
                 </div>
@@ -154,6 +160,7 @@ function showAddModal() {
     document.getElementById('button_text').value = '';
     document.getElementById('button_url').value = '';
     document.getElementById('button_callback').value = '';
+    document.getElementById('trigger_keyword').value = '';
     document.getElementById('button_order').value = '0';
     document.getElementById('is_active').checked = true;
     buttonModal.show();
@@ -168,6 +175,7 @@ function editButton(id) {
     document.getElementById('button_text').value = button.button_text || '';
     document.getElementById('button_url').value = button.button_url || '';
     document.getElementById('button_callback').value = button.button_callback || '';
+    document.getElementById('trigger_keyword').value = button.trigger_keyword || '';
     document.getElementById('button_order').value = button.button_order || 0;
     document.getElementById('is_active').checked = button.is_active;
     buttonModal.show();
@@ -180,6 +188,7 @@ function saveButton() {
         button_text: document.getElementById('button_text').value,
         button_url: document.getElementById('button_url').value,
         button_callback: document.getElementById('button_callback').value,
+        trigger_keyword: document.getElementById('trigger_keyword').value,
         button_order: parseInt(document.getElementById('button_order').value) || 0,
         is_active: document.getElementById('is_active').checked
     };

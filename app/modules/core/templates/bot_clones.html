@@ -60,6 +60,7 @@
                                 <h6 class="mb-1">{{ clone.clone_name }}</h6>
                                 <small class="text-muted">
                                     Token: ●●●●●●●●●●●●●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }} | 
+                                    {% if clone.owner_user_id %}拥有者ID: {{ clone.owner_user_id }} | {% endif %}
                                     {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}{% else %}永久有效{% endif %}
                                     {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
                                 </small>
@@ -115,6 +116,16 @@
                     <small class="text-muted">格式: 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11</small>
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">拥有者用户ID</label>
+                    <input type="text" class="form-control" id="owner_user_id" placeholder="例如：123456789">
+                    <small class="text-muted">克隆机器人拥有者的Telegram用户ID（可选）</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">管理员用户ID</label>
+                    <input type="text" class="form-control" id="admin_user_ids" placeholder="例如：123456789,987654321">
+                    <small class="text-muted">可添加多个管理员，用英文逗号分隔（可选）</small>
+                </div>
+                <div class="mb-3">
                     <label class="form-label">有效期（可选）</label>
                     <input type="datetime-local" class="form-control" id="expiration_date">
                     <small class="text-muted">留空表示永久有效</small>
@@ -153,6 +164,8 @@ function showAddModal() {
     document.getElementById('clone_id').value = '';
     document.getElementById('clone_name').value = '';
     document.getElementById('bot_token').value = '';
+    document.getElementById('owner_user_id').value = '';
+    document.getElementById('admin_user_ids').value = '';
     document.getElementById('expiration_date').value = '';
     document.getElementById('webhook_url').value = '';
     document.getElementById('description').value = '';
@@ -168,6 +181,19 @@ function editClone(id) {
     document.getElementById('clone_id').value = id;
     document.getElementById('clone_name').value = clone.clone_name || '';
     document.getElementById('bot_token').value = clone.bot_token || '';
+    document.getElementById('owner_user_id').value = clone.owner_user_id || '';
+    
+    // Handle admin_user_ids - convert from JSON array to comma-separated string
+    if (clone.admin_user_ids) {
+        try {
+            const adminIds = JSON.parse(clone.admin_user_ids);
+            document.getElementById('admin_user_ids').value = adminIds.join(',');
+        } catch (e) {
+            document.getElementById('admin_user_ids').value = '';
+        }
+    } else {
+        document.getElementById('admin_user_ids').value = '';
+    }
     
     // Format datetime for datetime-local input (no timezone conversion needed)
     if (clone.expiration_date) {
@@ -194,6 +220,8 @@ function saveClone() {
         id: document.getElementById('clone_id').value || null,
         clone_name: document.getElementById('clone_name').value,
         bot_token: document.getElementById('bot_token').value,
+        owner_user_id: document.getElementById('owner_user_id').value,
+        admin_user_ids: document.getElementById('admin_user_ids').value,
         expiration_date: document.getElementById('expiration_date').value || null,
         webhook_url: document.getElementById('webhook_url').value,
         description: document.getElementById('description').value,

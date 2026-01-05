@@ -2600,6 +2600,9 @@ async def run_bot(app_instance):
         handle_auto_delete_messages
     ))
     
+    # 🆕 Handle channel messages for pin control
+    app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+    
     # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     
@@ -2619,6 +2622,10 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("unpin", cmd_unpin))
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("userinfo", cmd_userinfo))
+    
+    # 🆕 Points auction commands (积分竞拍命令)
+    app.add_handler(CommandHandler("bid", cmd_bid))
+    app.add_handler(CommandHandler("auction", cmd_auction))
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -3025,6 +3032,28 @@ async def cmd_userinfo(update: Update, context):
         if total_earned > 0 or total_spent > 0:
             info_lines.append(f"📈 总获得: {total_earned}")
             info_lines.append(f"📉 总消耗: {total_spent}")
+        
+        # 🆕 Show member level badge
+        try:
+            def _get_member_level():
+                with global_flask_app.app_context():
+                    levels = MemberLevel.query.filter_by(
+                        group_id=group.id
+                    ).order_by(MemberLevel.required_points.desc()).all()
+                    
+                    current_level = None
+                    for level in levels:
+                        if user_points.points_balance >= level.required_points:
+                            current_level = level
+                            break
+                    return current_level
+            
+            member_level = await asyncio.get_running_loop().run_in_executor(None, _get_member_level)
+            if member_level:
+                badge = member_level.badge_emoji or "🎖️"
+                info_lines.append(f"{badge} 会员等级: {member_level.level_name}")
+        except Exception as e:
+            print(f"Error getting member level: {e}")
     
     # Get member info from Telegram
     try:
@@ -3049,6 +3078,270 @@ async def cmd_userinfo(update: Update, context):
     
     info_text = "\n".join(info_lines)
     await update.message.reply_text(info_text)
+
+async def cmd_bid(update: Update, context):
+    """积分竞拍出价命令 /bid <auction_id> <amount>"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Parse arguments
+    if len(context.args) < 2:
+        await update.message.reply_text("❌ 用法: /bid <竞拍ID> <出价金额>\n例如: /bid 1 100")
+        return
+    
+    try:
+        auction_id = int(context.args[0])
+        bid_amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 无效的参数，请输入数字")
+        return
+    
+    if bid_amount <= 0:
+        await update.message.reply_text("❌ 出价金额必须大于0")
+        return
+    
+    def _process_bid():
+        with global_flask_app.app_context():
+            try:
+                # Use pessimistic locking to prevent race conditions
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return "error", "群组未找到"
+                
+                # Get auction with row-level lock
+                auction = PointsAuction.query.filter_by(
+                    id=auction_id,
+                    group_id=group.id
+                ).with_for_update().first()
+                
+                if not auction:
+                    return "error", "竞拍不存在"
+                
+                if auction.status != 'active':
+                    return "error", "竞拍未激活或已结束"
+                
+                # Check if auction has ended
+                if auction.auction_end and get_beijing_now() > auction.auction_end:
+                    auction.status = 'ended'
+                    db.session.commit()
+                    return "error", "竞拍已结束"
+                
+                # Check if bid is higher than current
+                if bid_amount <= auction.current_bid:
+                    return "error", f"出价必须高于当前价格 {auction.current_bid} 积分"
+                
+                # Get user points with lock
+                user_points = UserPoints.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).with_for_update().first()
+                
+                if not user_points or user_points.points_balance < bid_amount:
+                    current_balance = user_points.points_balance if user_points else 0
+                    return "error", f"积分不足。当前积分: {current_balance}，需要: {bid_amount}"
+                
+                # Refund previous bidder if exists
+                if auction.current_bidder_id and auction.current_bidder_id != user.id:
+                    prev_bidder_points = UserPoints.query.filter_by(
+                        group_id=group.id,
+                        user_id=auction.current_bidder_id
+                    ).with_for_update().first()
+                    
+                    if prev_bidder_points:
+                        prev_bidder_points.points_balance += auction.current_bid
+                        
+                        # Log the refund
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=auction.current_bidder_id,
+                            points_change=auction.current_bid,
+                            reason=f"竞拍退款: {auction.item_name}",
+                            balance_after=prev_bidder_points.points_balance
+                        )
+                        db.session.add(points_log)
+                    else:
+                        # Previous bidder points record doesn't exist - log error but continue
+                        print(f"Warning: Previous bidder {auction.current_bidder_id} has no points record for refund")
+                
+                # Deduct points from current bidder
+                user_points.points_balance -= bid_amount
+                
+                # Log the bid
+                points_log = PointsLog(
+                    group_id=group.id,
+                    user_id=user.id,
+                    points_change=-bid_amount,
+                    reason=f"竞拍出价: {auction.item_name}",
+                    balance_after=user_points.points_balance
+                )
+                db.session.add(points_log)
+                
+                # Update auction
+                auction.current_bid = bid_amount
+                auction.current_bidder_id = user.id
+                
+                db.session.commit()
+                
+                return "success", auction.item_name, bid_amount, user_points.points_balance
+            
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error processing bid: {e}")
+                return "error", "出价处理失败，请重试"
+    
+    result = await asyncio.get_running_loop().run_in_executor(None, _process_bid)
+    
+    if result[0] == "error":
+        await update.message.reply_text(f"❌ {result[1]}")
+    else:
+        _, item_name, bid_amount, remaining_balance = result
+        await update.message.reply_text(
+            f"✅ 出价成功！\n\n"
+            f"📦 物品: {item_name}\n"
+            f"💰 出价: {bid_amount} 积分\n"
+            f"💎 剩余积分: {remaining_balance}"
+        )
+
+async def cmd_auction(update: Update, context):
+    """查看当前活跃的竞拍 /auction"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    def _get_auctions():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return []
+            
+            auctions = PointsAuction.query.filter_by(
+                group_id=group.id,
+                status='active'
+            ).order_by(PointsAuction.auction_end).all()
+            
+            return auctions
+    
+    auctions = await asyncio.get_running_loop().run_in_executor(None, _get_auctions)
+    
+    if not auctions:
+        await update.message.reply_text("📭 当前没有进行中的竞拍")
+        return
+    
+    message_lines = ["🏆 当前竞拍列表\n"]
+    message_lines.append("━━━━━━━━━━━━━━━━")
+    
+    for auction in auctions:
+        message_lines.append(f"\n📦 ID: {auction.id}")
+        message_lines.append(f"   物品: {auction.item_name}")
+        if auction.item_description:
+            message_lines.append(f"   描述: {auction.item_description}")
+        message_lines.append(f"   起拍价: {auction.starting_price} 积分")
+        message_lines.append(f"   当前价: {auction.current_bid} 积分")
+        if auction.current_bidder_id:
+            message_lines.append(f"   领先者: 用户 {auction.current_bidder_id}")
+        if auction.auction_end:
+            message_lines.append(f"   结束时间: {auction.auction_end.strftime('%Y-%m-%d %H:%M')}")
+        message_lines.append(f"\n   💡 出价: /bid {auction.id} <金额>")
+    
+    await update.message.reply_text("\n".join(message_lines))
+
+async def handle_channel_pin(update: Update, context):
+    """处理频道消息自动置顶 - 取消置顶"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        msg = update.message
+        chat = update.effective_chat
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        # Check if this is a channel post forwarded to the group
+        if not msg.sender_chat or msg.sender_chat.type != 'channel':
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not settings or not settings.cancel_channel_pin:
+                return
+            
+            # Wait a moment for Telegram to auto-pin the message
+            await asyncio.sleep(1)
+            
+            try:
+                # Get pinned messages in the chat
+                # If this channel message was just pinned, unpin it
+                await context.bot.unpin_chat_message(
+                    chat_id=chat.id,
+                    message_id=msg.message_id
+                )
+                print(f"Unpinned channel message {msg.message_id} in chat {chat.id}")
+            except Exception as e:
+                print(f"Error unpinning channel message: {e}")
+                    
+    except Exception as e:
+        print(f"Error in handle_channel_pin: {e}")
+
+async def display_bottom_buttons(chat_id, context):
+    """显示群底部按钮"""
+    if not global_flask_app:
+        return None
+    
+    try:
+        def _get_buttons():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat_id)).first()
+                if not group:
+                    return []
+                
+                buttons = GroupBottomButton.query.filter_by(
+                    group_id=group.id,
+                    is_active=True
+                ).order_by(GroupBottomButton.button_order).all()
+                
+                return buttons
+        
+        buttons = await asyncio.get_running_loop().run_in_executor(None, _get_buttons)
+        
+        if not buttons:
+            return None
+        
+        # Build inline keyboard
+        keyboard = []
+        for button in buttons:
+            if button.button_url:
+                keyboard.append([InlineKeyboardButton(
+                    button.button_text,
+                    url=button.button_url
+                )])
+            elif button.button_callback:
+                keyboard.append([InlineKeyboardButton(
+                    button.button_text,
+                    callback_data=button.button_callback
+                )])
+        
+        if keyboard:
+            return InlineKeyboardMarkup(keyboard)
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error displaying bottom buttons: {e}")
+        return None
 
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
@@ -3096,6 +3389,12 @@ async def cmd_start(update: Update, context):
                         buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
             except:
                 pass
+            
+            # 🆕 Add bottom buttons from group settings
+            bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+            if bottom_buttons_markup:
+                # Merge bottom buttons with start message buttons
+                buttons.extend(bottom_buttons_markup.inline_keyboard)
             
             reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
             
@@ -3424,6 +3723,12 @@ async def on_message(update: Update, context):
                                     buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
                         except:
                             pass
+                        
+                        # 🆕 Add bottom buttons from group settings
+                        bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+                        if bottom_buttons_markup:
+                            # Merge bottom buttons with auto-reply buttons
+                            buttons.extend(bottom_buttons_markup.inline_keyboard)
                         
                         reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
                         

@@ -68,6 +68,8 @@ def fix_database_schema(app):
             "ALTER TABLE start_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
             "ALTER TABLE start_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE start_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            # Group bottom button table columns
+            "ALTER TABLE group_bottom_button ADD COLUMN trigger_keyword VARCHAR(255)",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

@@ -2272,19 +2272,21 @@ async def cmd_userinfo(update: Update, context):
                     user_id=target_user.id
                 ).first()
                 
-                # Calculate total earned and spent from logs
-                logs = PointsLog.query.filter_by(
-                    group_id=group.id,
-                    user_id=target_user.id
-                ).all()
+                # Calculate total earned and spent using database aggregation
+                from sqlalchemy import func, case
+                result = db.session.query(
+                    func.sum(case((PointsLog.points_change > 0, PointsLog.points_change), else_=0)).label('earned'),
+                    func.sum(case((PointsLog.points_change < 0, func.abs(PointsLog.points_change)), else_=0)).label('spent')
+                ).filter(
+                    PointsLog.group_id == group.id,
+                    PointsLog.user_id == target_user.id
+                ).first()
                 
-                for log in logs:
-                    if log.points_change > 0:
-                        total_earned += log.points_change
-                    else:
-                        total_spent += abs(log.points_change)
-            except:
-                pass
+                if result:
+                    total_earned = result.earned or 0
+                    total_spent = result.spent or 0
+            except Exception as e:
+                print(f"Error getting user points: {e}")
             
             return group_user, user_points, group, total_earned, total_spent
     

@@ -423,6 +423,21 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="nav-link {% if page == 'inactive_user_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-user-clock"></i> 不活跃用户
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/keyword_filter" class="nav-link {% if page == 'keyword_filter' %}active{% endif %}">
+                                <i class="fa-solid fa-filter"></i> 关键词过滤
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}">
+                                <i class="fa-solid fa-chart-line"></i> 消息统计
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}">
                                 <i class="fa-solid fa-user-edit"></i> 改名监控
                             </a>
@@ -450,9 +465,9 @@
                         
                         <!-- Points & Activities - Dropdown -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
                                id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-coins"></i> 积分功能
+                                <i class="fa-solid fa-coins"></i> 积分 & 互动
                             </a>
                             <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsDropdown">
                                 <li>
@@ -475,9 +490,25 @@
                                         <i class="fa-solid fa-history"></i> 积分日志
                                     </a>
                                 </li>
+                                <li><hr class="dropdown-divider"></li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
                                         <i class="fa-solid fa-trophy"></i> 群抽奖
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/group_votes" class="dropdown-item {% if page == 'group_votes' %}active{% endif %}">
+                                        <i class="fa-solid fa-square-poll-vertical"></i> 群投票
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/quiz_games" class="dropdown-item {% if page == 'quiz_games' %}active{% endif %}">
+                                        <i class="fa-solid fa-brain"></i> 问答游戏
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/red_packet_settings" class="dropdown-item {% if page == 'red_packet_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-gift"></i> 🧧 红包
                                     </a>
                                 </li>
                             </ul>

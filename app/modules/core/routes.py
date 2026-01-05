@@ -3,7 +3,9 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
+                        InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
+                        QuizAnswer, RedPacket, RedPacketClaim)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -536,6 +538,139 @@ def page_bot_clones():
     } for c in clones], ensure_ascii=False)
     
     return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now())
+
+@core_bp.route('/group/<int:gid>/inactive_user_settings')
+def page_inactive_user_settings(gid):
+    """不活跃用户设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
+    return render_template('inactive_user_settings.html', page='inactive_user_settings', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/keyword_filter')
+def page_keyword_filter(gid):
+    """关键词过滤"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    filters_list = KeywordFilter.query.filter_by(group_id=gid).order_by(KeywordFilter.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    filters_json = json.dumps([{
+        'id': f.id,
+        'keyword': f.keyword,
+        'filter_type': f.filter_type,
+        'match_type': f.match_type,
+        'action': f.action,
+        'is_active': f.is_active
+    } for f in filters_list], ensure_ascii=False)
+    
+    return render_template('keyword_filter.html', page='keyword_filter', group=group, 
+                         filters=filters_list, filters_json=filters_json)
+
+@core_bp.route('/group/<int:gid>/message_statistics')
+def page_message_statistics(gid):
+    """消息统计"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Get statistics for the last 7 days
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=7)
+    
+    stats = db.session.query(
+        MessageStatistics.date,
+        db.func.sum(MessageStatistics.message_count).label('total_messages'),
+        db.func.count(db.func.distinct(MessageStatistics.user_id)).label('active_users')
+    ).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date >= start_date,
+        MessageStatistics.date <= end_date
+    ).group_by(MessageStatistics.date).order_by(MessageStatistics.date.desc()).all()
+    
+    # Get top users
+    top_users = db.session.query(
+        MessageStatistics.user_id,
+        db.func.sum(MessageStatistics.message_count).label('total_messages')
+    ).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date >= start_date,
+        MessageStatistics.date <= end_date
+    ).group_by(MessageStatistics.user_id).order_by(
+        db.func.sum(MessageStatistics.message_count).desc()
+    ).limit(10).all()
+    
+    return render_template('message_statistics.html', page='message_statistics', 
+                         group=group, stats=stats, top_users=top_users, 
+                         start_date=start_date, end_date=end_date)
+
+@core_bp.route('/group/<int:gid>/group_votes')
+def page_group_votes(gid):
+    """群投票管理"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    votes = GroupVote.query.filter_by(group_id=gid).order_by(GroupVote.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    votes_json = json.dumps([{
+        'id': v.id,
+        'title': v.title,
+        'description': v.description,
+        'options': json.loads(v.options),
+        'vote_type': v.vote_type,
+        'max_choices': v.max_choices,
+        'is_anonymous': v.is_anonymous,
+        'allow_revote': v.allow_revote,
+        'start_time': v.start_time.isoformat() if v.start_time else None,
+        'end_time': v.end_time.isoformat() if v.end_time else None,
+        'status': v.status
+    } for v in votes], ensure_ascii=False)
+    
+    return render_template('group_votes.html', page='group_votes', group=group, 
+                         votes=votes, votes_json=votes_json)
+
+@core_bp.route('/group/<int:gid>/quiz_games')
+def page_quiz_games(gid):
+    """问答游戏管理"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    quizzes = QuizGame.query.filter_by(group_id=gid).order_by(QuizGame.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    quizzes_json = json.dumps([{
+        'id': q.id,
+        'question': q.question,
+        'answers': json.loads(q.answers),
+        'correct_answer_index': q.correct_answer_index,
+        'explanation': q.explanation,
+        'points_reward': q.points_reward,
+        'time_limit': q.time_limit,
+        'difficulty': q.difficulty,
+        'category': q.category,
+        'is_active': q.is_active
+    } for q in quizzes], ensure_ascii=False)
+    
+    return render_template('quiz_games.html', page='quiz_games', group=group, 
+                         quizzes=quizzes, quizzes_json=quizzes_json)
+
+@core_bp.route('/group/<int:gid>/red_packet_settings')
+def page_red_packet_settings(gid):
+    """红包设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Get recent red packets
+    packets = RedPacket.query.filter_by(group_id=gid).order_by(
+        RedPacket.created_at.desc()
+    ).limit(20).all()
+    
+    return render_template('red_packet_settings.html', page='red_packet_settings', 
+                         group=group, packets=packets)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -1717,6 +1852,209 @@ def api_toggle_bot_clone():
         return jsonify({'status':'error','msg':str(e)})
 
 
+@core_bp.route('/api/save_inactive_user_settings', methods=['POST'])
+def api_save_inactive_user_settings():
+    """保存不活跃用户设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
+        if not settings:
+            settings = InactiveUserSettings(group_id=gid)
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        settings.inactivity_days = safe_int(d.get('inactivity_days', 30))
+        settings.action_type = d.get('action_type', 'kick')
+        settings.check_interval = safe_int(d.get('check_interval', 86400))
+        settings.warning_enabled = d.get('warning_enabled', False)
+        settings.warning_days = safe_int(d.get('warning_days', 7))
+        settings.warning_message = d.get('warning_message', '')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_keyword_filter', methods=['POST'])
+def api_save_keyword_filter():
+    """保存关键词过滤"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        filter_id = safe_int(d.get('id', 0))
+        if filter_id:
+            kf = KeywordFilter.query.get(filter_id)
+            if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+        else:
+            kf = KeywordFilter(group_id=gid)
+            db.session.add(kf)
+        
+        kf.keyword = d.get('keyword', '')
+        kf.filter_type = d.get('filter_type', 'blacklist')
+        kf.match_type = d.get('match_type', 'contains')
+        kf.action = d.get('action', 'delete')
+        kf.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_keyword_filter', methods=['POST'])
+def api_delete_keyword_filter():
+    """删除关键词过滤"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        kf = KeywordFilter.query.get(d['id'])
+        if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+        db.session.delete(kf)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_group_vote', methods=['POST'])
+def api_save_group_vote():
+    """保存群投票"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        vote_id = safe_int(d.get('id', 0))
+        if vote_id:
+            vote = GroupVote.query.get(vote_id)
+            if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+        else:
+            vote = GroupVote(group_id=gid)
+            db.session.add(vote)
+        
+        vote.title = d.get('title', '')
+        vote.description = d.get('description', '')
+        vote.options = json.dumps(d.get('options', []), ensure_ascii=False)
+        vote.vote_type = d.get('vote_type', 'single')
+        vote.max_choices = safe_int(d.get('max_choices', 1))
+        vote.is_anonymous = d.get('is_anonymous', False)
+        vote.allow_revote = d.get('allow_revote', True)
+        
+        # Parse dates
+        if d.get('start_time'):
+            try:
+                vote.start_time = datetime.fromisoformat(d['start_time'].replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                pass
+        if d.get('end_time'):
+            try:
+                vote.end_time = datetime.fromisoformat(d['end_time'].replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                pass
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_group_vote', methods=['POST'])
+def api_delete_group_vote():
+    """删除群投票"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        vote = GroupVote.query.get(d['id'])
+        if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+        db.session.delete(vote)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_quiz_game', methods=['POST'])
+def api_save_quiz_game():
+    """保存问答游戏"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    try:
+        gid = safe_int(d.get('group_id'))
+        group = BotGroup.query.get(gid)
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        quiz_id = safe_int(d.get('id', 0))
+        if quiz_id:
+            quiz = QuizGame.query.get(quiz_id)
+            if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+        else:
+            quiz = QuizGame(group_id=gid)
+            db.session.add(quiz)
+        
+        quiz.question = d.get('question', '')
+        quiz.answers = json.dumps(d.get('answers', []), ensure_ascii=False)
+        quiz.correct_answer_index = safe_int(d.get('correct_answer_index', 0))
+        quiz.explanation = d.get('explanation', '')
+        quiz.points_reward = safe_int(d.get('points_reward', 10))
+        quiz.time_limit = safe_int(d.get('time_limit', 60))
+        quiz.difficulty = d.get('difficulty', 'medium')
+        quiz.category = d.get('category', '')
+        quiz.is_active = d.get('is_active', True)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_quiz_game', methods=['POST'])
+def api_delete_quiz_game():
+    """删除问答游戏"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        quiz = QuizGame.query.get(d['id'])
+        if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+        db.session.delete(quiz)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
 @core_bp.route('/magic_login')
 def magic_login():
     token = request.args.get('token')
@@ -2779,6 +3117,372 @@ async def run_lottery_draws(context):
     except Exception as e:
         print(f"Error in run_lottery_draws: {e}")
 
+
+async def check_inactive_users(context):
+    """检查并处理不活跃用户 - Background task"""
+    if not global_flask_app: return
+    try:
+        def _check_inactive():
+            with global_flask_app.app_context():
+                # Get all groups with inactive user settings enabled
+                settings_list = InactiveUserSettings.query.filter_by(enabled=True).all()
+                
+                for settings in settings_list:
+                    try:
+                        group = BotGroup.query.get(settings.group_id)
+                        if not group or not group.is_active:
+                            continue
+                        
+                        # Calculate threshold date
+                        threshold_date = datetime.now() - timedelta(days=settings.inactivity_days)
+                        
+                        # Find inactive users
+                        inactive_users = GroupUser.query.filter(
+                            GroupUser.group_id == settings.group_id,
+                            GroupUser.last_activity < threshold_date,
+                            GroupUser.is_banned == False
+                        ).limit(10).all()  # Process in batches
+                        
+                        for user in inactive_users:
+                            try:
+                                # Take action based on settings
+                                if settings.action_type == 'kick':
+                                    asyncio.create_task(context.bot.ban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                    asyncio.create_task(context.bot.unban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                elif settings.action_type == 'ban':
+                                    asyncio.create_task(context.bot.ban_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id
+                                    ))
+                                    user.is_banned = True
+                                elif settings.action_type == 'mute':
+                                    asyncio.create_task(context.bot.restrict_chat_member(
+                                        chat_id=group.chat_id,
+                                        user_id=user.tg_id,
+                                        permissions=ChatPermissions(can_send_messages=False)
+                                    ))
+                                
+                                db.session.commit()
+                            except Exception as e:
+                                print(f"Error handling inactive user {user.tg_id}: {e}")
+                                continue
+                                
+                    except Exception as e:
+                        print(f"Error processing group {settings.group_id}: {e}")
+                        continue
+        
+        await asyncio.get_running_loop().run_in_executor(None, _check_inactive)
+    except Exception as e:
+        print(f"Error in check_inactive_users: {e}")
+
+
+async def track_message_statistics(update: Update, context):
+    """跟踪消息统计 - Called from on_message"""
+    if not global_flask_app: return
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        def _track_stats():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return
+                
+                today = datetime.now().date()
+                
+                # Use upsert-like pattern to avoid race conditions
+                stats = MessageStatistics.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id,
+                    date=today
+                ).with_for_update().first()
+                
+                if not stats:
+                    stats = MessageStatistics(
+                        group_id=group.id,
+                        user_id=user.id,
+                        date=today,
+                        message_count=0,
+                        text_count=0,
+                        photo_count=0,
+                        video_count=0,
+                        sticker_count=0,
+                        document_count=0,
+                        voice_count=0
+                    )
+                    db.session.add(stats)
+                    try:
+                        db.session.flush()
+                    except:
+                        # Another thread created it, re-fetch
+                        db.session.rollback()
+                        stats = MessageStatistics.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id,
+                            date=today
+                        ).first()
+                        if not stats:
+                            return
+                
+                # Update counts
+                stats.message_count += 1
+                
+                if msg.text:
+                    stats.text_count += 1
+                elif msg.photo:
+                    stats.photo_count += 1
+                elif msg.video:
+                    stats.video_count += 1
+                elif msg.sticker:
+                    stats.sticker_count += 1
+                elif msg.document:
+                    stats.document_count += 1
+                elif msg.voice:
+                    stats.voice_count += 1
+                
+                db.session.commit()
+        
+        await asyncio.get_running_loop().run_in_executor(None, _track_stats)
+    except Exception as e:
+        print(f"Error tracking message statistics: {e}")
+
+
+async def check_keyword_filter(update: Update, context):
+    """检查关键词过滤 - Called from on_message, returns True if message should be deleted"""
+    if not global_flask_app: return False
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not msg.text or chat.type not in ['group', 'supergroup']:
+            return False
+        
+        def _check_filters():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return None
+                
+                # Get active keyword filters
+                filters_list = KeywordFilter.query.filter_by(
+                    group_id=group.id,
+                    is_active=True
+                ).all()
+                
+                for kf in filters_list:
+                    matched = False
+                    
+                    if kf.match_type == 'exact':
+                        matched = msg.text.strip().lower() == kf.keyword.lower()
+                    elif kf.match_type == 'contains':
+                        matched = kf.keyword.lower() in msg.text.lower()
+                    elif kf.match_type == 'regex':
+                        try:
+                            matched = re.search(kf.keyword, msg.text, re.IGNORECASE) is not None
+                        except re.error:
+                            # Invalid regex pattern, skip this filter
+                            pass
+                    
+                    # Blacklist: if matched, take action
+                    if matched and kf.filter_type == 'blacklist':
+                        return kf
+                    
+                return None
+        
+        matched_filter = await asyncio.get_running_loop().run_in_executor(None, _check_filters)
+        
+        if matched_filter:
+            # Take action based on filter settings
+            if matched_filter.action == 'delete':
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'warn':
+                await msg.reply_text(f"⚠️ 警告：消息包含禁止关键词")
+            elif matched_filter.action == 'mute':
+                await context.bot.restrict_chat_member(
+                    chat_id=chat.id,
+                    user_id=user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=datetime.now() + timedelta(minutes=10)
+                )
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'kick':
+                await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                await context.bot.unban_chat_member(chat_id=chat.id, user_id=user.id)
+                await msg.delete()
+                return True
+            elif matched_filter.action == 'ban':
+                await context.bot.ban_chat_member(chat_id=chat.id, user_id=user.id)
+                await msg.delete()
+                return True
+        
+        return False
+    except Exception as e:
+        print(f"Error in check_keyword_filter: {e}")
+        return False
+
+
+async def update_user_activity(update: Update, context):
+    """更新用户最后活动时间 - Called from on_message"""
+    if not global_flask_app: return
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        def _update_activity():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return
+                
+                group_user = GroupUser.query.filter_by(
+                    group_id=group.id,
+                    tg_id=user.id
+                ).first()
+                
+                if group_user:
+                    group_user.last_activity = datetime.now()
+                    db.session.commit()
+        
+        await asyncio.get_running_loop().run_in_executor(None, _update_activity)
+    except Exception as e:
+        print(f"Error updating user activity: {e}")
+
+
+async def cmd_vote(update: Update, context):
+    """创建投票命令 /vote"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能创建投票")
+        return
+    
+    await update.message.reply_text(
+        "📊 <b>创建投票</b>\n\n"
+        "格式：/vote 标题|选项1|选项2|选项3...\n\n"
+        "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
+        parse_mode='HTML'
+    )
+
+
+async def cmd_quiz(update: Update, context):
+    """启动问答游戏命令 /quiz"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _get_random_quiz():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None
+            
+            # Get a random active quiz
+            quiz = QuizGame.query.filter_by(
+                group_id=group.id,
+                is_active=True
+            ).order_by(db.func.random()).first()
+            
+            if quiz:
+                return {
+                    'id': quiz.id,
+                    'question': quiz.question,
+                    'answers': json.loads(quiz.answers),
+                    'time_limit': quiz.time_limit,
+                    'points_reward': quiz.points_reward
+                }
+            return None
+    
+    quiz_data = await asyncio.get_running_loop().run_in_executor(None, _get_random_quiz)
+    
+    if not quiz_data:
+        await update.message.reply_text("❌ 暂无可用的问答题目")
+        return
+    
+    # Create quiz session and send question
+    buttons = []
+    for idx, answer in enumerate(quiz_data['answers']):
+        buttons.append([InlineKeyboardButton(
+            f"{chr(65+idx)}. {answer}",
+            callback_data=f"quiz_answer_{quiz_data['id']}_{idx}"
+        )])
+    
+    keyboard = InlineKeyboardMarkup(buttons)
+    
+    message = await update.message.reply_text(
+        f"🎯 <b>问答题</b>\n\n"
+        f"{quiz_data['question']}\n\n"
+        f"⏱ 时限：{quiz_data['time_limit']}秒\n"
+        f"🎁 奖励：{quiz_data['points_reward']}积分",
+        reply_markup=keyboard,
+        parse_mode='HTML'
+    )
+    
+    # Create quiz session in database
+    def _create_session():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if group:
+                session = QuizSession(
+                    group_id=group.id,
+                    quiz_id=quiz_data['id'],
+                    message_id=message.message_id,
+                    start_time=datetime.now(),
+                    status='active'
+                )
+                db.session.add(session)
+                db.session.commit()
+    
+    await asyncio.get_running_loop().run_in_executor(None, _create_session)
+
+
+async def cmd_redpacket(update: Update, context):
+    """发红包命令 /redpacket"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    await update.message.reply_text(
+        "🧧 <b>发红包</b>\n\n"
+        "格式：/redpacket 总积分 红包数量 [祝福语]\n\n"
+        "示例：\n"
+        "/redpacket 100 10 新年快乐\n"
+        "/redpacket 200 5",
+        parse_mode='HTML'
+    )
+
+
 async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
@@ -2839,6 +3543,11 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("bid", cmd_bid))
     app.add_handler(CommandHandler("auction", cmd_auction))
     
+    # 🆕 Interactive features commands (互动功能命令)
+    app.add_handler(CommandHandler("vote", cmd_vote))
+    app.add_handler(CommandHandler("quiz", cmd_quiz))
+    app.add_handler(CommandHandler("redpacket", cmd_redpacket))
+    
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
@@ -2846,6 +3555,7 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
     app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
+    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
     
     await app.initialize()
     await app.start()
@@ -3731,6 +4441,17 @@ async def on_message(update: Update, context):
             spam_detected = await check_spam_protection(update, context)
             if spam_detected:
                 return  # Message was deleted, stop processing
+            
+            # 🆕 Check keyword filter (may delete message and return early)
+            keyword_filtered = await check_keyword_filter(update, context)
+            if keyword_filtered:
+                return  # Message was deleted, stop processing
+            
+            # 🆕 Update user last activity time
+            await update_user_activity(update, context)
+            
+            # 🆕 Track message statistics
+            await track_message_statistics(update, context)
             
             # 🆕 Track user name changes
             await track_user_name_change(update, context)

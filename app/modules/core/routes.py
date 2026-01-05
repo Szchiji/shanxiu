@@ -2758,6 +2758,23 @@ async def track_user_name_change(update: Update, context):
                     )
                     db.session.add(name_change)
                     db.session.commit()
+                    
+                    # 🆕 Send alert message in group
+                    try:
+                        alert_message = (
+                            f"📝 用户改名提醒\n\n"
+                            f"用户ID: <code>{user.id}</code>\n"
+                            f"旧昵称: {last_change.new_name}\n"
+                            f"新昵称: {current_name}\n"
+                            f"时间: {get_beijing_now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        )
+                        await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=alert_message,
+                            parse_mode='HTML'
+                        )
+                    except Exception as e:
+                        print(f"Error sending name change alert: {e}")
             else:
                 # First time seeing this user, record initial name
                 name_change = UserNameChange(
@@ -2817,22 +2834,37 @@ async def handle_sync_group_messages(update: Update, context):
                     # target_group_id is stored as string chat_id, not database id
                     target_chat_id = sync_setting.target_group_id
                     
+                    # 🆕 Prepare sender info (include bot messages)
+                    if user:
+                        sender_name = user.first_name
+                        if user.last_name:
+                            sender_name += f" {user.last_name}"
+                        sender_prefix = f"[{sender_name}] "
+                    else:
+                        sender_prefix = "[机器人] "
+                    
                     if msg.text:
+                        # 🆕 Add sender info to synced message
+                        synced_text = f"{sender_prefix}{msg.text}"
                         sent_msg = await context.bot.send_message(
                             chat_id=target_chat_id,
-                            text=msg.text
+                            text=synced_text
                         )
                     elif msg.photo and sync_setting.sync_media:
+                        # 🆕 Add sender info to caption
+                        caption = f"{sender_prefix}{msg.caption or ''}"
                         sent_msg = await context.bot.send_photo(
                             chat_id=target_chat_id,
                             photo=msg.photo[-1].file_id,
-                            caption=msg.caption
+                            caption=caption
                         )
                     elif msg.video and sync_setting.sync_media:
+                        # 🆕 Add sender info to caption
+                        caption = f"{sender_prefix}{msg.caption or ''}"
                         sent_msg = await context.bot.send_video(
                             chat_id=target_chat_id,
                             video=msg.video.file_id,
-                            caption=msg.caption
+                            caption=caption
                         )
                     else:
                         continue
@@ -2843,8 +2875,8 @@ async def handle_sync_group_messages(update: Update, context):
                         target_group_id=target_chat_id,
                         source_message_id=msg.message_id,
                         target_message_id=sent_msg.message_id,
-                        user_id=user.id,
-                        username=user.username,
+                        user_id=user.id if user else None,
+                        username=user.username if user else 'bot',
                         message_type='text' if msg.text else ('photo' if msg.photo else 'video'),
                         content_preview=msg.text[:100] if msg.text else None,
                         status='success',
@@ -2860,8 +2892,8 @@ async def handle_sync_group_messages(update: Update, context):
                         source_group_id=group.id,
                         target_group_id=sync_setting.target_group_id,
                         source_message_id=msg.message_id,
-                        user_id=user.id,
-                        username=user.username,
+                        user_id=user.id if user else None,
+                        username=user.username if user else 'bot',
                         status='failed',
                         error_message=str(e),
                         synced_at=get_beijing_now()
@@ -3538,6 +3570,8 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("unpin", cmd_unpin))
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("userinfo", cmd_userinfo))
+    app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CommandHandler("buttons", cmd_menu))  # alias for menu
     
     # 🆕 Points auction commands (积分竞拍命令)
     app.add_handler(CommandHandler("bid", cmd_bid))
@@ -4000,6 +4034,28 @@ async def cmd_userinfo(update: Update, context):
     
     info_text = "\n".join(info_lines)
     await update.message.reply_html(info_text)
+
+async def cmd_menu(update: Update, context):
+    """显示群底部按钮菜单命令 /menu 或 /buttons"""
+    chat = update.effective_chat
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Get bottom buttons
+    bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+    
+    if not bottom_buttons_markup or not bottom_buttons_markup.inline_keyboard:
+        await update.message.reply_text("ℹ️ 该群组暂未设置底部按钮")
+        return
+    
+    # Send message with buttons
+    await update.message.reply_text(
+        "📋 群组菜单：",
+        reply_markup=bottom_buttons_markup
+    )
 
 async def cmd_bid(update: Update, context):
     """积分竞拍出价命令 /bid <auction_id> <amount>"""
@@ -4750,11 +4806,18 @@ async def on_message(update: Update, context):
             # 3. 自动回复检查 (Check points-based first, then regular auto-reply)
             if conf.get('auto_reply_open', True):
                 # 3.1 先检查积分自动回复 (Check Points-based Auto-Reply first)
-                points_reply = PointsAutoReply.query.filter_by(
+                # 🆕 Support multiple keywords (comma-separated)
+                points_reply = None
+                all_points_replies = PointsAutoReply.query.filter_by(
                     group_id=group.id,
-                    trigger_keyword=txt,
                     is_active=True
-                ).first()
+                ).all()
+                
+                for pr in all_points_replies:
+                    keywords = [k.strip() for k in pr.trigger_keyword.split(',')]
+                    if txt in keywords:
+                        points_reply = pr
+                        break
                 
                 if points_reply and points_reply.points_cost > 0:
                     # Points-based content found - handle it
@@ -4824,11 +4887,18 @@ async def on_message(update: Update, context):
                     # Don't check regular auto-reply if points-based was triggered
                 else:
                     # 3.2 No points-based reply found, check regular auto-reply
-                    auto_reply = AutoReply.query.filter_by(
+                    # 🆕 Support multiple keywords (comma-separated)
+                    auto_reply = None
+                    all_auto_replies = AutoReply.query.filter_by(
                         group_id=group.id,
-                        trigger_keyword=txt,
                         is_active=True
-                    ).first()
+                    ).all()
+                    
+                    for ar in all_auto_replies:
+                        keywords = [k.strip() for k in ar.trigger_keyword.split(',')]
+                        if txt in keywords:
+                            auto_reply = ar
+                            break
                     
                     if auto_reply:
                         try:

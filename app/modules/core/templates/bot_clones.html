@@ -189,6 +189,7 @@ function editClone(id) {
             const adminIds = JSON.parse(clone.admin_user_ids);
             document.getElementById('admin_user_ids').value = adminIds.join(',');
         } catch (e) {
+            console.error('Error parsing admin_user_ids:', e);
             document.getElementById('admin_user_ids').value = '';
         }
     } else {

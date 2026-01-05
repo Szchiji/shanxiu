@@ -1814,8 +1814,15 @@ def api_save_bot_clone():
         admin_user_ids_str = d.get('admin_user_ids', '').strip()
         if admin_user_ids_str:
             try:
-                # Split by comma and convert to integers
-                admin_ids = [int(uid.strip()) for uid in admin_user_ids_str.split(',') if uid.strip().isdigit()]
+                # Split by comma and convert to integers (supports negative IDs)
+                admin_ids = []
+                for uid in admin_user_ids_str.split(','):
+                    uid = uid.strip()
+                    if uid:  # Skip empty strings
+                        try:
+                            admin_ids.append(int(uid))
+                        except ValueError:
+                            pass  # Skip invalid values
                 clone.admin_user_ids = json.dumps(admin_ids)
             except (ValueError, TypeError):
                 clone.admin_user_ids = '[]'
@@ -4996,7 +5003,7 @@ async def on_message(update: Update, context):
                     # Filter out empty keywords after stripping
                     keywords = [k.strip() for k in btn.trigger_keyword.split(',') if k.strip()]
                     if txt in keywords:
-                        # Build inline keyboard with this button
+                        # Build inline keyboard with this button (only if it has URL or callback)
                         keyboard = []
                         if btn.button_url:
                             keyboard.append([InlineKeyboardButton(
@@ -5009,13 +5016,14 @@ async def on_message(update: Update, context):
                                 callback_data=btn.button_callback
                             )])
                         
+                        # Only send if button has valid URL or callback
                         if keyboard:
                             reply_markup = InlineKeyboardMarkup(keyboard)
                             await msg.reply_text(
                                 "📋 群组按钮：",
                                 reply_markup=reply_markup
                             )
-                        break  # Only show first matched button
+                            break  # Only show first matched button
             except Exception as e:
                 print(f"Button keyword trigger error: {e}")
             

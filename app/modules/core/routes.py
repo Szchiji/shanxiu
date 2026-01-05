@@ -1895,6 +1895,478 @@ async def check_scheduled_messages(context):
         except Exception as e:
             print(f"Error sending scheduled message: {e}")
 
+# 🆕 New Feature Handlers
+
+async def handle_new_chat_member(update: Update, context):
+    """Handle new members joining the group - Entry verification, welcome messages, etc."""
+    if not global_flask_app or not update.message or not update.message.new_chat_members:
+        return
+    
+    try:
+        chat = update.effective_chat
+        if chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return
+            
+            settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
+            if not settings:
+                return
+            
+            for new_member in update.message.new_chat_members:
+                if new_member.is_bot:
+                    continue
+                
+                # Entry verification
+                if settings.entry_verification_enabled and settings.verification_question:
+                    try:
+                        # Send verification question
+                        question_text = f"👋 欢迎 {new_member.first_name}!\n\n"
+                        question_text += f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
+                        question_text += f"⏱ 超时时间: {settings.verification_timeout}秒"
+                        
+                        await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=question_text
+                        )
+                        # Note: Full verification logic would require storing pending verifications
+                        # and checking responses - simplified here for initial implementation
+                    except Exception as e:
+                        print(f"Error sending verification question: {e}")
+                
+                # Welcome message
+                if settings.welcome_enabled and settings.welcome_message:
+                    try:
+                        welcome_text = settings.welcome_message.replace('{username}', new_member.first_name)
+                        welcome_text = sanitize_html_for_telegram(welcome_text)
+                        
+                        if settings.welcome_media_type == 'image' and settings.welcome_media_url:
+                            await context.bot.send_photo(
+                                chat_id=chat.id,
+                                photo=settings.welcome_media_url,
+                                caption=welcome_text,
+                                parse_mode='HTML'
+                            )
+                        elif settings.welcome_media_type == 'video' and settings.welcome_media_url:
+                            await context.bot.send_video(
+                                chat_id=chat.id,
+                                video=settings.welcome_media_url,
+                                caption=welcome_text,
+                                parse_mode='HTML'
+                            )
+                        elif welcome_text:
+                            await context.bot.send_message(
+                                chat_id=chat.id,
+                                text=welcome_text,
+                                parse_mode='HTML'
+                            )
+                    except Exception as e:
+                        print(f"Error sending welcome message: {e}")
+                
+                # Track invitation for points system
+                if update.message.from_user and update.message.from_user.id != new_member.id:
+                    inviter_id = update.message.from_user.id
+                    invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
+                    
+                    if invitation_activity:
+                        # Award points to inviter
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=inviter_id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
+                                group_id=group.id,
+                                user_id=inviter_id,
+                                points_balance=0
+                            )
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += invitation_activity.reward_points
+                        
+                        # Log the points transaction
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=inviter_id,
+                            points_change=invitation_activity.reward_points,
+                            reason=f"邀请新成员: {new_member.first_name}",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
+                        
+    except Exception as e:
+        print(f"Error in handle_new_chat_member: {e}")
+
+async def handle_left_chat_member(update: Update, context):
+    """Handle members leaving the group - Exit ban functionality"""
+    if not global_flask_app or not update.message or not update.message.left_chat_member:
+        return
+    
+    try:
+        chat = update.effective_chat
+        if chat.type not in ['group', 'supergroup']:
+            return
+        
+        left_member = update.message.left_chat_member
+        if left_member.is_bot:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return
+            
+            settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
+            if not settings or not settings.exit_ban_enabled:
+                return
+            
+            # Ban user who left
+            try:
+                if settings.exit_ban_duration == 0:
+                    # Permanent ban
+                    await context.bot.ban_chat_member(chat.id, left_member.id)
+                else:
+                    # Temporary ban
+                    until_date = datetime.now() + timedelta(minutes=settings.exit_ban_duration)
+                    await context.bot.ban_chat_member(
+                        chat.id,
+                        left_member.id,
+                        until_date=until_date
+                    )
+                print(f"Banned user {left_member.id} for leaving group {chat.id}")
+            except Exception as e:
+                print(f"Error banning user who left: {e}")
+    
+    except Exception as e:
+        print(f"Error in handle_left_chat_member: {e}")
+
+async def check_spam_protection(update: Update, context):
+    """Monitor messages for spam protection rules"""
+    if not global_flask_app or not update.effective_message:
+        return False
+    
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return False
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return False
+            
+            protection = SpamProtection.query.filter_by(group_id=group.id, enabled=True).first()
+            if not protection:
+                return False
+            
+            # Check whitelist
+            try:
+                whitelist = json.loads(protection.whitelist_users or '[]')
+                if user.id in whitelist:
+                    return False
+            except:
+                pass
+            
+            # Check for blocked content
+            should_punish = False
+            
+            # Block links
+            if protection.block_links and msg.text:
+                if 'http://' in msg.text or 'https://' in msg.text or 'www.' in msg.text:
+                    should_punish = True
+            
+            # Block forwards
+            if protection.block_forwards and msg.forward_date:
+                should_punish = True
+            
+            # Block stickers
+            if protection.block_stickers and msg.sticker:
+                should_punish = True
+            
+            if should_punish:
+                # Delete the message
+                try:
+                    await msg.delete()
+                except:
+                    pass
+                
+                # Apply punishment
+                if protection.punishment_type == 'mute':
+                    until_date = datetime.now() + timedelta(minutes=protection.punishment_duration)
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat.id,
+                        user_id=user.id,
+                        permissions=ChatPermissions(can_send_messages=False),
+                        until_date=until_date
+                    )
+                elif protection.punishment_type == 'kick':
+                    await context.bot.ban_chat_member(chat.id, user.id)
+                    await context.bot.unban_chat_member(chat.id, user.id)
+                elif protection.punishment_type == 'ban':
+                    until_date = datetime.now() + timedelta(minutes=protection.punishment_duration)
+                    await context.bot.ban_chat_member(chat.id, user.id, until_date=until_date)
+                
+                return True
+            
+            return False
+            
+    except Exception as e:
+        print(f"Error in check_spam_protection: {e}")
+        return False
+
+async def check_timed_group_control(context):
+    """Background task to check and apply timed group controls"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_controls():
+            with global_flask_app.app_context():
+                return TimedGroupControl.query.filter_by(enabled=True).all()
+        
+        controls = await asyncio.get_running_loop().run_in_executor(None, _get_controls)
+        
+        for control in controls:
+            try:
+                # Get current time in the specified timezone
+                tz = pytz.timezone(control.timezone)
+                now = datetime.now(tz)
+                current_time = now.time()
+                
+                # Check if we should open or close the group
+                if control.open_time and control.close_time:
+                    # Determine if group should be open or closed
+                    should_be_open = False
+                    
+                    if control.open_time < control.close_time:
+                        # Normal case: open at 9am, close at 5pm
+                        should_be_open = control.open_time <= current_time < control.close_time
+                    else:
+                        # Overnight case: open at 9pm, close at 6am
+                        should_be_open = current_time >= control.open_time or current_time < control.close_time
+                    
+                    # Get group to check current state
+                    with global_flask_app.app_context():
+                        group = BotGroup.query.get(control.group_id)
+                        if not group:
+                            continue
+                        
+                        chat_id = int(group.chat_id)
+                        
+                        # Apply permissions based on should_be_open
+                        # Note: This is simplified - actual implementation would need to track state
+                        # and only send messages when state changes
+                        
+            except Exception as e:
+                print(f"Error processing timed control for group {control.group_id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in check_timed_group_control: {e}")
+
+async def track_user_name_change(update: Update, context):
+    """Track when users change their names"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            # Get the last known name for this user
+            last_change = UserNameChange.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).order_by(UserNameChange.changed_at.desc()).first()
+            
+            current_name = user.first_name
+            if user.last_name:
+                current_name += f" {user.last_name}"
+            
+            # Check if name has changed
+            if last_change:
+                if last_change.new_name != current_name:
+                    # Name has changed
+                    name_change = UserNameChange(
+                        group_id=group.id,
+                        user_id=user.id,
+                        old_name=last_change.new_name,
+                        new_name=current_name,
+                        changed_at=get_beijing_now()
+                    )
+                    db.session.add(name_change)
+                    db.session.commit()
+            else:
+                # First time seeing this user, record initial name
+                name_change = UserNameChange(
+                    group_id=group.id,
+                    user_id=user.id,
+                    old_name=None,
+                    new_name=current_name,
+                    changed_at=get_beijing_now()
+                )
+                db.session.add(name_change)
+                db.session.commit()
+                
+    except Exception as e:
+        print(f"Error in track_user_name_change: {e}")
+
+async def handle_sync_group_messages(update: Update, context):
+    """Sync messages from source group to target groups"""
+    if not global_flask_app or not update.effective_message:
+        return
+    
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            # Find sync settings where this group is the source
+            sync_settings = SyncGroupMessages.query.filter_by(
+                source_group_id=group.id,
+                enabled=True
+            ).all()
+            
+            for sync_setting in sync_settings:
+                try:
+                    # Check keyword filters
+                    if msg.text and sync_setting.filter_keywords:
+                        try:
+                            keywords = json.loads(sync_setting.filter_keywords)
+                            if any(kw in msg.text for kw in keywords):
+                                continue  # Skip this message due to keyword filter
+                        except:
+                            pass
+                    
+                    # Skip forwards if not enabled
+                    if msg.forward_date and not sync_setting.sync_forwards:
+                        continue
+                    
+                    # Sync the message to target group
+                    target_chat_id = sync_setting.target_group_id
+                    
+                    if msg.text:
+                        sent_msg = await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=msg.text
+                        )
+                    elif msg.photo and sync_setting.sync_media:
+                        sent_msg = await context.bot.send_photo(
+                            chat_id=target_chat_id,
+                            photo=msg.photo[-1].file_id,
+                            caption=msg.caption
+                        )
+                    elif msg.video and sync_setting.sync_media:
+                        sent_msg = await context.bot.send_video(
+                            chat_id=target_chat_id,
+                            video=msg.video.file_id,
+                            caption=msg.caption
+                        )
+                    else:
+                        continue
+                    
+                    # Log the sync
+                    log_entry = SyncMessageLog(
+                        source_group_id=group.id,
+                        target_group_id=target_chat_id,
+                        source_message_id=msg.message_id,
+                        target_message_id=sent_msg.message_id,
+                        user_id=user.id,
+                        username=user.username,
+                        message_type='text' if msg.text else ('photo' if msg.photo else 'video'),
+                        content_preview=msg.text[:100] if msg.text else None,
+                        status='success',
+                        synced_at=get_beijing_now()
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                    
+                except Exception as e:
+                    print(f"Error syncing message to {sync_setting.target_group_id}: {e}")
+                    # Log the failure
+                    log_entry = SyncMessageLog(
+                        source_group_id=group.id,
+                        target_group_id=sync_setting.target_group_id,
+                        source_message_id=msg.message_id,
+                        user_id=user.id,
+                        username=user.username,
+                        status='failed',
+                        error_message=str(e),
+                        synced_at=get_beijing_now()
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                    
+    except Exception as e:
+        print(f"Error in handle_sync_group_messages: {e}")
+
+async def handle_auto_delete_messages(update: Update, context):
+    """Auto-delete system messages based on settings"""
+    if not global_flask_app or not update.message:
+        return
+    
+    try:
+        msg = update.message
+        chat = update.effective_chat
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return
+            
+            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not settings:
+                return
+            
+            should_delete = False
+            
+            # Check for join messages
+            if settings.auto_delete_join_msg and msg.new_chat_members:
+                should_delete = True
+            
+            # Check for leave messages
+            if settings.auto_delete_leave_msg and msg.left_chat_member:
+                should_delete = True
+            
+            # Check for pin messages
+            if settings.auto_delete_pin_msg and msg.pinned_message:
+                should_delete = True
+            
+            if should_delete:
+                try:
+                    await msg.delete()
+                except Exception as e:
+                    print(f"Error deleting message: {e}")
+                    
+    except Exception as e:
+        print(f"Error in handle_auto_delete_messages: {e}")
+
 async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
@@ -1915,8 +2387,26 @@ async def run_bot(app_instance):
     global_ptb_app = app
 
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    # 🆕 New member/leave handlers (must come before general message handler)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
+    
+    # 🆕 Auto-delete system messages (must come early to delete before processing)
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS | 
+        filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+        filters.StatusUpdate.PINNED_MESSAGE,
+        handle_auto_delete_messages
+    ))
+    
+    # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    
+    # Callback query handler
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
+    
+    # Command handlers
     app.add_handler(CommandHandler("start", cmd_start))
     
     # Group management commands (群管理机器人功能)
@@ -1930,11 +2420,10 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("userinfo", cmd_userinfo))
     
-    # Add periodic job to check expired users
+    # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
-    
-    # Add periodic job to check scheduled messages
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
+    app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)  # 🆕 Check every minute
     
     await app.initialize()
     await app.start()
@@ -2523,6 +3012,18 @@ async def on_message(update: Update, context):
 
         txt = msg.text.strip()
         
+        # 🆕 Check spam protection first (may delete message and return early)
+        if chat.type in ['group', 'supergroup']:
+            spam_detected = await check_spam_protection(update, context)
+            if spam_detected:
+                return  # Message was deleted, stop processing
+            
+            # 🆕 Track user name changes
+            await track_user_name_change(update, context)
+            
+            # 🆕 Sync messages to other groups
+            await handle_sync_group_messages(update, context)
+        
         # Check if this is a verification code from admin in private chat
         if chat.type == 'private':
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
@@ -2566,6 +3067,44 @@ async def on_message(update: Update, context):
                 return
             
             conf = get_group_conf(group)
+            
+            # 🆕 Award points for messages (if rule exists and user is registered)
+            if chat.type in ['group', 'supergroup']:
+                message_rule = PointsRule.query.filter_by(
+                    group_id=group.id,
+                    rule_type='message',
+                    is_active=True
+                ).first()
+                
+                if message_rule:
+                    db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+                    if db_user:
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
+                                group_id=group.id,
+                                user_id=user.id,
+                                points_balance=0
+                            )
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += message_rule.points_amount
+                        
+                        # Log the points transaction
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_change=message_rule.points_amount,
+                            reason="发送消息",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
+            
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
@@ -2620,6 +3159,41 @@ async def on_message(update: Update, context):
                             db_user.checkin_time = get_beijing_now()
                             db_user.online = True
                             db.session.commit()
+                            
+                            # 🆕 Award points for check-in
+                            checkin_rule = PointsRule.query.filter_by(
+                                group_id=group.id,
+                                rule_type='checkin',
+                                is_active=True
+                            ).first()
+                            
+                            if checkin_rule:
+                                user_points = UserPoints.query.filter_by(
+                                    group_id=group.id,
+                                    user_id=user.id
+                                ).first()
+                                
+                                if not user_points:
+                                    user_points = UserPoints(
+                                        group_id=group.id,
+                                        user_id=user.id,
+                                        points_balance=0
+                                    )
+                                    db.session.add(user_points)
+                                
+                                user_points.points_balance += checkin_rule.points_amount
+                                
+                                # Log the points transaction
+                                points_log = PointsLog(
+                                    group_id=group.id,
+                                    user_id=user.id,
+                                    points_change=checkin_rule.points_amount,
+                                    reason="每日打卡",
+                                    balance_after=user_points.points_balance
+                                )
+                                db.session.add(points_log)
+                                db.session.commit()
+                            
                             msg_text = sanitize_html_for_telegram(conf.get('msg_checkin_success', '打卡成功'))
                             r = await msg.reply_html(msg_text)
                             del_time = safe_int(conf.get('checkin_del_time'), 0)

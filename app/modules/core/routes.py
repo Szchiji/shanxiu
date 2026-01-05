@@ -531,6 +531,8 @@ def page_bot_clones():
         'id': c.id,
         'clone_name': c.clone_name,
         'bot_token': c.bot_token,
+        'owner_user_id': c.owner_user_id,
+        'admin_user_ids': c.admin_user_ids,
         'is_active': c.is_active,
         'expiration_date': c.expiration_date.isoformat() if c.expiration_date else None,
         'webhook_url': c.webhook_url,

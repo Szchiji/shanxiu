@@ -224,19 +224,8 @@ def page_auto_replies(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters with enhanced options
-    page = safe_int(request.args.get('page', 1), 1)
-    per_page = safe_int(request.args.get('per_page', 20), 20)
-    # Support larger page sizes including 100
-    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
-    if page < 1: page = 1
-    
-    # Get total count and paginated results
-    total_items = AutoReply.query.filter_by(group_id=gid).count()
-    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
-    if page > total_pages: page = total_pages
-    
-    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    # Get ALL auto replies (no server-side pagination, template uses client-side pagination)
+    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).all()
     
     # 转换为JSON供前端使用
     auto_replies_json = json.dumps([{
@@ -252,8 +241,7 @@ def page_auto_replies(gid):
     } for ar in auto_replies], ensure_ascii=False)
     
     return render_template('auto_replies.html', page='auto_replies', group=group, 
-                          auto_replies=auto_replies, auto_replies_json=auto_replies_json,
-                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+                          auto_replies=auto_replies, auto_replies_json=auto_replies_json)
 
 @core_bp.route('/group/<int:gid>/scheduled_messages')
 def page_scheduled_messages(gid):
@@ -262,19 +250,8 @@ def page_scheduled_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters with enhanced options
-    page = safe_int(request.args.get('page', 1), 1)
-    per_page = safe_int(request.args.get('per_page', 20), 20)
-    # Support larger page sizes including 100
-    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
-    if page < 1: page = 1
-    
-    # Get total count and paginated results
-    total_items = ScheduledMessage.query.filter_by(group_id=gid).count()
-    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
-    if page > total_pages: page = total_pages
-    
-    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    # Get ALL scheduled messages (no server-side pagination, template uses client-side pagination)
+    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).all()
     
     # 转换为JSON供前端使用
     scheduled_messages_json = json.dumps([{
@@ -293,8 +270,7 @@ def page_scheduled_messages(gid):
     } for sm in scheduled_messages], ensure_ascii=False)
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
-                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json,
-                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json)
 
 @core_bp.route('/group/<int:gid>/start_messages')
 def page_start_messages(gid):

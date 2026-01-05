@@ -397,7 +397,7 @@ class BotClone(db.Model):
     __tablename__ = 'bot_clones'
     id = db.Column(db.Integer, primary_key=True)
     clone_name = db.Column(db.String(255), nullable=False)  # 克隆机器人名称
-    bot_token = db.Column(db.String(255), nullable=False, unique=True)  # Bot Token
+    bot_token = db.Column(db.String(255), nullable=False)  # Bot Token (removed unique constraint for flexibility)
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     expiration_date = db.Column(db.DateTime, nullable=True)  # 有效期
     webhook_url = db.Column(db.String(500), nullable=True)  # Webhook URL

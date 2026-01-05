@@ -535,7 +535,7 @@ def page_bot_clones():
         'description': c.description
     } for c in clones], ensure_ascii=False)
     
-    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json)
+    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now())
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -1668,7 +1668,9 @@ def api_save_bot_clone():
         expiration_date_str = d.get('expiration_date')
         if expiration_date_str:
             try:
-                clone.expiration_date = datetime.fromisoformat(expiration_date_str.replace('Z', '+00:00'))
+                # HTML datetime-local format: YYYY-MM-DDTHH:MM (no timezone)
+                # Parse as Beijing time
+                clone.expiration_date = datetime.strptime(expiration_date_str, '%Y-%m-%dT%H:%M')
             except (ValueError, TypeError):
                 clone.expiration_date = None
         else:

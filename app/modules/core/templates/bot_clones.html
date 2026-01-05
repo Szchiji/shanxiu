@@ -59,14 +59,14 @@
                             <div class="flex-grow-1">
                                 <h6 class="mb-1">{{ clone.clone_name }}</h6>
                                 <small class="text-muted">
-                                    Token: {{ clone.bot_token[:20] }}...{{ clone.bot_token[-5:] if clone.bot_token|length > 25 else '' }} | 
+                                    Token: ●●●●●●●●●●●●●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }} | 
                                     {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}{% else %}永久有效{% endif %}
                                     {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
                                 </small>
                                 <span class="badge {{ 'bg-success' if clone.is_active else 'bg-secondary' }} ms-2">
                                     {{ '启用' if clone.is_active else '禁用' }}
                                 </span>
-                                {% if clone.expiration_date and clone.expiration_date < now() %}
+                                {% if clone.expiration_date and clone.expiration_date < beijing_now %}
                                 <span class="badge bg-danger ms-1">已过期</span>
                                 {% endif %}
                             </div>
@@ -169,12 +169,16 @@ function editClone(id) {
     document.getElementById('clone_name').value = clone.clone_name || '';
     document.getElementById('bot_token').value = clone.bot_token || '';
     
-    // Format datetime for datetime-local input
+    // Format datetime for datetime-local input (no timezone conversion needed)
     if (clone.expiration_date) {
         const date = new Date(clone.expiration_date);
-        const offset = date.getTimezoneOffset();
-        const localDate = new Date(date.getTime() - (offset*60*1000));
-        document.getElementById('expiration_date').value = localDate.toISOString().slice(0, 16);
+        // Format as YYYY-MM-DDTHH:MM for datetime-local input
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        document.getElementById('expiration_date').value = `${year}-${month}-${day}T${hours}:${minutes}`;
     } else {
         document.getElementById('expiration_date').value = '';
     }

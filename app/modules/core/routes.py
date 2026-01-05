@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify
 from app import db
-from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage
+from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -221,6 +221,28 @@ def page_scheduled_messages(gid):
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
                           scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json)
+
+@core_bp.route('/group/<int:gid>/start_messages')
+def page_start_messages(gid):
+    """自定义 /start 消息管理页面"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    start_messages = StartMessage.query.filter_by(group_id=gid).order_by(StartMessage.message_type.asc(), StartMessage.id.desc()).all()
+    
+    # 转换为JSON供前端使用
+    start_messages_json = json.dumps([{
+        'id': sm.id,
+        'message_type': sm.message_type,
+        'media_type': sm.media_type,
+        'media_url': sm.media_url,
+        'content': sm.content,
+        'links': sm.links,
+        'is_active': sm.is_active
+    } for sm in start_messages], ensure_ascii=False)
+    
+    return render_template('start_messages.html', page='start_messages', group=group,
+                          start_messages=start_messages, start_messages_json=start_messages_json)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -551,6 +573,79 @@ def api_delete_scheduled_message():
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
+
+# --- Start Message API Routes ---
+@core_bp.route('/api/save_start_message', methods=['POST'])
+def api_save_start_message():
+    """保存自定义 /start 消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    group_id = d.get('group_id')
+    if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    message_type = d.get('message_type', 'user')
+    if message_type not in ['user', 'admin']: return jsonify({'status':'error','msg':'Invalid message_type'})
+    
+    try:
+        item_id = d.get('id')
+        if item_id:
+            # 编辑现有消息
+            item = StartMessage.query.get(item_id)
+            if not item: return jsonify({'status':'error','msg':'Message not found'})
+            if item.group_id != group_id: return jsonify({'status':'error','msg':'Permission denied'})
+        else:
+            # 新增消息
+            item = StartMessage(group_id=group_id)
+            db.session.add(item)
+        
+        item.message_type = message_type
+        item.media_type = d.get('media_type', 'text')
+        item.media_url = d.get('media_url', '').strip() or None
+        item.content = d.get('content', '').strip() or None
+        item.links = d.get('links', '[]')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/toggle_start_message', methods=['POST'])
+def api_toggle_start_message():
+    """切换自定义 /start 消息状态"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        item = StartMessage.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        item.is_active = not item.is_active
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_start_message', methods=['POST'])
+def api_delete_start_message():
+    """删除自定义 /start 消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        item = StartMessage.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
 
 @core_bp.route('/magic_login')
 def magic_login():
@@ -954,8 +1049,78 @@ def do_like(chat_id, message_id, emoji):
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
+    chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
     
+    # Check if this is in a group/supergroup
+    if chat.type in ['group', 'supergroup']:
+        # Get custom /start message for the group
+        def _get_start_message():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return None, None
+                
+                conf = get_group_conf(group)
+                if not conf.get('start_msg_open', True):
+                    return None, None
+                
+                # Check if user is admin in this group
+                is_admin = False
+                if admin_id and user_id == admin_id:
+                    is_admin = True
+                
+                # Query for appropriate message type
+                message_type = 'admin' if is_admin else 'user'
+                start_msg = StartMessage.query.filter_by(
+                    group_id=group.id,
+                    message_type=message_type,
+                    is_active=True
+                ).first()
+                
+                return start_msg, is_admin
+        
+        start_msg, is_admin = await asyncio.get_running_loop().run_in_executor(None, _get_start_message)
+        
+        if start_msg:
+            # Build buttons
+            buttons = []
+            try:
+                links = json.loads(start_msg.links or '[]')
+                for link in links:
+                    if link.get('text') and link.get('url'):
+                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+            except:
+                pass
+            
+            reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+            
+            # Send custom message
+            content = sanitize_html_for_telegram(start_msg.content or '')
+            
+            if start_msg.media_type == 'image' and start_msg.media_url:
+                await update.message.reply_photo(
+                    photo=start_msg.media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif start_msg.media_type == 'video' and start_msg.media_url:
+                await update.message.reply_video(
+                    video=start_msg.media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif content:
+                await update.message.reply_html(
+                    content,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            return
+    
+    # Default behavior for private chat or when no custom message is set
     if user_id == admin_id:
         # Create authentication session for admin
         def _create_auth_session():
@@ -1152,13 +1317,14 @@ async def on_message(update: Update, context):
 
             # 3. 自动回复检查 (可与查询一起触发)
             # Check for auto-reply, then continue to query check (both can trigger)
-            auto_reply = AutoReply.query.filter_by(
-                group_id=group.id,
-                trigger_keyword=txt,
-                is_active=True
-            ).first()
-            
-            if auto_reply:
+            if conf.get('auto_reply_open', True):
+                auto_reply = AutoReply.query.filter_by(
+                    group_id=group.id,
+                    trigger_keyword=txt,
+                    is_active=True
+                ).first()
+                
+                if auto_reply:
                 try:
                     # 构建按钮
                     buttons = []

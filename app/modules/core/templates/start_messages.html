@@ -1,0 +1,509 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(250, 112, 154, 0.3);
+    }
+    
+    .page-header h4 {
+        font-size: 1.5rem;
+    }
+    
+    .table-container {
+        background: white;
+        border-radius: 15px;
+        overflow: hidden;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    .table {
+        font-size: 0.95rem;
+    }
+    
+    .table th, .table td {
+        padding: 0.75rem 1rem;
+        vertical-align: middle;
+    }
+    
+    .action-btn {
+        transition: all 0.3s ease;
+        border-radius: 8px;
+        padding: 0.4rem 0.8rem;
+        font-size: 0.9rem;
+    }
+    
+    .action-btn:hover {
+        transform: scale(1.05);
+    }
+    
+    .modal-content {
+        border-radius: 20px;
+        border: none;
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+    }
+    
+    .modal-header {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+        border-radius: 20px 20px 0 0;
+        padding: 1.5rem;
+    }
+    
+    .modal-header .btn-close {
+        filter: brightness(0) invert(1);
+    }
+    
+    .modal-body {
+        padding: 1.5rem !important;
+    }
+    
+    .link-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+    
+    .link-item input {
+        flex: 1;
+        min-width: 120px;
+    }
+    
+    .media-type-btn {
+        padding: 1rem 1.5rem;
+        border-radius: 10px;
+        transition: all 0.3s ease;
+        font-size: 1rem;
+    }
+    
+    .media-type-btn.active {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+    }
+    
+    .media-type-btn:not(.active):hover {
+        background: #f0f0f0;
+    }
+    
+    #editor {
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        min-height: 150px;
+        max-height: 300px;
+        overflow-y: auto;
+        line-height: 1.8;
+        font-size: 14px;
+        font-family: 'Courier New', Consolas, monospace;
+    }
+    
+    #editor a {
+        color: #007bff;
+        text-decoration: underline;
+    }
+    
+    .editor-toolbar {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-bottom: 2px solid #e0e0e0;
+        padding: 0.8rem;
+        border-radius: 10px 10px 0 0;
+    }
+    
+    .btn-toolbar-action {
+        border: none;
+        background: white;
+        padding: 0.5rem 0.8rem;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        font-size: 1rem;
+    }
+    
+    .btn-toolbar-action:hover {
+        background: #fa709a;
+        color: white;
+        transform: scale(1.05);
+    }
+    
+    .badge-status {
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        border-radius: 20px;
+        font-size: 0.85rem;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-rocket me-2"></i>/start 消息管理</h4>
+            <p class="mb-0 opacity-75">自定义机器人 /start 命令的回复内容</p>
+        </div>
+        <button class="btn btn-light fw-bold px-4" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>添加消息
+        </button>
+    </div>
+</div>
+
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-4">消息类型</th>
+                    <th>媒体类型</th>
+                    <th>内容预览</th>
+                    <th>链接按钮</th>
+                    <th>状态</th>
+                    <th class="text-end pe-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in start_messages %}
+                <tr>
+                    <td class="ps-4 fw-bold">
+                        {% if item.message_type == 'admin' %}
+                        <span class="badge bg-danger">管理员</span>
+                        {% else %}
+                        <span class="badge bg-primary">普通用户</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.media_type == 'image' %}
+                        <i class="fa-solid fa-image text-primary"></i> 图片
+                        {% elif item.media_type == 'video' %}
+                        <i class="fa-solid fa-video text-danger"></i> 视频
+                        {% else %}
+                        <i class="fa-solid fa-font text-secondary"></i> 文本
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            {{ item.content[:50] }}{% if item.content and item.content|length > 50 %}...{% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% set link_count = (item.links|from_json|length if item.links else 0) %}
+                        {% if link_count > 0 %}
+                        <span class="badge bg-info">{{ link_count }} 个按钮</span>
+                        {% else %}
+                        <span class="text-muted">无</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.is_active %}
+                        <span class="badge-status bg-success">启用</span>
+                        {% else %}
+                        <span class="badge-status bg-secondary">停用</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end pe-4">
+                        <button class="action-btn btn btn-sm btn-warning text-white" onclick="toggleItem({{ item.id }})" title="切换状态">
+                            <i class="fa-solid fa-toggle-on"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-primary" onclick="editItem({{ item.id }})" title="编辑">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not start_messages %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">
+                        <i class="fa-solid fa-inbox fa-3x mb-3 d-block"></i>
+                        暂无 /start 消息，点击右上角添加
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="itemModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="modalTitle">添加 /start 消息</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="itemForm">
+                    <input type="hidden" id="item_id">
+                    
+                    <!-- Message Type Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">消息类型 <span class="text-danger">*</span></label>
+                        <div class="d-flex gap-3">
+                            <button type="button" class="btn media-type-btn flex-fill active" data-type="user" onclick="selectMessageType('user', this)">
+                                <i class="fa-solid fa-user me-2"></i>普通用户
+                            </button>
+                            <button type="button" class="btn media-type-btn flex-fill" data-type="admin" onclick="selectMessageType('admin', this)">
+                                <i class="fa-solid fa-user-shield me-2"></i>管理员
+                            </button>
+                        </div>
+                        <input type="hidden" id="message_type" value="user">
+                        <small class="text-muted">管理员和普通用户可以看到不同的 /start 消息</small>
+                    </div>
+                    
+                    <!-- Media Type Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">媒体类型</label>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn media-type-btn flex-fill active" data-type="text" onclick="selectMediaType('text', this)">
+                                <i class="fa-solid fa-font me-2"></i>文本
+                            </button>
+                            <button type="button" class="btn media-type-btn flex-fill" data-type="image" onclick="selectMediaType('image', this)">
+                                <i class="fa-solid fa-image me-2"></i>图片
+                            </button>
+                            <button type="button" class="btn media-type-btn flex-fill" data-type="video" onclick="selectMediaType('video', this)">
+                                <i class="fa-solid fa-video me-2"></i>视频
+                            </button>
+                        </div>
+                        <input type="hidden" id="media_type" value="text">
+                    </div>
+                    
+                    <!-- Media URL (for image/video) -->
+                    <div class="mb-3" id="mediaUrlGroup" style="display:none;">
+                        <label class="form-label fw-bold">媒体链接</label>
+                        <input type="text" class="form-control" id="media_url" placeholder="https://...">
+                    </div>
+                    
+                    <!-- Content Editor -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">消息内容</label>
+                        <div class="editor-toolbar d-flex flex-wrap gap-2 align-items-center">
+                            <div class="btn-group rounded shadow-sm">
+                                <button type="button" class="btn-toolbar-action" onclick="cmd('bold')" title="加粗"><i class="fa-solid fa-bold"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="cmd('italic')" title="斜体"><i class="fa-solid fa-italic"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="cmd('underline')" title="下划线"><i class="fa-solid fa-underline"></i></button>
+                            </div>
+                            <div class="btn-group rounded shadow-sm">
+                                <button type="button" class="btn-toolbar-action" onclick="link()" title="添加链接"><i class="fa-solid fa-link"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
+                            </div>
+                        </div>
+                        <div id="editor" class="form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 150px; padding: 1rem; font-family: 'Courier New', Consolas, monospace;"></div>
+                    </div>
+                    
+                    <!-- Link Buttons -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label fw-bold mb-0">链接按钮</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLink()">
+                                <i class="fa-solid fa-plus me-1"></i>添加按钮
+                            </button>
+                        </div>
+                        <div id="linksContainer"></div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary px-4" onclick="saveItem()">
+                    <i class="fa-solid fa-save me-2"></i>保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const groupId = {{ group.id }};
+    let allItems = {{ start_messages_json|safe }};
+    let currentLinks = [];
+    
+    function selectMessageType(type, btn) {
+        document.querySelectorAll('[data-type]').forEach(b => {
+            if (b.closest('.mb-4')?.querySelector('.form-label')?.textContent.includes('消息类型')) {
+                b.classList.remove('active');
+            }
+        });
+        btn.classList.add('active');
+        document.getElementById('message_type').value = type;
+    }
+    
+    function selectMediaType(type, btn) {
+        document.querySelectorAll('[data-type]').forEach(b => {
+            if (b.closest('.mb-4')?.querySelector('.form-label')?.textContent.includes('媒体类型')) {
+                b.classList.remove('active');
+            }
+        });
+        btn.classList.add('active');
+        document.getElementById('media_type').value = type;
+        document.getElementById('mediaUrlGroup').style.display = (type === 'image' || type === 'video') ? 'block' : 'none';
+    }
+    
+    function cmd(c, v) {
+        document.getElementById('editor').focus();
+        document.execCommand(c, false, v);
+    }
+    
+    function link() {
+        document.getElementById('editor').focus();
+        let u = prompt('URL:');
+        if (u) {
+            document.execCommand('createLink', false, u);
+        }
+    }
+    
+    function addLink() {
+        currentLinks.push({ text: '', url: '' });
+        renderLinks();
+    }
+    
+    function removeLink(index) {
+        currentLinks.splice(index, 1);
+        renderLinks();
+    }
+    
+    function renderLinks() {
+        const container = document.getElementById('linksContainer');
+        container.innerHTML = currentLinks.map((link, i) => `
+            <div class="link-item">
+                <input type="text" class="form-control" placeholder="按钮文字" value="${link.text}" onchange="currentLinks[${i}].text = this.value">
+                <input type="text" class="form-control" placeholder="链接地址" value="${link.url}" onchange="currentLinks[${i}].url = this.value">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLink(${i})">
+                    <i class="fa-solid fa-times"></i>
+                </button>
+            </div>
+        `).join('');
+        
+        if (currentLinks.length === 0) {
+            container.innerHTML = '<div class="text-muted small text-center py-2">暂无按钮，点击上方添加</div>';
+        }
+    }
+    
+    function openAddModal() {
+        document.getElementById('modalTitle').textContent = '添加 /start 消息';
+        document.getElementById('itemForm').reset();
+        document.getElementById('item_id').value = '';
+        document.getElementById('editor').innerHTML = '';
+        currentLinks = [];
+        renderLinks();
+        
+        // Reset media type buttons
+        selectMessageType('user', document.querySelector('[data-type="user"]'));
+        selectMediaType('text', document.querySelector('[data-type="text"]'));
+        
+        const modal = new bootstrap.Modal(document.getElementById('itemModal'));
+        modal.show();
+    }
+    
+    function editItem(id) {
+        const item = allItems.find(i => i.id === id);
+        if (!item) return;
+        
+        document.getElementById('modalTitle').textContent = '编辑 /start 消息';
+        document.getElementById('item_id').value = item.id;
+        document.getElementById('editor').innerHTML = item.content || '';
+        document.getElementById('media_url').value = item.media_url || '';
+        
+        // Set message type
+        const messageTypeBtn = document.querySelector(`[data-type="${item.message_type}"]`);
+        if (messageTypeBtn && messageTypeBtn.closest('.mb-4')?.querySelector('.form-label')?.textContent.includes('消息类型')) {
+            selectMessageType(item.message_type, messageTypeBtn);
+        }
+        
+        // Set media type
+        const mediaTypeBtn = document.querySelector(`[data-type="${item.media_type}"]`);
+        if (mediaTypeBtn && mediaTypeBtn.closest('.mb-4')?.querySelector('.form-label')?.textContent.includes('媒体类型')) {
+            selectMediaType(item.media_type, mediaTypeBtn);
+        }
+        
+        try {
+            currentLinks = JSON.parse(item.links || '[]');
+        } catch (e) {
+            currentLinks = [];
+        }
+        renderLinks();
+        
+        const modal = new bootstrap.Modal(document.getElementById('itemModal'));
+        modal.show();
+    }
+    
+    async function saveItem() {
+        const id = document.getElementById('item_id').value;
+        const data = {
+            group_id: groupId,
+            message_type: document.getElementById('message_type').value,
+            media_type: document.getElementById('media_type').value,
+            media_url: document.getElementById('media_url').value,
+            content: document.getElementById('editor').innerHTML,
+            links: JSON.stringify(currentLinks.filter(l => l.text && l.url))
+        };
+        
+        if (id) data.id = parseInt(id);
+        
+        try {
+            const res = await fetch('/core/api/save_start_message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            
+            if (result.status === 'ok') {
+                location.reload();
+            } else {
+                alert('保存失败: ' + (result.msg || '未知错误'));
+            }
+        } catch (e) {
+            alert('网络请求错误');
+        }
+    }
+    
+    async function toggleItem(id) {
+        if (!confirm('确定要切换状态吗？')) return;
+        
+        try {
+            const res = await fetch('/core/api/toggle_start_message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            });
+            const result = await res.json();
+            
+            if (result.status === 'ok') {
+                location.reload();
+            } else {
+                alert('操作失败: ' + (result.msg || '未知错误'));
+            }
+        } catch (e) {
+            alert('网络请求错误');
+        }
+    }
+    
+    async function deleteItem(id) {
+        if (!confirm('确定要删除这条消息吗？')) return;
+        
+        try {
+            const res = await fetch('/core/api/delete_start_message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            });
+            const result = await res.json();
+            
+            if (result.status === 'ok') {
+                location.reload();
+            } else {
+                alert('删除失败: ' + (result.msg || '未知错误'));
+            }
+        } catch (e) {
+            alert('网络请求错误');
+        }
+    }
+</script>
+{% endblock %}

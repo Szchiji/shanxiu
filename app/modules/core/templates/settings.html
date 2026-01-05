@@ -327,7 +327,27 @@
                     <div class="form-text" style="font-size: 11px;">查询结果列表多久消失。</div>
                 </div>
 
-                <!-- 3. 其他设置 -->
+                <!-- 3. 模块开关 -->
+                <div class="config-section">
+                    <div class="section-title text-warning"><i class="fa-solid fa-toggle-on me-1"></i> 模块开关</div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="auto_reply_open" {{ 'checked' if conf.get('auto_reply_open', True) }}>
+                        <label class="fw-bold">自动回复模块</label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="scheduled_msg_open" {{ 'checked' if conf.get('scheduled_msg_open', True) }}>
+                        <label class="fw-bold">定时消息模块</label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="start_msg_open" {{ 'checked' if conf.get('start_msg_open', True) }}>
+                        <label class="fw-bold">/start 消息模块</label>
+                    </div>
+                </div>
+
+                <!-- 4. 其他设置 -->
                 <div class="config-section">
                     <div class="section-title"><i class="fa-solid fa-cog me-1"></i> 其他</div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -539,6 +559,10 @@
                 auto_like: document.getElementById('auto_like').checked,
                 like_emoji: document.getElementById('like_emoji').value,
                 auto_mute_expired: document.getElementById('auto_mute_expired').checked,
+                
+                auto_reply_open: document.getElementById('auto_reply_open').checked,
+                scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,
+                start_msg_open: document.getElementById('start_msg_open').checked,
 
                 push_channel_id: document.getElementById('push_channel_id').value,
                 custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 

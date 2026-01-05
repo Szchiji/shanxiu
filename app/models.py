@@ -81,6 +81,23 @@ class ScheduledMessage(db.Model):
     group = db.relationship('BotGroup', backref='scheduled_messages', lazy=True)
 
 
+class StartMessage(db.Model):
+    """自定义 /start 消息"""
+    __tablename__ = 'start_messages'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    message_type = db.Column(db.String(20), default='user')  # 'user' or 'admin'
+    media_type = db.Column(db.String(20), default='text')  # text, image, video
+    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
+    content = db.Column(db.Text, nullable=True)  # 富文本内容
+    links = db.Column(db.Text, default='[]')  # JSON格式的链接按钮数组
+    is_active = db.Column(db.Boolean, default=True)  # 是否启用
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='start_messages', lazy=True)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},
@@ -94,6 +111,9 @@ DEFAULT_SYSTEM = {
     "query_del_time": 60,
     "page_size": 10,
     "auto_like": True, "like_emoji": "❤️",
+    "auto_reply_open": True,  # 自动回复开关
+    "scheduled_msg_open": True,  # 定时消息开关
+    "start_msg_open": True,  # /start 消息开关
     "push_channel_id": "",
     "msg_checkin_success": "✅ <b>打卡成功！</b>", 
     "msg_not_registered": "⚠️ <b>未认证用户</b>",

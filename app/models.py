@@ -273,7 +273,7 @@ class UserPoints(db.Model):
     __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='_group_user_points_uc'),)
     
     group = db.relationship('BotGroup', backref='user_points', lazy=True)
-    current_level = db.relationship('MemberLevel', backref='users_at_level', lazy=True, foreign_keys=[current_level_id])
+    current_level = db.relationship('MemberLevel', backref='users_at_level', lazy=True)
 
 
 class GroupLottery(db.Model):

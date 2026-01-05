@@ -3866,11 +3866,11 @@ async def on_message(update: Update, context):
             
             # 🆕 Track messages for active lotteries
             if chat.type in ['group', 'supergroup']:
+                # Track for both message_count and message_rank lotteries
                 active_lotteries = GroupLottery.query.filter_by(
                     group_id=group.id,
-                    status='active',
-                    lottery_type='message_count'
-                ).all()
+                    status='active'
+                ).filter(GroupLottery.lottery_type.in_(['message_count', 'message_rank'])).all()
                 
                 for lottery in active_lotteries:
                     # Only track if lottery is still within its time window
@@ -4098,49 +4098,54 @@ async def on_message(update: Update, context):
                                 f"当前: {current_balance} 积分"
                             )
                         else:
-                            # Deduct points
-                            user_points.points_balance -= points_reply.points_cost
-                            
-                            # Log the transaction
-                            points_log = PointsLog(
-                                group_id=group.id,
-                                user_id=user.id,
-                                points_change=-points_reply.points_cost,
-                                reason=f"查看内容: {txt}",
-                                balance_after=user_points.points_balance
-                            )
-                            db.session.add(points_log)
-                            db.session.commit()
-                            
-                            # Send the content
-                            content = sanitize_html_for_telegram(points_reply.content or '')
-                            
-                            if points_reply.media_type == 'image' and points_reply.media_url:
-                                await msg.reply_photo(
-                                    photo=points_reply.media_url,
-                                    caption=content,
-                                    parse_mode='HTML'
+                            try:
+                                # Deduct points and log in a transaction
+                                user_points.points_balance -= points_reply.points_cost
+                                
+                                # Log the transaction
+                                points_log = PointsLog(
+                                    group_id=group.id,
+                                    user_id=user.id,
+                                    points_change=-points_reply.points_cost,
+                                    reason=f"查看内容: {txt}",
+                                    balance_after=user_points.points_balance
                                 )
-                            elif points_reply.media_type == 'video' and points_reply.media_url:
-                                await msg.reply_video(
-                                    video=points_reply.media_url,
-                                    caption=content,
-                                    parse_mode='HTML'
+                                db.session.add(points_log)
+                                db.session.commit()
+                                
+                                # Send the content only after successful commit
+                                content = sanitize_html_for_telegram(points_reply.content or '')
+                                
+                                if points_reply.media_type == 'image' and points_reply.media_url:
+                                    await msg.reply_photo(
+                                        photo=points_reply.media_url,
+                                        caption=content,
+                                        parse_mode='HTML'
+                                    )
+                                elif points_reply.media_type == 'video' and points_reply.media_url:
+                                    await msg.reply_video(
+                                        video=points_reply.media_url,
+                                        caption=content,
+                                        parse_mode='HTML'
+                                    )
+                                elif content:
+                                    await msg.reply_html(
+                                        content,
+                                        disable_web_page_preview=True
+                                    )
+                                
+                                # Notify about deduction
+                                await msg.reply_text(
+                                    f"💎 已扣除 {points_reply.points_cost} 积分\n"
+                                    f"剩余: {user_points.points_balance} 积分"
                                 )
-                            elif content:
-                                await msg.reply_html(
-                                    content,
-                                    disable_web_page_preview=True
-                                )
-                            
-                            # Notify about deduction
-                            await msg.reply_text(
-                                f"💎 已扣除 {points_reply.points_cost} 积分\n"
-                                f"剩余: {user_points.points_balance} 积分"
-                            )
+                            except Exception as e:
+                                # Rollback on any database error
+                                db.session.rollback()
+                                print(f"Points deduction error: {e}")
+                                await msg.reply_text("❌ 积分扣除失败，请重试")
                     except Exception as e:
                         print(f"Points-based auto reply error: {e}")
-                        db.session.rollback()
             
             # 4. 查询功能
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]

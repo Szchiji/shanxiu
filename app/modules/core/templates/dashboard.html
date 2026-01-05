@@ -133,6 +133,91 @@
     </div>
 </div>
 
+<!-- Enhanced Statistics Cards -->
+<div class="row g-4 mb-4" style="animation: fadeInUp 0.6s ease-out;">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-calendar-check fa-3x text-primary"></i>
+                </div>
+                <h3 class="fw-bold mb-2">{{ stats.today_checkins }}</h3>
+                <p class="text-muted mb-0">今日打卡</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-clock fa-3x text-warning"></i>
+                </div>
+                <h3 class="fw-bold mb-2">{{ stats.expired }}</h3>
+                <p class="text-muted mb-0">过期用户</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-ban fa-3x text-danger"></i>
+                </div>
+                <h3 class="fw-bold mb-2">{{ stats.banned }}</h3>
+                <p class="text-muted mb-0">禁言用户</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-reply fa-3x text-info"></i>
+                </div>
+                <h3 class="fw-bold mb-2">{{ stats.auto_replies }}</h3>
+                <p class="text-muted mb-0">自动回复</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Module Status Cards -->
+<div class="row g-4 mb-4" style="animation: fadeInUp 0.7s ease-out;">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-clock fa-2x text-success"></i>
+                </div>
+                <h4 class="fw-bold mb-2">{{ stats.scheduled_msgs }}</h4>
+                <p class="text-muted mb-0">定时消息</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-rocket fa-2x text-purple"></i>
+                </div>
+                <h4 class="fw-bold mb-2">{{ stats.start_msgs }}</h4>
+                <p class="text-muted mb-0">/start 消息</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100" style="border-radius: 15px;">
+            <div class="card-body text-center p-4">
+                <div class="mb-3">
+                    <i class="fa-solid fa-users fa-2x text-primary"></i>
+                </div>
+                <h4 class="fw-bold mb-2">{{ stats.users }}</h4>
+                <p class="text-muted mb-0">总用户数</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row g-4">
     <!-- 快捷入口卡片 -->
     <div class="col-md-4">

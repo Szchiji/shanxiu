@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify
 from app import db
-from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage
+from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -129,7 +129,44 @@ def page_dashboard(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    stats = {'users': GroupUser.query.filter_by(group_id=gid).count(), 'online': GroupUser.query.filter_by(group_id=gid, online=True).count()}
+    
+    # Enhanced statistics
+    total_users = GroupUser.query.filter_by(group_id=gid).count()
+    online_users = GroupUser.query.filter_by(group_id=gid, online=True).count()
+    
+    # Get today's check-ins
+    today = get_beijing_today()
+    today_checkins = GroupUser.query.filter(
+        GroupUser.group_id == gid,
+        GroupUser.checkin_time >= today
+    ).count()
+    
+    # Get expired/banned users
+    now = get_beijing_now()
+    expired_users = GroupUser.query.filter(
+        GroupUser.group_id == gid,
+        GroupUser.expiration_date.isnot(None),
+        GroupUser.expiration_date < now
+    ).count()
+    
+    banned_users = GroupUser.query.filter_by(group_id=gid, is_banned=True).count()
+    
+    # Get module counts
+    auto_replies_count = AutoReply.query.filter_by(group_id=gid, is_active=True).count()
+    scheduled_msgs_count = ScheduledMessage.query.filter_by(group_id=gid, is_active=True).count()
+    start_msgs_count = StartMessage.query.filter_by(group_id=gid, is_active=True).count()
+    
+    stats = {
+        'users': total_users,
+        'online': online_users,
+        'today_checkins': today_checkins,
+        'expired': expired_users,
+        'banned': banned_users,
+        'auto_replies': auto_replies_count,
+        'scheduled_msgs': scheduled_msgs_count,
+        'start_msgs': start_msgs_count
+    }
+    
     return render_template('dashboard.html', page='dashboard', group=group, stats=stats)
 
 @core_bp.route('/group/<int:gid>/users')
@@ -177,7 +214,19 @@ def page_auto_replies(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = AutoReply.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     # 转换为JSON供前端使用
     auto_replies_json = json.dumps([{
@@ -193,7 +242,8 @@ def page_auto_replies(gid):
     } for ar in auto_replies], ensure_ascii=False)
     
     return render_template('auto_replies.html', page='auto_replies', group=group, 
-                          auto_replies=auto_replies, auto_replies_json=auto_replies_json)
+                          auto_replies=auto_replies, auto_replies_json=auto_replies_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
 @core_bp.route('/group/<int:gid>/scheduled_messages')
 def page_scheduled_messages(gid):
@@ -201,7 +251,19 @@ def page_scheduled_messages(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = ScheduledMessage.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     # 转换为JSON供前端使用
     scheduled_messages_json = json.dumps([{
@@ -220,7 +282,43 @@ def page_scheduled_messages(gid):
     } for sm in scheduled_messages], ensure_ascii=False)
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
-                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json)
+                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+
+@core_bp.route('/group/<int:gid>/start_messages')
+def page_start_messages(gid):
+    """自定义 /start 消息管理页面"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = StartMessage.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    start_messages = StartMessage.query.filter_by(group_id=gid).order_by(StartMessage.message_type.asc(), StartMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    
+    # 转换为JSON供前端使用
+    start_messages_json = json.dumps([{
+        'id': sm.id,
+        'message_type': sm.message_type,
+        'media_type': sm.media_type,
+        'media_url': sm.media_url,
+        'content': sm.content,
+        'links': sm.links,
+        'is_active': sm.is_active
+    } for sm in start_messages], ensure_ascii=False)
+    
+    return render_template('start_messages.html', page='start_messages', group=group,
+                          start_messages=start_messages, start_messages_json=start_messages_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -552,6 +650,79 @@ def api_delete_scheduled_message():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+# --- Start Message API Routes ---
+@core_bp.route('/api/save_start_message', methods=['POST'])
+def api_save_start_message():
+    """保存自定义 /start 消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    group_id = d.get('group_id')
+    if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    message_type = d.get('message_type', 'user')
+    if message_type not in ['user', 'admin']: return jsonify({'status':'error','msg':'Invalid message_type'})
+    
+    try:
+        item_id = d.get('id')
+        if item_id:
+            # 编辑现有消息
+            item = StartMessage.query.get(item_id)
+            if not item: return jsonify({'status':'error','msg':'Message not found'})
+            if item.group_id != group_id: return jsonify({'status':'error','msg':'Permission denied'})
+        else:
+            # 新增消息
+            item = StartMessage(group_id=group_id)
+            db.session.add(item)
+        
+        item.message_type = message_type
+        item.media_type = d.get('media_type', 'text')
+        item.media_url = d.get('media_url', '').strip() or None
+        item.content = d.get('content', '').strip() or None
+        item.links = d.get('links', '[]')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/toggle_start_message', methods=['POST'])
+def api_toggle_start_message():
+    """切换自定义 /start 消息状态"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        item = StartMessage.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        item.is_active = not item.is_active
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_start_message', methods=['POST'])
+def api_delete_start_message():
+    """删除自定义 /start 消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        item = StartMessage.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
 @core_bp.route('/magic_login')
 def magic_login():
     token = request.args.get('token')
@@ -774,6 +945,11 @@ async def check_scheduled_messages(context):
                     if not msg.group or not msg.group.is_active:
                         continue
                     
+                    # 检查模块是否启用
+                    conf = get_group_conf(msg.group)
+                    if not conf.get('scheduled_msg_open', True):
+                        continue
+                    
                     # 检查开始时间
                     if msg.start_time and now < msg.start_time:
                         continue
@@ -954,8 +1130,78 @@ def do_like(chat_id, message_id, emoji):
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
+    chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
     
+    # Check if this is in a group/supergroup
+    if chat.type in ['group', 'supergroup']:
+        # Get custom /start message for the group
+        def _get_start_message():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return None, None
+                
+                conf = get_group_conf(group)
+                if not conf.get('start_msg_open', True):
+                    return None, None
+                
+                # Check if user is admin in this group
+                is_admin = False
+                if admin_id and user_id == admin_id:
+                    is_admin = True
+                
+                # Query for appropriate message type
+                message_type = 'admin' if is_admin else 'user'
+                start_msg = StartMessage.query.filter_by(
+                    group_id=group.id,
+                    message_type=message_type,
+                    is_active=True
+                ).first()
+                
+                return start_msg, is_admin
+        
+        start_msg, is_admin = await asyncio.get_running_loop().run_in_executor(None, _get_start_message)
+        
+        if start_msg:
+            # Build buttons
+            buttons = []
+            try:
+                links = json.loads(start_msg.links or '[]')
+                for link in links:
+                    if link.get('text') and link.get('url'):
+                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+            except:
+                pass
+            
+            reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+            
+            # Send custom message
+            content = sanitize_html_for_telegram(start_msg.content or '')
+            
+            if start_msg.media_type == 'image' and start_msg.media_url:
+                await update.message.reply_photo(
+                    photo=start_msg.media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif start_msg.media_type == 'video' and start_msg.media_url:
+                await update.message.reply_video(
+                    video=start_msg.media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif content:
+                await update.message.reply_html(
+                    content,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            return
+    
+    # Default behavior for private chat or when no custom message is set
     if user_id == admin_id:
         # Create authentication session for admin
         def _create_auth_session():
@@ -1152,60 +1398,61 @@ async def on_message(update: Update, context):
 
             # 3. 自动回复检查 (可与查询一起触发)
             # Check for auto-reply, then continue to query check (both can trigger)
-            auto_reply = AutoReply.query.filter_by(
-                group_id=group.id,
-                trigger_keyword=txt,
-                is_active=True
-            ).first()
-            
-            if auto_reply:
-                try:
-                    # 构建按钮
-                    buttons = []
+            if conf.get('auto_reply_open', True):
+                auto_reply = AutoReply.query.filter_by(
+                    group_id=group.id,
+                    trigger_keyword=txt,
+                    is_active=True
+                ).first()
+                
+                if auto_reply:
                     try:
-                        links = json.loads(auto_reply.links or '[]')
-                        for link in links:
-                            if link.get('text') and link.get('url'):
-                                buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
-                    except:
-                        pass
-                    
-                    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-                    
-                    # 发送回复
-                    sent_reply = None
-                    content = sanitize_html_for_telegram(auto_reply.content or '')
-                    
-                    if auto_reply.media_type == 'image' and auto_reply.media_url:
-                        sent_reply = await msg.reply_photo(
-                            photo=auto_reply.media_url,
-                            caption=content,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup
-                        )
-                    elif auto_reply.media_type == 'video' and auto_reply.media_url:
-                        sent_reply = await msg.reply_video(
-                            video=auto_reply.media_url,
-                            caption=content,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup
-                        )
-                    elif content:
-                        sent_reply = await msg.reply_html(
-                            content,
-                            reply_markup=reply_markup,
-                            disable_web_page_preview=True
-                        )
-                    
-                    # 自动删除回复
-                    if sent_reply and auto_reply.delete_after > 0:
-                        context.job_queue.run_once(
-                            lambda c: c.job.data.delete(),
-                            auto_reply.delete_after,
-                            data=sent_reply
-                        )
-                except Exception as e:
-                    print(f"Auto reply error: {e}")
+                        # 构建按钮
+                        buttons = []
+                        try:
+                            links = json.loads(auto_reply.links or '[]')
+                            for link in links:
+                                if link.get('text') and link.get('url'):
+                                    buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                        except:
+                            pass
+                        
+                        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+                        
+                        # 发送回复
+                        sent_reply = None
+                        content = sanitize_html_for_telegram(auto_reply.content or '')
+                        
+                        if auto_reply.media_type == 'image' and auto_reply.media_url:
+                            sent_reply = await msg.reply_photo(
+                                photo=auto_reply.media_url,
+                                caption=content,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        elif auto_reply.media_type == 'video' and auto_reply.media_url:
+                            sent_reply = await msg.reply_video(
+                                video=auto_reply.media_url,
+                                caption=content,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        elif content:
+                            sent_reply = await msg.reply_html(
+                                content,
+                                reply_markup=reply_markup,
+                                disable_web_page_preview=True
+                            )
+                        
+                        # 自动删除回复
+                        if sent_reply and auto_reply.delete_after > 0:
+                            context.job_queue.run_once(
+                                lambda c: c.job.data.delete(),
+                                auto_reply.delete_after,
+                                data=sent_reply
+                            )
+                    except Exception as e:
+                        print(f"Auto reply error: {e}")
                 # Continue to check for query functionality instead of returning
             
             # 4. 查询功能

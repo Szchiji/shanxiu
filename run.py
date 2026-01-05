@@ -56,6 +56,17 @@ def fix_database_schema(app):
             "ALTER TABLE scheduled_messages ADD COLUMN last_sent_at TIMESTAMP",
             "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            # Start messages table columns
+            "ALTER TABLE start_messages ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
+            "CREATE INDEX IF NOT EXISTS ix_start_messages_group_id ON start_messages(group_id)",
+            "ALTER TABLE start_messages ADD COLUMN message_type VARCHAR(20) DEFAULT 'user'",
+            "ALTER TABLE start_messages ADD COLUMN media_type VARCHAR(20) DEFAULT 'text'",
+            "ALTER TABLE start_messages ADD COLUMN media_url TEXT",
+            "ALTER TABLE start_messages ADD COLUMN content TEXT",
+            "ALTER TABLE start_messages ADD COLUMN links TEXT DEFAULT '[]'",
+            "ALTER TABLE start_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE start_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE start_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

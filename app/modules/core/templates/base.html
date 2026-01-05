@@ -410,6 +410,12 @@
                                 <i class="fa-solid fa-clock"></i> 定时消息
                             </a>
                         </li>
+                        <!-- Start Messages - Standalone menu item -->
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}">
+                                <i class="fa-solid fa-rocket"></i> /start 消息
+                            </a>
+                        </li>
                         {% endif %}
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">

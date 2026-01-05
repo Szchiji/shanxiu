@@ -1466,7 +1466,15 @@ def api_import_scheduled_messages():
                 item.media_url = row[1] if len(row) > 1 else None
                 item.content = row[2] if len(row) > 2 else None
                 item.links = row[3] if len(row) > 3 and row[3] else '[]'
-                item.repeat_interval = int(row[4]) if len(row) > 4 and row[4] else 0
+                
+                # Handle repeat_interval - only convert to int if it's a valid number
+                item.repeat_interval = 0  # Default value
+                if len(row) > 4 and row[4]:
+                    try:
+                        item.repeat_interval = int(row[4])
+                    except (ValueError, TypeError):
+                        pass  # Keep default value of 0
+                    
                 item.delete_previous = (row[5] == '是') if len(row) > 5 and row[5] else False
                 
                 # Parse dates

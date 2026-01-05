@@ -23,6 +23,7 @@ class GroupUser(db.Model):
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
     checkin_time = db.Column(db.DateTime)
+    last_activity = db.Column(db.DateTime, default=datetime.now)  # Track last message activity
     online = db.Column(db.Boolean, default=False)
     __table_args__ = (db.UniqueConstraint('group_id', 'tg_id', name='_group_user_uc'),)
     
@@ -423,6 +424,195 @@ class LotteryMessageCount(db.Model):
     
     lottery = db.relationship('GroupLottery', backref='message_counts', lazy=True)
     group = db.relationship('BotGroup', backref='lottery_message_counts', lazy=True)
+
+
+class InactiveUserSettings(db.Model):
+    """不活跃用户设置"""
+    __tablename__ = 'inactive_user_settings'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    enabled = db.Column(db.Boolean, default=False)
+    inactivity_days = db.Column(db.Integer, default=30)  # 不活跃天数阈值
+    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute
+    check_interval = db.Column(db.Integer, default=86400)  # 检查间隔(秒)，默认24小时
+    warning_enabled = db.Column(db.Boolean, default=False)  # 是否提前警告
+    warning_days = db.Column(db.Integer, default=7)  # 提前警告天数
+    warning_message = db.Column(db.Text, nullable=True)  # 警告消息
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='inactive_user_settings', lazy=True)
+
+
+class KeywordFilter(db.Model):
+    """关键词过滤"""
+    __tablename__ = 'keyword_filter'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    keyword = db.Column(db.String(255), nullable=False)
+    filter_type = db.Column(db.String(20), default='blacklist')  # blacklist, whitelist
+    match_type = db.Column(db.String(20), default='contains')  # contains, exact, regex
+    action = db.Column(db.String(20), default='delete')  # delete, warn, mute, kick, ban
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='keyword_filters', lazy=True)
+
+
+class MessageStatistics(db.Model):
+    """消息统计"""
+    __tablename__ = 'message_statistics'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    date = db.Column(db.Date, index=True, default=datetime.now)
+    message_count = db.Column(db.Integer, default=0)
+    text_count = db.Column(db.Integer, default=0)
+    photo_count = db.Column(db.Integer, default=0)
+    video_count = db.Column(db.Integer, default=0)
+    sticker_count = db.Column(db.Integer, default=0)
+    document_count = db.Column(db.Integer, default=0)
+    voice_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('group_id', 'user_id', 'date', name='_group_user_date_uc'),
+    )
+    
+    group = db.relationship('BotGroup', backref='message_statistics', lazy=True)
+
+
+class GroupVote(db.Model):
+    """群投票"""
+    __tablename__ = 'group_vote'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    options = db.Column(db.Text, default='[]')  # JSON array of options
+    vote_type = db.Column(db.String(20), default='single')  # single, multiple
+    max_choices = db.Column(db.Integer, default=1)  # 多选时最多选择数
+    is_anonymous = db.Column(db.Boolean, default=False)
+    allow_revote = db.Column(db.Boolean, default=True)  # 允许改投
+    start_time = db.Column(db.DateTime, nullable=True)
+    end_time = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), default='pending')  # pending, active, ended
+    message_id = db.Column(db.BigInteger, nullable=True)  # 投票消息ID
+    created_by = db.Column(db.BigInteger, nullable=True)  # 创建者用户ID
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='group_votes', lazy=True)
+
+
+class VoteRecord(db.Model):
+    """投票记录"""
+    __tablename__ = 'vote_record'
+    id = db.Column(db.Integer, primary_key=True)
+    vote_id = db.Column(db.Integer, db.ForeignKey('group_vote.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    choices = db.Column(db.Text, default='[]')  # JSON array of option indices
+    voted_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('vote_id', 'user_id', name='_vote_user_uc'),
+    )
+    
+    vote = db.relationship('GroupVote', backref='vote_records', lazy=True)
+
+
+class QuizGame(db.Model):
+    """问答游戏"""
+    __tablename__ = 'quiz_game'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    question = db.Column(db.Text, nullable=False)
+    answers = db.Column(db.Text, default='[]')  # JSON array of answers
+    correct_answer_index = db.Column(db.Integer, nullable=False)
+    explanation = db.Column(db.Text, nullable=True)  # 答案解析
+    points_reward = db.Column(db.Integer, default=10)  # 答对奖励积分
+    time_limit = db.Column(db.Integer, default=60)  # 答题时限(秒)
+    difficulty = db.Column(db.String(20), default='medium')  # easy, medium, hard
+    category = db.Column(db.String(50), nullable=True)  # 题目分类
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='quiz_games', lazy=True)
+
+
+class QuizSession(db.Model):
+    """问答会话"""
+    __tablename__ = 'quiz_session'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz_game.id'), index=True)
+    message_id = db.Column(db.BigInteger, nullable=True)  # 问题消息ID
+    start_time = db.Column(db.DateTime, default=datetime.now)
+    end_time = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), default='active')  # active, ended
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='quiz_sessions', lazy=True)
+    quiz = db.relationship('QuizGame', backref='quiz_sessions', lazy=True)
+
+
+class QuizAnswer(db.Model):
+    """问答答案记录"""
+    __tablename__ = 'quiz_answer'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('quiz_session.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    answer_index = db.Column(db.Integer, nullable=False)
+    is_correct = db.Column(db.Boolean, default=False)
+    points_awarded = db.Column(db.Integer, default=0)
+    answered_at = db.Column(db.DateTime, default=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('session_id', 'user_id', name='_session_user_uc'),
+    )
+    
+    session = db.relationship('QuizSession', backref='quiz_answers', lazy=True)
+
+
+class RedPacket(db.Model):
+    """红包"""
+    __tablename__ = 'red_packet'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    creator_id = db.Column(db.BigInteger, index=True)  # 发红包的用户
+    packet_type = db.Column(db.String(20), default='random')  # random=拼手气, equal=普通
+    total_points = db.Column(db.Integer, nullable=False)  # 总积分
+    packet_count = db.Column(db.Integer, nullable=False)  # 红包数量
+    remaining_count = db.Column(db.Integer, nullable=False)  # 剩余数量
+    remaining_points = db.Column(db.Integer, nullable=False)  # 剩余积分
+    message = db.Column(db.Text, nullable=True)  # 红包祝福语
+    message_id = db.Column(db.BigInteger, nullable=True)  # 红包消息ID
+    expire_time = db.Column(db.DateTime, nullable=True)  # 过期时间
+    status = db.Column(db.String(20), default='active')  # active, expired, claimed
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='red_packets', lazy=True)
+
+
+class RedPacketClaim(db.Model):
+    """红包领取记录"""
+    __tablename__ = 'red_packet_claim'
+    id = db.Column(db.Integer, primary_key=True)
+    packet_id = db.Column(db.Integer, db.ForeignKey('red_packet.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    points_received = db.Column(db.Integer, nullable=False)
+    claimed_at = db.Column(db.DateTime, default=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('packet_id', 'user_id', name='_packet_user_uc'),
+    )
+    
+    packet = db.relationship('RedPacket', backref='red_packet_claims', lazy=True)
 
 
 DEFAULT_FIELDS = [

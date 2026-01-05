@@ -44,7 +44,7 @@
             <p class="mb-0 opacity-75">{{ group.title }}</p>
         </div>
         <div class="d-flex gap-2">
-            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup(event)" title="将按钮作为菜单键盘推送到群组">
+            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup(event)" title="将按钮推送到群组，群成员可使用/menu命令查看">
                 <i class="fa-solid fa-paper-plane me-2"></i>推送到群组
             </button>
             <button class="btn btn-light fw-bold" onclick="showAddModal()">
@@ -52,6 +52,17 @@
             </button>
         </div>
     </div>
+</div>
+
+<!-- Feature Description -->
+<div class="alert alert-info mb-3">
+    <h6 class="fw-bold mb-2"><i class="fa-solid fa-info-circle me-2"></i>功能说明</h6>
+    <ul class="mb-0 small">
+        <li><strong>群底部按钮：</strong>为群组设置自定义菜单按钮，方便群成员快速访问常用功能</li>
+        <li><strong>按钮排列：</strong>通过设置"行号"和"列顺序"可以实现多个按钮在一行并排显示</li>
+        <li><strong>输入提示：</strong>可以为按钮设置输入框提示文案，点击按钮后会在群输入框显示</li>
+        <li><strong>使用方法：</strong>配置完成后点击"推送到群组"，群成员使用 /menu 命令即可查看和使用按钮菜单</li>
+    </ul>
 </div>
 
 <div class="row">
@@ -68,10 +79,8 @@
                             <div class="flex-grow-1">
                                 <h6 class="mb-1">{{ button.button_text }}</h6>
                                 <small class="text-muted">
-                                    行: {{ button.row_position }} | 列: {{ button.button_order }} | 
-                                    {% if button.trigger_keyword %}<span class="badge bg-info">触发: {{ button.trigger_keyword }}</span> | {% endif %}
-                                    {% if button.button_url %}URL: {{ button.button_url[:50] }}{% if button.button_url|length > 50 %}...{% endif %}{% endif %}
-                                    {% if button.button_callback %}回调: {{ button.button_callback }}{% endif %}
+                                    行: {{ button.row_position }} | 列: {{ button.button_order }}
+                                    {% if button.input_field_placeholder %} | 提示: {{ button.input_field_placeholder }}{% endif %}
                                 </small>
                                 <span class="badge {{ 'bg-success' if button.is_active else 'bg-secondary' }} ms-2">
                                     {{ '启用' if button.is_active else '禁用' }}
@@ -121,22 +130,8 @@
                 <input type="hidden" id="button_id">
                 <div class="mb-3">
                     <label class="form-label">按钮文本</label>
-                    <input type="text" class="form-control" id="button_text" placeholder="例如：访问官网">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">按钮URL</label>
-                    <input type="text" class="form-control" id="button_url" placeholder="https://example.com">
-                    <small class="text-muted">外部链接地址（可选）</small>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">回调数据</label>
-                    <input type="text" class="form-control" id="button_callback" placeholder="callback_data">
-                    <small class="text-muted">内联按钮回调数据（可选）</small>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">触发关键词</label>
-                    <input type="text" class="form-control" id="trigger_keyword" placeholder="例如：菜单,按钮">
-                    <small class="text-muted">用户发送此关键词时自动显示按钮，可用逗号分隔多个（可选）</small>
+                    <input type="text" class="form-control" id="button_text" placeholder="例如：访问官网" required>
+                    <small class="text-muted">用户在群组键盘上看到的按钮文字</small>
                 </div>
                 <div class="row">
                     <div class="col-6 mb-3">
@@ -149,6 +144,11 @@
                         <input type="number" class="form-control" id="button_order" value="0" min="0">
                         <small class="text-muted">同行内的显示顺序</small>
                     </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">输入框提示文案</label>
+                    <input type="text" class="form-control" id="input_field_placeholder" placeholder="例如：请输入您的问题...">
+                    <small class="text-muted">点击按钮后在群输入框显示的提示文字（可选）</small>
                 </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="is_active" checked>
@@ -175,11 +175,9 @@ function showAddModal() {
     document.getElementById('modalTitle').textContent = '添加按钮';
     document.getElementById('button_id').value = '';
     document.getElementById('button_text').value = '';
-    document.getElementById('button_url').value = '';
-    document.getElementById('button_callback').value = '';
-    document.getElementById('trigger_keyword').value = '';
     document.getElementById('row_position').value = '0';
     document.getElementById('button_order').value = '0';
+    document.getElementById('input_field_placeholder').value = '';
     document.getElementById('is_active').checked = true;
     buttonModal.show();
 }
@@ -191,11 +189,9 @@ function editButton(id) {
     document.getElementById('modalTitle').textContent = '编辑按钮';
     document.getElementById('button_id').value = id;
     document.getElementById('button_text').value = button.button_text || '';
-    document.getElementById('button_url').value = button.button_url || '';
-    document.getElementById('button_callback').value = button.button_callback || '';
-    document.getElementById('trigger_keyword').value = button.trigger_keyword || '';
     document.getElementById('row_position').value = button.row_position || 0;
     document.getElementById('button_order').value = button.button_order || 0;
+    document.getElementById('input_field_placeholder').value = button.input_field_placeholder || '';
     document.getElementById('is_active').checked = button.is_active;
     buttonModal.show();
 }
@@ -205,11 +201,9 @@ function saveButton() {
         group_id: {{ group.id }},
         id: document.getElementById('button_id').value || null,
         button_text: document.getElementById('button_text').value,
-        button_url: document.getElementById('button_url').value,
-        button_callback: document.getElementById('button_callback').value,
-        trigger_keyword: document.getElementById('trigger_keyword').value,
         row_position: parseInt(document.getElementById('row_position').value) || 0,
         button_order: parseInt(document.getElementById('button_order').value) || 0,
+        input_field_placeholder: document.getElementById('input_field_placeholder').value,
         is_active: document.getElementById('is_active').checked
     };
     

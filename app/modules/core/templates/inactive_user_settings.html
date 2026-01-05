@@ -140,14 +140,14 @@ function saveSettings() {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            showToast('保存成功！'', 'success');
+            showToast('保存成功！', 'success');
         } else {
             showToast('保存失败: ' + (d.msg || '未知错误'));
         }
     })
     .catch(e => {
         console.error(e);
-        showToast('网络错误'', 'error');
+        showToast('网络错误', 'error');
             console.error('操作失败:', e);
     });
 }

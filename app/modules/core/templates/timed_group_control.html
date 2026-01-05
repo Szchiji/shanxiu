@@ -119,13 +119,13 @@
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
             if (result.status === 'ok') {
-                showToast('设置已保存'', 'success');
+                showToast('设置已保存', 'success');
                 setTimeout(() => location.reload(), 1000);
             } else {
                 showToast('保存失败: ' + (result.msg || '未知错误'));
             }
         }).catch(e => {
-            showToast('网络错误，请重试'', 'error');
+            showToast('网络错误，请重试', 'error');
             console.error('操作失败:', e);
         });
     }

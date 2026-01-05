@@ -347,7 +347,7 @@
             push_channel_id: "{{ sys.push_channel_id }}" 
         };
         fetch('/core/api/save_system', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})
-        .then(()=>showToast('保存成功'', 'success'));
+        .then(()=>showToast('保存成功', 'success'));
     }
 </script>
 <style>

@@ -170,7 +170,7 @@ function saveLevel() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            showToast('保存成功！'', 'success');
+            showToast('保存成功！', 'success');
                 setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '保存失败'));
@@ -178,7 +178,7 @@ function saveLevel() {
     })
     .catch(err => {
         console.error(err);
-        showToast('网络错误'', 'error');
+        showToast('网络错误', 'error');
     });
 }
 
@@ -193,7 +193,7 @@ function deleteLevel(id) {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            showToast('删除成功！'', 'success');
+            showToast('删除成功！', 'success');
                 setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '删除失败'));
@@ -201,7 +201,7 @@ function deleteLevel(id) {
     })
     .catch(err => {
         console.error(err);
-        showToast('网络错误'', 'error');
+        showToast('网络错误', 'error');
     });
 }
 </script>

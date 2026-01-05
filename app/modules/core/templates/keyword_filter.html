@@ -202,7 +202,7 @@ function saveFilter() {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            showToast('保存成功！'', 'success');
+            showToast('保存成功！', 'success');
                 setTimeout(() => location.reload(), 1000);
         } else {
             showToast('保存失败: ' + (d.msg || '未知错误'));
@@ -210,7 +210,7 @@ function saveFilter() {
     })
     .catch(e => {
         console.error(e);
-        showToast('网络错误'', 'error');
+        showToast('网络错误', 'error');
             console.error('操作失败:', e);
     });
 }
@@ -226,7 +226,7 @@ function deleteFilter(id) {
     .then(r => r.json())
     .then(d => {
         if (d.status === 'ok') {
-            showToast('删除成功！'', 'success');
+            showToast('删除成功！', 'success');
                 setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ 删除失败: ' + (d.msg || '未知错误'));
@@ -234,7 +234,7 @@ function deleteFilter(id) {
     })
     .catch(e => {
         console.error(e);
-        showToast('网络错误'', 'error');
+        showToast('网络错误', 'error');
             console.error('操作失败:', e);
     });
 }

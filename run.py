@@ -75,6 +75,8 @@ def fix_database_schema(app):
             # Bot clones table columns
             "ALTER TABLE bot_clones ADD COLUMN owner_user_id BIGINT",
             "ALTER TABLE bot_clones ADD COLUMN admin_user_ids TEXT DEFAULT '[]'",
+            # User points table columns - add current_level_id to track member levels
+            "ALTER TABLE user_points ADD COLUMN current_level_id INTEGER REFERENCES member_level(id)",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

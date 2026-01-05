@@ -3659,29 +3659,35 @@ async def update_member_levels(context):
                 # Get all users with points
                 user_points_list = UserPoints.query.all()
                 
+                updated_count = 0
                 for user_points in user_points_list:
                     # Find the highest level this user qualifies for
                     levels = MemberLevel.query.filter_by(
                         group_id=user_points.group_id
                     ).order_by(MemberLevel.required_points.desc()).all()
                     
-                    current_level = None
+                    # Determine the appropriate level for this user
+                    new_level = None
                     for level in levels:
                         if user_points.points_balance >= level.required_points:
-                            current_level = level
+                            new_level = level
                             break
                     
-                    # Store level info in user metadata or separate table
-                    # (This is simplified - would need a proper user_level tracking table)
+                    # Only update if the level has changed
+                    new_level_id = new_level.id if new_level else None
+                    if user_points.current_level_id != new_level_id:
+                        user_points.current_level_id = new_level_id
+                        updated_count += 1
                 
                 db.session.commit()
-                return len(user_points_list)
+                return updated_count
         
         count = await asyncio.get_running_loop().run_in_executor(None, _update_levels)
-        print(f"Updated member levels for {count} users")
+        if count > 0:
+            print(f"✅ Updated member levels for {count} users")
         
     except Exception as e:
-        print(f"Error in update_member_levels: {e}")
+        print(f"❌ Error in update_member_levels: {e}")
 
 async def run_lottery_draws(context):
     """Background task to run lottery draws when time is up"""

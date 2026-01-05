@@ -268,10 +268,12 @@ class UserPoints(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     user_id = db.Column(db.BigInteger, index=True)
     points_balance = db.Column(db.Integer, default=0)
+    current_level_id = db.Column(db.Integer, db.ForeignKey('member_level.id'), nullable=True)  # Track current member level
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='_group_user_points_uc'),)
     
     group = db.relationship('BotGroup', backref='user_points', lazy=True)
+    current_level = db.relationship('MemberLevel', backref='user_points', lazy=True, foreign_keys=[current_level_id])
 
 
 class GroupLottery(db.Model):

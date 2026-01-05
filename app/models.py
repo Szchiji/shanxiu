@@ -98,6 +98,281 @@ class StartMessage(db.Model):
     group = db.relationship('BotGroup', backref='start_messages', lazy=True)
 
 
+class GroupEntryExitSettings(db.Model):
+    """进退群设置"""
+    __tablename__ = 'group_entry_exit_settings'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    # 进群验证
+    entry_verification_enabled = db.Column(db.Boolean, default=False)
+    verification_question = db.Column(db.Text, nullable=True)
+    verification_answer = db.Column(db.Text, nullable=True)
+    verification_timeout = db.Column(db.Integer, default=60)  # 验证超时时间(秒)
+    # 进群欢迎
+    welcome_enabled = db.Column(db.Boolean, default=False)
+    welcome_message = db.Column(db.Text, nullable=True)
+    welcome_media_type = db.Column(db.String(20), default='text')
+    welcome_media_url = db.Column(db.Text, nullable=True)
+    # 退群拉黑
+    exit_ban_enabled = db.Column(db.Boolean, default=False)
+    exit_ban_duration = db.Column(db.Integer, default=0)  # 0=永久
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='entry_exit_settings', lazy=True)
+
+
+class SpamProtection(db.Model):
+    """垃圾防护"""
+    __tablename__ = 'spam_protection'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    enabled = db.Column(db.Boolean, default=False)
+    # 防护规则
+    max_messages_per_minute = db.Column(db.Integer, default=10)
+    block_links = db.Column(db.Boolean, default=False)
+    block_forwards = db.Column(db.Boolean, default=False)
+    block_stickers = db.Column(db.Boolean, default=False)
+    # 惩罚措施
+    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban
+    punishment_duration = db.Column(db.Integer, default=60)  # 分钟
+    # 白名单
+    whitelist_users = db.Column(db.Text, default='[]')  # JSON array of user IDs
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='spam_protection', lazy=True)
+
+
+class TimedGroupControl(db.Model):
+    """定时开关群"""
+    __tablename__ = 'timed_group_control'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    enabled = db.Column(db.Boolean, default=False)
+    open_time = db.Column(db.Time, nullable=True)  # 开群时间
+    close_time = db.Column(db.Time, nullable=True)  # 关群时间
+    timezone = db.Column(db.String(50), default='Asia/Shanghai')
+    close_message = db.Column(db.Text, nullable=True)  # 关群提示消息
+    open_message = db.Column(db.Text, nullable=True)  # 开群提示消息
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='timed_group_control', lazy=True)
+
+
+class InvitationActivity(db.Model):
+    """邀请活动"""
+    __tablename__ = 'invitation_activity'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    enabled = db.Column(db.Boolean, default=False)
+    reward_points = db.Column(db.Integer, default=10)  # 每邀请一人获得的积分
+    minimum_invites = db.Column(db.Integer, default=1)  # 最少邀请人数
+    activity_start = db.Column(db.DateTime, nullable=True)
+    activity_end = db.Column(db.DateTime, nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='invitation_activity', lazy=True)
+
+
+class ForcedChannelSubscription(db.Model):
+    """强制订阅频道"""
+    __tablename__ = 'forced_channel_subscription'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    enabled = db.Column(db.Boolean, default=False)
+    channel_id = db.Column(db.String(50), nullable=True)  # 必须订阅的频道ID
+    channel_username = db.Column(db.String(255), nullable=True)  # 频道用户名
+    check_interval = db.Column(db.Integer, default=3600)  # 检查间隔(秒)
+    unsubscribe_action = db.Column(db.String(20), default='kick')  # kick, ban, mute
+    verification_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='forced_channel_subscription', lazy=True)
+
+
+class PointsRule(db.Model):
+    """积分规则"""
+    __tablename__ = 'points_rules'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    rule_name = db.Column(db.String(255), nullable=False)
+    rule_type = db.Column(db.String(50), nullable=False)  # checkin, message, invite, etc.
+    points_amount = db.Column(db.Integer, default=1)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='points_rules', lazy=True)
+
+
+class PointsAutoReply(db.Model):
+    """积分自动回复"""
+    __tablename__ = 'points_auto_reply'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    trigger_keyword = db.Column(db.String(255), nullable=False)
+    points_cost = db.Column(db.Integer, default=0)  # 消耗积分
+    content = db.Column(db.Text, nullable=True)
+    media_type = db.Column(db.String(20), default='text')
+    media_url = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='points_auto_reply', lazy=True)
+
+
+class PointsAuction(db.Model):
+    """积分竞拍"""
+    __tablename__ = 'points_auction'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    item_name = db.Column(db.String(255), nullable=False)
+    item_description = db.Column(db.Text, nullable=True)
+    starting_price = db.Column(db.Integer, default=100)
+    current_bid = db.Column(db.Integer, default=0)
+    current_bidder_id = db.Column(db.BigInteger, nullable=True)
+    auction_start = db.Column(db.DateTime, nullable=True)
+    auction_end = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), default='pending')  # pending, active, ended
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='points_auction', lazy=True)
+
+
+class PointsLog(db.Model):
+    """积分日志"""
+    __tablename__ = 'points_log'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    points_change = db.Column(db.Integer, nullable=False)  # 正数=获得，负数=消耗
+    reason = db.Column(db.String(255), nullable=True)
+    balance_after = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='points_log', lazy=True)
+
+
+class UserPoints(db.Model):
+    """用户积分"""
+    __tablename__ = 'user_points'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    points_balance = db.Column(db.Integer, default=0)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='_group_user_points_uc'),)
+    
+    group = db.relationship('BotGroup', backref='user_points', lazy=True)
+
+
+class GroupLottery(db.Model):
+    """群抽奖"""
+    __tablename__ = 'group_lottery'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    lottery_name = db.Column(db.String(255), nullable=False)
+    lottery_type = db.Column(db.String(50), nullable=False)  # message_count, message_rank
+    prize_description = db.Column(db.Text, nullable=True)
+    # 发言数量抽奖
+    min_messages = db.Column(db.Integer, default=10)  # 最少发言数
+    # 发言排行抽奖
+    top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖
+    # 通用设置
+    start_time = db.Column(db.DateTime, nullable=True)
+    end_time = db.Column(db.DateTime, nullable=True)
+    winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
+    status = db.Column(db.String(20), default='pending')  # pending, active, ended
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='group_lottery', lazy=True)
+
+
+class MemberLevel(db.Model):
+    """群成员等级"""
+    __tablename__ = 'member_level'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    level_name = db.Column(db.String(255), nullable=False)
+    required_points = db.Column(db.Integer, default=0)
+    permissions = db.Column(db.Text, default='{}')  # JSON格式的权限配置
+    badge_emoji = db.Column(db.String(10), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='member_level', lazy=True)
+
+
+class UserNameChange(db.Model):
+    """用户改名监控"""
+    __tablename__ = 'user_name_change'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    old_name = db.Column(db.String(255), nullable=True)
+    new_name = db.Column(db.String(255), nullable=True)
+    changed_at = db.Column(db.DateTime, default=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='user_name_change', lazy=True)
+
+
+class GroupBottomButton(db.Model):
+    """群底部按钮"""
+    __tablename__ = 'group_bottom_button'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    button_text = db.Column(db.String(255), nullable=False)
+    button_url = db.Column(db.Text, nullable=True)
+    button_callback = db.Column(db.String(255), nullable=True)  # Callback data for inline button
+    button_order = db.Column(db.Integer, default=0)  # 显示顺序
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='group_bottom_button', lazy=True)
+
+
+class SyncGroupMessages(db.Model):
+    """同步群消息"""
+    __tablename__ = 'sync_group_messages'
+    id = db.Column(db.Integer, primary_key=True)
+    source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    target_group_id = db.Column(db.String(50), nullable=False)  # 目标群组ID
+    enabled = db.Column(db.Boolean, default=False)
+    sync_media = db.Column(db.Boolean, default=True)  # 是否同步媒体文件
+    sync_forwards = db.Column(db.Boolean, default=True)  # 是否同步转发消息
+    filter_keywords = db.Column(db.Text, default='[]')  # JSON array of keywords to filter
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='sync_group_messages', lazy=True, foreign_keys=[source_group_id])
+
+
+class OtherSettings(db.Model):
+    """其他设置"""
+    __tablename__ = 'other_settings'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    # 自动删除消息开关
+    auto_delete_join_msg = db.Column(db.Boolean, default=False)  # 自动删除进群消息
+    auto_delete_leave_msg = db.Column(db.Boolean, default=False)  # 自动删除退群消息
+    auto_delete_promote_msg = db.Column(db.Boolean, default=False)  # 自动删除互推消息
+    auto_delete_pin_msg = db.Column(db.Boolean, default=False)  # 自动删除置顶提示消息
+    cancel_channel_pin = db.Column(db.Boolean, default=False)  # 取消频道消息置顶
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    group = db.relationship('BotGroup', backref='other_settings', lazy=True)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

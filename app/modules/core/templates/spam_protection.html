@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(250, 112, 154, 0.3);
+    }
+    
+    .settings-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-switch .form-check-input {
+        width: 3em;
+        height: 1.5em;
+        cursor: pointer;
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #fa709a;
+        border-color: #fa709a;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-shield-virus me-2"></i>垃圾防护</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存设置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-cog me-2 text-primary"></i>基础设置
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="enabled" 
+                           {{ 'checked' if settings and settings.enabled }}>
+                    <label class="fw-bold">启用垃圾防护</label>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">每分钟最大消息数</label>
+                        <input type="number" class="form-control" id="max_messages_per_minute" 
+                               value="{{ settings.max_messages_per_minute if settings else 10 }}" min="1">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">惩罚时长 (分钟)</label>
+                        <input type="number" class="form-control" id="punishment_duration" 
+                               value="{{ settings.punishment_duration if settings else 60 }}" min="1">
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">惩罚方式</label>
+                    <select class="form-select" id="punishment_type">
+                        <option value="mute" {{ 'selected' if not settings or settings.punishment_type == 'mute' }}>禁言</option>
+                        <option value="kick" {{ 'selected' if settings and settings.punishment_type == 'kick' }}>踢出</option>
+                        <option value="ban" {{ 'selected' if settings and settings.punishment_type == 'ban' }}>封禁</option>
+                    </select>
+                </div>
+                
+                <hr class="my-4">
+                
+                <h6 class="fw-bold mb-3">阻止内容</h6>
+                
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="block_links" 
+                           {{ 'checked' if settings and settings.block_links }}>
+                    <label class="form-check-label">阻止链接</label>
+                </div>
+                
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="block_forwards" 
+                           {{ 'checked' if settings and settings.block_forwards }}>
+                    <label class="form-check-label">阻止转发消息</label>
+                </div>
+                
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="block_stickers" 
+                           {{ 'checked' if settings and settings.block_stickers }}>
+                    <label class="form-check-label">阻止贴纸</label>
+                </div>
+                
+                <hr class="my-4">
+                
+                <h6 class="fw-bold mb-3">白名单用户</h6>
+                <div class="mb-3">
+                    <textarea class="form-control" id="whitelist_users" rows="4" 
+                              placeholder="每行一个用户ID">{% if whitelist_users %}{{ '\n'.join(whitelist_users|map('string')) }}{% endif %}</textarea>
+                    <div class="form-text">白名单用户不受垃圾防护限制</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const groupId = {{ group.id }};
+    
+    function saveSettings() {
+        const whitelistText = document.getElementById('whitelist_users').value.trim();
+        const whitelistArray = whitelistText ? whitelistText.split('\n').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0) : [];
+        
+        // Warn user if there are invalid IDs
+        if (whitelistText) {
+            const allLines = whitelistText.split('\n').filter(l => l.trim());
+            if (allLines.length > whitelistArray.length) {
+                const invalidCount = allLines.length - whitelistArray.length;
+                if (!confirm(`检测到 ${invalidCount} 个无效的用户ID将被忽略。是否继续保存？`)) {
+                    return;
+                }
+            }
+        }
+        
+        const data = {
+            group_id: groupId,
+            enabled: document.getElementById('enabled').checked,
+            max_messages_per_minute: parseInt(document.getElementById('max_messages_per_minute').value),
+            block_links: document.getElementById('block_links').checked,
+            block_forwards: document.getElementById('block_forwards').checked,
+            block_stickers: document.getElementById('block_stickers').checked,
+            punishment_type: document.getElementById('punishment_type').value,
+            punishment_duration: parseInt(document.getElementById('punishment_duration').value),
+            whitelist_users: whitelistArray
+        };
+        
+        fetch('/core/api/save_spam_protection', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(res => res.json()).then(result => {
+            if (result.status === 'ok') {
+                alert('✅ 设置已保存');
+                location.reload();
+            } else {
+                alert('❌ 保存失败: ' + (result.msg || '未知错误'));
+            }
+        }).catch(e => {
+            alert('❌ 网络错误，请重试');
+        });
+    }
+</script>
+{% endblock %}

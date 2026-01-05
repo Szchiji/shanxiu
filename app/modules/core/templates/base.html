@@ -416,6 +416,36 @@
                                 <i class="fa-solid fa-rocket"></i> /start 消息
                             </a>
                         </li>
+                        
+                        <!-- Group Management Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" 
+                               id="groupManagementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-shield-halved"></i> 群组管理
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="groupManagementDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="dropdown-item {% if page == 'entry_exit_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-shield"></i> 进退群设置
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/spam_protection" class="dropdown-item {% if page == 'spam_protection' %}active{% endif %}">
+                                        <i class="fa-solid fa-shield-virus"></i> 垃圾防护
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/timed_group_control" class="dropdown-item {% if page == 'timed_group_control' %}active{% endif %}">
+                                        <i class="fa-solid fa-clock"></i> 定时开关群
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/other_settings" class="dropdown-item {% if page == 'other_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-cog"></i> 其他设置
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
                         {% endif %}
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">

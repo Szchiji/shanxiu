@@ -356,6 +356,25 @@ class SyncGroupMessages(db.Model):
     group = db.relationship('BotGroup', backref='sync_group_messages', lazy=True, foreign_keys=[source_group_id])
 
 
+class SyncMessageLog(db.Model):
+    """同步消息日志"""
+    __tablename__ = 'sync_message_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    target_group_id = db.Column(db.String(50), nullable=False)
+    source_message_id = db.Column(db.BigInteger, nullable=True)
+    target_message_id = db.Column(db.BigInteger, nullable=True)
+    user_id = db.Column(db.BigInteger, nullable=True)  # 消息发送者ID
+    username = db.Column(db.String(255), nullable=True)  # 消息发送者用户名
+    message_type = db.Column(db.String(20), default='text')  # text, photo, video, document, etc.
+    content_preview = db.Column(db.Text, nullable=True)  # 内容预览（前100字符）
+    status = db.Column(db.String(20), default='success')  # success, failed, filtered
+    error_message = db.Column(db.Text, nullable=True)  # 错误信息（如果同步失败）
+    synced_at = db.Column(db.DateTime, default=datetime.now, index=True)
+    
+    group = db.relationship('BotGroup', backref='sync_message_logs', lazy=True, foreign_keys=[source_group_id])
+
+
 class OtherSettings(db.Model):
     """其他设置"""
     __tablename__ = 'other_settings'

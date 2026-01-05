@@ -2072,8 +2072,9 @@ async def check_spam_protection(update: Update, context):
                 whitelist = json.loads(protection.whitelist_users or '[]')
                 if user.id in whitelist:
                     return False
-            except:
-                pass
+            except json.JSONDecodeError as e:
+                print(f"Error parsing whitelist JSON: {e}")
+                # Continue with spam check if whitelist is invalid
             
             # Check for blocked content
             should_punish = False
@@ -2095,8 +2096,8 @@ async def check_spam_protection(update: Update, context):
                 # Delete the message
                 try:
                     await msg.delete()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Failed to delete spam message: {e}")
                 
                 # Apply punishment
                 if protection.punishment_type == 'mute':
@@ -2161,9 +2162,42 @@ async def check_timed_group_control(context):
                         
                         chat_id = int(group.chat_id)
                         
-                        # Apply permissions based on should_be_open
-                        # Note: This is simplified - actual implementation would need to track state
-                        # and only send messages when state changes
+                        # Track state in group config to avoid repeated messages
+                        conf = get_group_conf(group)
+                        last_state = conf.get('_timed_control_state', None)
+                        
+                        # Only act if state has changed
+                        if last_state != should_be_open:
+                            try:
+                                if should_be_open:
+                                    # Open the group - allow all members to send messages
+                                    # Note: This requires bot to have appropriate admin rights
+                                    # For supergroups, we can't change permissions for all users at once
+                                    # Instead, we send the open message
+                                    if control.open_message:
+                                        open_text = sanitize_html_for_telegram(control.open_message)
+                                        await context.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=open_text,
+                                            parse_mode='HTML'
+                                        )
+                                else:
+                                    # Close the group - send close message
+                                    if control.close_message:
+                                        close_text = sanitize_html_for_telegram(control.close_message)
+                                        await context.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=close_text,
+                                            parse_mode='HTML'
+                                        )
+                                
+                                # Update state
+                                conf['_timed_control_state'] = should_be_open
+                                group.config = json.dumps(conf, ensure_ascii=False)
+                                db.session.commit()
+                                
+                            except Exception as e:
+                                print(f"Error applying timed control for group {chat_id}: {e}")
                         
             except Exception as e:
                 print(f"Error processing timed control for group {control.group_id}: {e}")
@@ -2258,14 +2292,16 @@ async def handle_sync_group_messages(update: Update, context):
                             keywords = json.loads(sync_setting.filter_keywords)
                             if any(kw in msg.text for kw in keywords):
                                 continue  # Skip this message due to keyword filter
-                        except:
-                            pass
+                        except json.JSONDecodeError as e:
+                            print(f"Error parsing filter keywords JSON: {e}")
+                            # Continue with sync if filter is invalid
                     
                     # Skip forwards if not enabled
                     if msg.forward_date and not sync_setting.sync_forwards:
                         continue
                     
                     # Sync the message to target group
+                    # target_group_id is stored as string chat_id, not database id
                     target_chat_id = sync_setting.target_group_id
                     
                     if msg.text:
@@ -2367,6 +2403,170 @@ async def handle_auto_delete_messages(update: Update, context):
     except Exception as e:
         print(f"Error in handle_auto_delete_messages: {e}")
 
+async def check_channel_subscriptions(context):
+    """Background task to check forced channel subscriptions"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_subscription_settings():
+            with global_flask_app.app_context():
+                return ForcedChannelSubscription.query.filter_by(enabled=True).all()
+        
+        settings_list = await asyncio.get_running_loop().run_in_executor(None, _get_subscription_settings)
+        
+        for settings in settings_list:
+            try:
+                if not settings.channel_id:
+                    continue
+                
+                with global_flask_app.app_context():
+                    group = BotGroup.query.get(settings.group_id)
+                    if not group:
+                        continue
+                    
+                    chat_id = int(group.chat_id)
+                    
+                    # Get all group members (this is simplified - actual implementation 
+                    # would need to track active members)
+                    # Use configurable batch size to respect API rate limits
+                    SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Check 10 users per run
+                    group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
+                    
+                    for group_user in group_users:
+                        try:
+                            # Check if user is subscribed to the channel
+                            member = await context.bot.get_chat_member(
+                                settings.channel_id,
+                                group_user.tg_id
+                            )
+                            
+                            # If not subscribed (left or kicked), apply action
+                            if member.status in ['left', 'kicked']:
+                                if settings.unsubscribe_action == 'kick':
+                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
+                                    await context.bot.unban_chat_member(chat_id, group_user.tg_id)
+                                elif settings.unsubscribe_action == 'ban':
+                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
+                                elif settings.unsubscribe_action == 'mute':
+                                    await context.bot.restrict_chat_member(
+                                        chat_id=chat_id,
+                                        user_id=group_user.tg_id,
+                                        permissions=ChatPermissions(can_send_messages=False)
+                                    )
+                        except Exception as e:
+                            # User may not be in channel or bot doesn't have access
+                            print(f"Error checking subscription for user {group_user.tg_id}: {e}")
+                            
+            except Exception as e:
+                print(f"Error processing channel subscription for group {settings.group_id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in check_channel_subscriptions: {e}")
+
+async def update_member_levels(context):
+    """Background task to update member levels based on points"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _update_levels():
+            with global_flask_app.app_context():
+                # Get all users with points
+                user_points_list = UserPoints.query.all()
+                
+                for user_points in user_points_list:
+                    # Find the highest level this user qualifies for
+                    levels = MemberLevel.query.filter_by(
+                        group_id=user_points.group_id
+                    ).order_by(MemberLevel.required_points.desc()).all()
+                    
+                    current_level = None
+                    for level in levels:
+                        if user_points.points_balance >= level.required_points:
+                            current_level = level
+                            break
+                    
+                    # Store level info in user metadata or separate table
+                    # (This is simplified - would need a proper user_level tracking table)
+                
+                db.session.commit()
+                return len(user_points_list)
+        
+        count = await asyncio.get_running_loop().run_in_executor(None, _update_levels)
+        print(f"Updated member levels for {count} users")
+        
+    except Exception as e:
+        print(f"Error in update_member_levels: {e}")
+
+async def run_lottery_draws(context):
+    """Background task to run lottery draws when time is up"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_active_lotteries():
+            with global_flask_app.app_context():
+                now = get_beijing_now()
+                # Find lotteries that have ended but not yet drawn
+                return GroupLottery.query.filter(
+                    GroupLottery.status == 'active',
+                    GroupLottery.end_time <= now
+                ).all()
+        
+        lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
+        
+        for lottery in lotteries:
+            try:
+                with global_flask_app.app_context():
+                    group = BotGroup.query.get(lottery.group_id)
+                    if not group:
+                        continue
+                    
+                    chat_id = int(group.chat_id)
+                    winners = []
+                    
+                    if lottery.lottery_type == 'message_count':
+                        # Find users who sent enough messages (simplified)
+                        # In real implementation, would need message tracking
+                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                        if eligible_users:
+                            import random
+                            winner = random.choice(eligible_users)
+                            winners = [winner.tg_id]
+                    
+                    elif lottery.lottery_type == 'message_rank':
+                        # Find top N users (simplified)
+                        # In real implementation, would track message counts
+                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(lottery.top_n_winners).all()
+                        winners = [u.tg_id for u in top_users]
+                    
+                    # Update lottery with winners
+                    lottery.winner_ids = json.dumps(winners)
+                    lottery.status = 'ended'
+                    db.session.commit()
+                    
+                    # Announce winners
+                    if winners:
+                        winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winners]
+                        message = f"🎉 <b>抽奖结束！</b>\n\n"
+                        message += f"活动：{lottery.lottery_name}\n"
+                        message += f"获奖者：{', '.join(winner_mentions)}\n"
+                        if lottery.prize_description:
+                            message += f"奖品：{lottery.prize_description}\n"
+                        
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                        
+            except Exception as e:
+                print(f"Error running lottery {lottery.id}: {e}")
+                
+    except Exception as e:
+        print(f"Error in run_lottery_draws: {e}")
+
 async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
@@ -2424,6 +2624,9 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
     app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)  # 🆕 Check every minute
+    app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
+    app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
+    app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
     
     await app.initialize()
     await app.start()

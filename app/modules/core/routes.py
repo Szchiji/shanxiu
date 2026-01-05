@@ -177,7 +177,19 @@ def page_auto_replies(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = AutoReply.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     # 转换为JSON供前端使用
     auto_replies_json = json.dumps([{
@@ -193,7 +205,8 @@ def page_auto_replies(gid):
     } for ar in auto_replies], ensure_ascii=False)
     
     return render_template('auto_replies.html', page='auto_replies', group=group, 
-                          auto_replies=auto_replies, auto_replies_json=auto_replies_json)
+                          auto_replies=auto_replies, auto_replies_json=auto_replies_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
 @core_bp.route('/group/<int:gid>/scheduled_messages')
 def page_scheduled_messages(gid):
@@ -201,7 +214,19 @@ def page_scheduled_messages(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = ScheduledMessage.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     # 转换为JSON供前端使用
     scheduled_messages_json = json.dumps([{
@@ -220,7 +245,8 @@ def page_scheduled_messages(gid):
     } for sm in scheduled_messages], ensure_ascii=False)
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
-                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json)
+                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
 @core_bp.route('/group/<int:gid>/start_messages')
 def page_start_messages(gid):
@@ -228,7 +254,19 @@ def page_start_messages(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    start_messages = StartMessage.query.filter_by(group_id=gid).order_by(StartMessage.message_type.asc(), StartMessage.id.desc()).all()
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Get total count and paginated results
+    total_items = StartMessage.query.filter_by(group_id=gid).count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    start_messages = StartMessage.query.filter_by(group_id=gid).order_by(StartMessage.message_type.asc(), StartMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     # 转换为JSON供前端使用
     start_messages_json = json.dumps([{
@@ -242,7 +280,8 @@ def page_start_messages(gid):
     } for sm in start_messages], ensure_ascii=False)
     
     return render_template('start_messages.html', page='start_messages', group=group,
-                          start_messages=start_messages, start_messages_json=start_messages_json)
+                          start_messages=start_messages, start_messages_json=start_messages_json,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])

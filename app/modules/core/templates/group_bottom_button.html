@@ -39,9 +39,14 @@
             <h4 class="fw-bold mb-0"><i class="fa-solid fa-hand-pointer me-2"></i>群底部按钮</h4>
             <p class="mb-0 opacity-75">{{ group.title }}</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="showAddModal()">
-            <i class="fa-solid fa-plus me-2"></i>添加按钮
-        </button>
+        <div class="d-flex gap-2">
+            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup()" title="将按钮作为菜单键盘推送到群组">
+                <i class="fa-solid fa-paper-plane me-2"></i>推送到群组
+            </button>
+            <button class="btn btn-light fw-bold" onclick="showAddModal()">
+                <i class="fa-solid fa-plus me-2"></i>添加按钮
+            </button>
+        </div>
     </div>
 </div>
 
@@ -248,6 +253,28 @@ function moveButton(id, direction) {
             location.reload();
         } else {
             alert('❌ ' + (result.msg || '移动失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function pushButtonsToGroup() {
+    if (!confirm('确定要将当前按钮配置推送到群组作为菜单键盘吗？')) return;
+    
+    fetch('/core/api/push_group_bottom_buttons', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: {{ group.id }}})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 按钮已成功推送到群组！');
+        } else {
+            alert('❌ ' + (result.msg || '推送失败'));
         }
     })
     .catch(err => {

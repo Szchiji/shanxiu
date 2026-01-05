@@ -5056,7 +5056,7 @@ async def on_message(update: Update, context):
                     info_lines.append(f"   姓氏: {forwarded_user.last_name}")
                 if forwarded_user.username:
                     info_lines.append(f"🔗 Username: @{forwarded_user.username}")
-                info_lines.append(f"🆔 用户ID: {forwarded_user.id}")
+                info_lines.append(f"🆔 用户ID: <code>{forwarded_user.id}</code>")
                 info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
                 
                 # Try to get user's group membership info
@@ -5096,7 +5096,7 @@ async def on_message(update: Update, context):
                     if len(user_groups) > 5:
                         info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
                 
-                await msg.reply_text("\n".join(info_lines))
+                await msg.reply_text("\n".join(info_lines), parse_mode='HTML')
                 return
             
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))

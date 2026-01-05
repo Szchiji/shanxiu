@@ -267,20 +267,20 @@
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4 hide-mobile">TG ID</th>
+                    <th class="ps-3 ps-md-4">TG ID</th>
                     {% for f in fields %}
-                    <th class="hide-mobile">{{ f.label }}</th>
+                    <th>{{ f.label }}</th>
                     {% endfor %}
                     <th>状态</th>
-                    <th class="hide-mobile">过期时间</th>
+                    <th>过期时间</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
             <tbody id="userTable">
                 {% for user in users %}
                 <tr>
-                    <td class="ps-3 ps-md-4 fw-bold hide-mobile">{{ user.tg_id }}</td>
-                    {% for field in fields %}<td class="hide-mobile">{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
+                    <td class="ps-3 ps-md-4 fw-bold">{{ user.tg_id }}</td>
+                    {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
                     <td>
                         {% if user.is_banned %}
                         <span class="badge-status badge bg-danger">封禁</span>
@@ -290,7 +290,7 @@
                         <span class="badge-status badge bg-secondary">永久</span>
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">{{ user.expiration_date }}</td>
+                    <td>{{ user.expiration_date }}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
                             <i class="fa-solid fa-bell"></i>
@@ -327,16 +327,16 @@
             const table = document.getElementById("userTable");
             table.innerHTML = data.users.map(user => `
                 <tr>
-                    <td class="ps-3 ps-md-4 fw-bold hide-mobile">${user.tg_id}</td>
+                    <td class="ps-3 ps-md-4 fw-bold">${user.tg_id}</td>
                     ${data.fields.map(field => `
-                        <td class="hide-mobile">${user.profile[field.key] || ""}</td>
+                        <td>${user.profile[field.key] || ""}</td>
                     `).join('')}
                     <td>
                         ${(user.is_banned ? '<span class="badge-status badge bg-danger">封禁</span>'
                             : (user.expiration_date ? '<span class="badge-status badge bg-success">正常</span>'
                             : '<span class="badge-status badge bg-secondary">永久</span>'))}
                     </td>
-                    <td class="hide-mobile">${user.expiration_date || ""}</td>
+                    <td>${user.expiration_date || ""}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser(${user.id})" title="推送"><i class="fa-solid fa-bell"></i></button>
                         <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>

@@ -1077,12 +1077,17 @@ async function exportData() {
             return;
         }
         
-        // Create download link
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        // Create download link for XLSX
+        const binaryString = atob(data.xlsx_content);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `scheduled_messages_${data.group_id}_${new Date().toISOString().split('T')[0]}.json`;
+        a.download = data.filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1099,25 +1104,29 @@ async function exportData() {
 function showImportModal() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = '.xlsx';
     input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         
         try {
-            const text = await file.text();
-            const data = JSON.parse(text);
-            
-            if (!data.data || !Array.isArray(data.data)) {
-                alert('无效的导入文件格式');
-                return;
-            }
-            
-            if (!confirm(`确定要导入 ${data.count || data.data.length} 条定时消息吗？`)) {
-                return;
-            }
-            
-            await importData(data.data);
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const arrayBuffer = event.target.result;
+                const bytes = new Uint8Array(arrayBuffer);
+                let binary = '';
+                for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                const xlsx_base64 = btoa(binary);
+                
+                if (!confirm('确定要导入定时消息吗？')) {
+                    return;
+                }
+                
+                await importData(xlsx_base64);
+            };
+            reader.readAsArrayBuffer(file);
         } catch (e) {
             console.error('Import error:', e);
             alert('导入失败：文件格式错误');
@@ -1127,14 +1136,14 @@ function showImportModal() {
 }
 
 // Import scheduled messages data
-async function importData(items) {
+async function importData(xlsx_content) {
     try {
         const response = await fetch('/core/api/import_scheduled_messages', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 group_id: {{ group.id|tojson|safe }},
-                data: items
+                xlsx_content: xlsx_content
             })
         });
         

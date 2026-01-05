@@ -13,6 +13,9 @@ from sqlalchemy.orm import joinedload
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
 from datetime import datetime, timedelta
 import pytz
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from io import BytesIO
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
 
@@ -776,11 +779,14 @@ def api_delete_user():
 
 @core_bp.route('/api/bulk_import_users', methods=['POST'])
 def api_bulk_import_users():
-    """Bulk import users from CSV/Excel data"""
+    """Bulk import users from XLSX data"""
     if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
     
     d = request.json
     group_id = d.get('group_id')
+    
+    # Check if it's XLSX import (base64 encoded) or old text format
+    xlsx_content = d.get('xlsx_content')
     users_data = d.get('users', [])
     add_days = safe_int(d.get('add_days', 0), 0)
     
@@ -788,12 +794,49 @@ def api_bulk_import_users():
     if add_days < 0 or add_days > 3650:
         return jsonify({'status':'error', 'msg':'有效天数必须在 0-3650 之间'})
     
-    if not group_id or not users_data:
+    if not group_id:
         return jsonify({'status':'error', 'msg':'缺少必要参数'})
     
     group = BotGroup.query.get(group_id)
     if not group:
         return jsonify({'status':'error', 'msg':'群组不存在'})
+    
+    fields = get_group_fields(group)
+    
+    # Parse XLSX if provided
+    if xlsx_content:
+        try:
+            import base64
+            xlsx_bytes = base64.b64decode(xlsx_content)
+            wb = load_workbook(BytesIO(xlsx_bytes))
+            ws = wb.active
+            
+            users_data = []
+            # Skip header row
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row or not row[0]:
+                    continue
+                
+                tg_id = str(row[0]).strip()
+                if not tg_id or not tg_id.isdigit():
+                    continue
+                
+                profile = {}
+                for idx, field in enumerate(fields):
+                    col_idx = idx + 1
+                    if col_idx < len(row):
+                        value = row[col_idx]
+                        profile[field['key']] = str(value) if value else ''
+                
+                users_data.append({
+                    'tg_id': tg_id,
+                    'profile': profile
+                })
+        except Exception as e:
+            return jsonify({'status':'error', 'msg': f'解析 XLSX 文件失败: {str(e)}'})
+    
+    if not users_data:
+        return jsonify({'status':'error', 'msg':'没有有效的用户数据'})
     
     success_count = 0
     skipped_count = 0
@@ -838,11 +881,13 @@ def api_bulk_import_users():
     except Exception as e:
         db.session.rollback()
         print(f"Error in bulk_import_users: {e}")
+        return jsonify({'status':'error', 'msg': str(e)})
+
         return jsonify({'status':'error', 'msg': f'导入失败: {str(e)}'})
 
 @core_bp.route('/api/export_users', methods=['POST'])
 def api_export_users():
-    """Export users to CSV format"""
+    """Export users to XLSX format"""
     if not session.get('logged_in'): return jsonify({'status':'error', 'msg': 'Not logged in'})
     
     d = request.json
@@ -858,53 +903,85 @@ def api_export_users():
     fields = get_group_fields(group)
     users = GroupUser.query.filter_by(group_id=group_id).order_by(GroupUser.id.desc()).all()
     
-    # Create CSV content using csv module for proper escaping
-    output = io.StringIO()
-    csv_writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    # Create XLSX workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "认证用户"
+    
+    # Style for header
+    header_fill = PatternFill(start_color="667EEA", end_color="667EEA", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_alignment = Alignment(horizontal="center", vertical="center")
     
     # Header row
     header = ['TG_ID']
     for field in fields:
         header.append(field['label'])
     header.extend(['状态', '过期时间', '禁言'])
-    csv_writer.writerow(header)
+    
+    for col_num, column_title in enumerate(header, 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.value = column_title
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_alignment
     
     # Data rows
-    for user in users:
+    for row_num, user in enumerate(users, 2):
         try:
             profile = json.loads(user.profile_data) if user.profile_data else {}
         except:
             profile = {}
         
-        row = [str(user.tg_id)]
-        for field in fields:
+        ws.cell(row=row_num, column=1, value=str(user.tg_id))
+        
+        for col_num, field in enumerate(fields, 2):
             value = profile.get(field['key'], '')
-            row.append(str(value))
+            ws.cell(row=row_num, column=col_num, value=str(value))
         
         # Status
+        col_num = len(fields) + 2
         if user.is_banned:
             status = '封禁'
         elif user.expiration_date:
             status = '正常'
         else:
             status = '永久'
-        row.append(status)
+        ws.cell(row=row_num, column=col_num, value=status)
         
         # Expiration date
         exp_date = user.expiration_date.strftime('%Y-%m-%d %H:%M:%S') if user.expiration_date else ''
-        row.append(exp_date)
+        ws.cell(row=row_num, column=col_num + 1, value=exp_date)
         
         # Banned
-        row.append('是' if user.is_banned else '否')
-        
-        csv_writer.writerow(row)
+        ws.cell(row=row_num, column=col_num + 2, value='是' if user.is_banned else '否')
     
-    csv_content = output.getvalue()
-    output.close()
+    # Auto-adjust column widths
+    for column in ws.columns:
+        max_length = 0
+        column_letter = column[0].column_letter
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column_letter].width = adjusted_width
+    
+    # Save to BytesIO
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    # Convert to base64 for JSON response
+    import base64
+    xlsx_base64 = base64.b64encode(output.read()).decode('utf-8')
     
     return jsonify({
         'status': 'ok',
-        'csv_content': csv_content
+        'xlsx_content': xlsx_base64,
+        'filename': f'users_{group_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     })
 
 
@@ -1067,66 +1144,119 @@ def api_delete_auto_reply():
 
 @core_bp.route('/api/export_auto_replies/<int:group_id>', methods=['GET'])
 def api_export_auto_replies(group_id):
-    """导出自动回复规则为JSON"""
+    """导出自动回复规则为XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     
     try:
         auto_replies = AutoReply.query.filter_by(group_id=group_id).all()
         
-        export_data = {
-            'version': '1.0',
-            'export_time': get_beijing_now().isoformat(),
-            'group_id': group_id,
-            'count': len(auto_replies),
-            'data': [{
-                'trigger_keyword': ar.trigger_keyword,
-                'media_type': ar.media_type,
-                'media_url': ar.media_url,
-                'content': ar.content,
-                'links': ar.links,
-                'delete_after': ar.delete_after,
-                'remark': ar.remark,
-                'is_active': ar.is_active
-            } for ar in auto_replies]
-        }
+        # Create XLSX workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "自动回复"
         
-        return jsonify(export_data)
+        # Style for header
+        header_fill = PatternFill(start_color="667EEA", end_color="667EEA", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Header row
+        headers = ['触发关键词', '消息类型', '多媒体链接', '消息内容', '链接按钮', '自动删除(秒)', '备注', '状态']
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        
+        # Data rows
+        for row_num, ar in enumerate(auto_replies, 2):
+            ws.cell(row=row_num, column=1, value=ar.trigger_keyword)
+            ws.cell(row=row_num, column=2, value=ar.media_type or 'text')
+            ws.cell(row=row_num, column=3, value=ar.media_url or '')
+            ws.cell(row=row_num, column=4, value=ar.content or '')
+            ws.cell(row=row_num, column=5, value=ar.links or '[]')
+            ws.cell(row=row_num, column=6, value=ar.delete_after or 0)
+            ws.cell(row=row_num, column=7, value=ar.remark or '')
+            ws.cell(row=row_num, column=8, value='启用' if ar.is_active else '暂停')
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save to BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        # Convert to base64 for JSON response
+        import base64
+        xlsx_base64 = base64.b64encode(output.read()).decode('utf-8')
+        
+        return jsonify({
+            'status': 'ok',
+            'xlsx_content': xlsx_base64,
+            'filename': f'auto_replies_{group_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            'count': len(auto_replies)
+        })
     except Exception as e:
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/import_auto_replies', methods=['POST'])
 def api_import_auto_replies():
-    """导入自动回复规则从JSON"""
+    """导入自动回复规则从XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     
     try:
         d = request.json
-        if not d or 'group_id' not in d or 'data' not in d:
+        if not d or 'group_id' not in d:
             return jsonify({'status':'error','msg':'Missing required fields'})
         
         group_id = d['group_id']
-        items_data = d['data']
+        xlsx_content = d.get('xlsx_content')
         
         # Verify group exists
         group = BotGroup.query.get(group_id)
         if not group:
             return jsonify({'status':'error','msg':'Group not found'})
         
+        if not xlsx_content:
+            return jsonify({'status':'error','msg':'No data provided'})
+        
+        # Parse XLSX
+        import base64
+        xlsx_bytes = base64.b64decode(xlsx_content)
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb.active
+        
         imported_count = 0
         skipped_count = 0
         
-        for item_data in items_data:
+        # Skip header row
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            
             try:
                 # Create new auto reply
                 item = AutoReply(group_id=group_id)
-                item.trigger_keyword = item_data.get('trigger_keyword', '')
-                item.media_type = item_data.get('media_type', 'text')
-                item.media_url = item_data.get('media_url')
-                item.content = item_data.get('content')
-                item.links = item_data.get('links', '[]')
-                item.delete_after = item_data.get('delete_after', 0)
-                item.remark = item_data.get('remark')
-                item.is_active = item_data.get('is_active', True)
+                item.trigger_keyword = row[0] if row[0] else ''
+                item.media_type = row[1] if len(row) > 1 and row[1] else 'text'
+                item.media_url = row[2] if len(row) > 2 else None
+                item.content = row[3] if len(row) > 3 else None
+                item.links = row[4] if len(row) > 4 and row[4] else '[]'
+                item.delete_after = int(row[5]) if len(row) > 5 and row[5] else 0
+                item.remark = row[6] if len(row) > 6 else None
+                item.is_active = (row[7] == '启用') if len(row) > 7 and row[7] else True
                 
                 db.session.add(item)
                 imported_count += 1
@@ -1225,80 +1355,141 @@ def api_delete_scheduled_message():
 
 @core_bp.route('/api/export_scheduled_messages/<int:group_id>', methods=['GET'])
 def api_export_scheduled_messages(group_id):
-    """导出定时消息为JSON"""
+    """导出定时消息为XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     
     try:
         scheduled_messages = ScheduledMessage.query.filter_by(group_id=group_id).all()
         
-        export_data = {
-            'version': '1.0',
-            'export_time': get_beijing_now().isoformat(),
-            'group_id': group_id,
-            'count': len(scheduled_messages),
-            'data': [{
-                'media_type': sm.media_type,
-                'media_url': sm.media_url,
-                'content': sm.content,
-                'links': sm.links,
-                'repeat_interval': sm.repeat_interval,
-                'delete_previous': sm.delete_previous,
-                'start_time': sm.start_time.isoformat() if sm.start_time else None,
-                'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
-                'remark': sm.remark,
-                'is_active': sm.is_active
-            } for sm in scheduled_messages]
-        }
+        # Create XLSX workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "定时消息"
         
-        return jsonify(export_data)
+        # Style for header
+        header_fill = PatternFill(start_color="F093FB", end_color="F093FB", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Header row
+        headers = ['消息类型', '多媒体链接', '消息内容', '链接按钮', '间隔(分钟)', '删除上一条', '开始时间', '停止时间', '备注', '状态']
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        
+        # Data rows
+        for row_num, sm in enumerate(scheduled_messages, 2):
+            ws.cell(row=row_num, column=1, value=sm.media_type or 'text')
+            ws.cell(row=row_num, column=2, value=sm.media_url or '')
+            ws.cell(row=row_num, column=3, value=sm.content or '')
+            ws.cell(row=row_num, column=4, value=sm.links or '[]')
+            ws.cell(row=row_num, column=5, value=sm.repeat_interval or 0)
+            ws.cell(row=row_num, column=6, value='是' if sm.delete_previous else '否')
+            ws.cell(row=row_num, column=7, value=sm.start_time.strftime('%Y-%m-%d %H:%M:%S') if sm.start_time else '')
+            ws.cell(row=row_num, column=8, value=sm.stop_time.strftime('%Y-%m-%d %H:%M:%S') if sm.stop_time else '')
+            ws.cell(row=row_num, column=9, value=sm.remark or '')
+            ws.cell(row=row_num, column=10, value='启用' if sm.is_active else '暂停')
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save to BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        # Convert to base64 for JSON response
+        import base64
+        xlsx_base64 = base64.b64encode(output.read()).decode('utf-8')
+        
+        return jsonify({
+            'status': 'ok',
+            'xlsx_content': xlsx_base64,
+            'filename': f'scheduled_messages_{group_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            'count': len(scheduled_messages)
+        })
     except Exception as e:
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/import_scheduled_messages', methods=['POST'])
 def api_import_scheduled_messages():
-    """导入定时消息从JSON"""
+    """导入定时消息从XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     
     try:
         d = request.json
-        if not d or 'group_id' not in d or 'data' not in d:
+        if not d or 'group_id' not in d:
             return jsonify({'status':'error','msg':'Missing required fields'})
         
         group_id = d['group_id']
-        items_data = d['data']
+        xlsx_content = d.get('xlsx_content')
         
         # Verify group exists
         group = BotGroup.query.get(group_id)
         if not group:
             return jsonify({'status':'error','msg':'Group not found'})
         
+        if not xlsx_content:
+            return jsonify({'status':'error','msg':'No data provided'})
+        
+        # Parse XLSX
+        import base64
+        xlsx_bytes = base64.b64decode(xlsx_content)
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb.active
+        
         imported_count = 0
         skipped_count = 0
         
-        for item_data in items_data:
+        # Skip header row
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row:
+                continue
+            
             try:
                 # Create new scheduled message
                 item = ScheduledMessage(group_id=group_id)
-                item.media_type = item_data.get('media_type', 'text')
-                item.media_url = item_data.get('media_url')
-                item.content = item_data.get('content')
-                item.links = item_data.get('links', '[]')
-                item.repeat_interval = item_data.get('repeat_interval', 0)
-                item.delete_previous = item_data.get('delete_previous', False)
+                item.media_type = row[0] if row[0] else 'text'
+                item.media_url = row[1] if len(row) > 1 else None
+                item.content = row[2] if len(row) > 2 else None
+                item.links = row[3] if len(row) > 3 and row[3] else '[]'
+                item.repeat_interval = int(row[4]) if len(row) > 4 and row[4] else 0
+                item.delete_previous = (row[5] == '是') if len(row) > 5 and row[5] else False
                 
-                # Parse timestamps with error handling
-                try:
-                    start_time_str = item_data.get('start_time')
-                    stop_time_str = item_data.get('stop_time')
-                    item.start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00')) if start_time_str else None
-                    item.stop_time = datetime.fromisoformat(stop_time_str.replace('Z', '+00:00')) if stop_time_str else None
-                except (ValueError, AttributeError) as date_error:
-                    logging.warning(f"Error parsing datetime for scheduled message: {date_error}")
-                    item.start_time = None
-                    item.stop_time = None
+                # Parse dates
+                if len(row) > 6 and row[6]:
+                    try:
+                        if isinstance(row[6], str):
+                            item.start_time = datetime.strptime(row[6], '%Y-%m-%d %H:%M:%S')
+                        else:
+                            item.start_time = row[6]
+                    except:
+                        item.start_time = None
                 
-                item.remark = item_data.get('remark')
-                item.is_active = item_data.get('is_active', True)
+                if len(row) > 7 and row[7]:
+                    try:
+                        if isinstance(row[7], str):
+                            item.stop_time = datetime.strptime(row[7], '%Y-%m-%d %H:%M:%S')
+                        else:
+                            item.stop_time = row[7]
+                    except:
+                        item.stop_time = None
+                
+                item.remark = row[8] if len(row) > 8 else None
+                item.is_active = (row[9] == '启用') if len(row) > 9 and row[9] else True
                 
                 db.session.add(item)
                 imported_count += 1

@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
@@ -115,13 +119,14 @@
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
             if (result.status === 'ok') {
-                alert('✅ 设置已保存');
-                location.reload();
+                showToast('设置已保存', 'success');
+                setTimeout(() => location.reload(), 1000);
             } else {
-                alert('❌ 保存失败: ' + (result.msg || '未知错误'));
+                showToast('保存失败: ' + (result.msg || '未知错误'));
             }
         }).catch(e => {
-            alert('❌ 网络错误，请重试');
+            showToast('网络错误，请重试', 'error');
+            console.error('操作失败:', e);
         });
     }
 </script>

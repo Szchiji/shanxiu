@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -293,7 +297,7 @@
             }
         };
         fetch('/core/api/save_group_config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})
-        .then(()=>alert('✅ 群组独立配置已保存！'));
+        .then(()=>showToast('群组独立配置已保存！', 'success'));
     }
 </script>
 <style>.cursor-pointer:hover{text-decoration:underline}</style>

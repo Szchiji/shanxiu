@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
 <style>
     .page-header {
         background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
@@ -343,7 +347,7 @@
             push_channel_id: "{{ sys.push_channel_id }}" 
         };
         fetch('/core/api/save_system', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})
-        .then(()=>alert('✅ 保存成功'));
+        .then(()=>showToast('保存成功', 'success'));
     }
 </script>
 <style>

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(67, 233, 123, 0.3);
+    }
+    
+    .settings-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .settings-card:hover {
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .form-switch .form-check-input {
+        width: 3em;
+        height: 1.5em;
+        cursor: pointer;
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #43e97b;
+        border-color: #43e97b;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-sync me-2"></i>同步群消息</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存设置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-exchange-alt me-2 text-primary"></i>同步设置
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="enabled" 
+                           {{ 'checked' if settings and settings.enabled }}>
+                    <label class="fw-bold">启用消息同步</label>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">目标群组ID</label>
+                    <input type="text" class="form-control" id="target_group_id" 
+                           value="{{ settings.target_group_id if settings and settings.target_group_id else '' }}" 
+                           placeholder="例如: -1001234567890">
+                    <small class="text-muted">消息将同步到这个群组</small>
+                </div>
+                
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="sync_media" 
+                           {{ 'checked' if settings and settings.sync_media }}>
+                    <label class="form-check-label">同步媒体文件</label>
+                </div>
+                
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="sync_forwards" 
+                           {{ 'checked' if settings and settings.sync_forwards }}>
+                    <label class="form-check-label">同步转发消息</label>
+                </div>
+                
+                <div class="mb-0">
+                    <label class="form-label">过滤关键词（JSON数组）</label>
+                    <textarea class="form-control" id="filter_keywords" rows="3" 
+                              placeholder='["广告", "垃圾"]'>{{ settings.filter_keywords if settings and settings.filter_keywords else '[]' }}</textarea>
+                    <small class="text-muted">包含这些关键词的消息将不会被同步</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function saveSettings() {
+    const data = {
+        group_id: {{ group.id }},
+        target_group_id: document.getElementById('target_group_id').value,
+        enabled: document.getElementById('enabled').checked,
+        sync_media: document.getElementById('sync_media').checked,
+        sync_forwards: document.getElementById('sync_forwards').checked,
+        filter_keywords: document.getElementById('filter_keywords').value
+    };
+    
+    fetch('/core/api/save_sync_group_messages', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 保存成功！');
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

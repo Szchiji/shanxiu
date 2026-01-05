@@ -40,7 +40,7 @@
             <p class="mb-0 opacity-75">{{ group.title }}</p>
         </div>
         <div class="d-flex gap-2">
-            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup()" title="将按钮作为菜单键盘推送到群组">
+            <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup(event)" title="将按钮作为菜单键盘推送到群组">
                 <i class="fa-solid fa-paper-plane me-2"></i>推送到群组
             </button>
             <button class="btn btn-light fw-bold" onclick="showAddModal()">
@@ -272,7 +272,7 @@ function moveButton(id, direction) {
     });
 }
 
-function pushButtonsToGroup() {
+function pushButtonsToGroup(event) {
     if (!confirm('确定要将当前按钮配置推送到群组作为菜单键盘吗？')) return;
     
     // Disable button and show loading state
@@ -291,8 +291,6 @@ function pushButtonsToGroup() {
         if (result.status === 'ok') {
             // Show success feedback
             pushBtn.innerHTML = '<i class="fa-solid fa-check me-2"></i>推送成功！';
-            pushBtn.classList.remove('btn-success');
-            pushBtn.classList.add('btn-success');
             
             // Show alert
             alert('✅ ' + (result.msg || '按钮已成功推送到群组！'));

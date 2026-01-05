@@ -2107,8 +2107,7 @@ def api_push_group_bottom_buttons():
         
         # Check if bot is ready
         if not global_ptb_app or not global_bot_loop:
-            print("❌ Bot未就绪: global_ptb_app={}, global_bot_loop={}".format(
-                bool(global_ptb_app), bool(global_bot_loop)), flush=True)
+            print(f"❌ Bot未就绪: global_ptb_app={bool(global_ptb_app)}, global_bot_loop={bool(global_bot_loop)}", flush=True)
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
         
         print(f"🔄 开始推送按钮到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)

@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #ffa585 0%, #ffeda0 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(255, 165, 133, 0.3);
+    }
+    
+    .quiz-card {
+        border-radius: 10px;
+        border: 2px solid #f5f5f5;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-brain me-2"></i>问答游戏管理</h4>
+            <p class="mb-0 opacity-75">{{ group.title }}</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>添加题目
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="alert alert-info">
+            <i class="fa-solid fa-lightbulb me-2"></i>
+            <strong>使用方法：</strong>在群内使用命令 /quiz 随机抽取题目开始答题
+        </div>
+
+        {% if quizzes %}
+            {% for q in quizzes %}
+            <div class="quiz-card">
+                <div class="d-flex justify-content-between">
+                    <div class="flex-grow-1">
+                        <h6 class="fw-bold">{{ q.question }}</h6>
+                        <div class="text-muted small">
+                            <span class="badge bg-{{ 'success' if q.is_active else 'secondary' }}">
+                                {{ '已启用' if q.is_active else '已禁用' }}
+                            </span>
+                            <span class="badge bg-info">{{ q.difficulty }}</span>
+                            <span class="badge bg-primary">{{ q.points_reward }}积分</span>
+                            {% if q.category %}<span class="badge bg-warning">{{ q.category }}</span>{% endif %}
+                        </div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-sm btn-outline-primary" onclick="editQuiz({{ q.id }})">
+                            <i class="fa-solid fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteQuiz({{ q.id }})">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-secondary">
+                <i class="fa-solid fa-info-circle me-2"></i>暂无题目，点击上方按钮添加。
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" id="quizModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">问答题目</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="quiz_id">
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">问题</label>
+                    <textarea class="form-control" id="question" rows="2" placeholder="输入问题"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">答案选项（每行一个）</label>
+                    <textarea class="form-control" id="answers" rows="4" placeholder="选项A\n选项B\n选项C\n选项D"></textarea>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">正确答案（索引从0开始）</label>
+                        <input type="number" class="form-control" id="correct_answer_index" min="0" value="0">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">奖励积分</label>
+                        <input type="number" class="form-control" id="points_reward" value="10">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">时间限制（秒）</label>
+                        <input type="number" class="form-control" id="time_limit" value="60">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">难度</label>
+                        <select class="form-select" id="difficulty">
+                            <option value="easy">简单</option>
+                            <option value="medium" selected>中等</option>
+                            <option value="hard">困难</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">分类（可选）</label>
+                    <input type="text" class="form-control" id="category" placeholder="例如：历史、科学、娱乐">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">答案解析（可选）</label>
+                    <textarea class="form-control" id="explanation" rows="2" placeholder="答案的详细解释"></textarea>
+                </div>
+
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label fw-bold" for="is_active">启用此题目</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveQuiz()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const quizzesData = {{ quizzes_json | safe }};
+let currentModal = null;
+
+function showAddModal() {
+    document.getElementById('quiz_id').value = '';
+    document.getElementById('question').value = '';
+    document.getElementById('answers').value = '';
+    document.getElementById('correct_answer_index').value = '0';
+    document.getElementById('points_reward').value = '10';
+    document.getElementById('time_limit').value = '60';
+    document.getElementById('difficulty').value = 'medium';
+    document.getElementById('category').value = '';
+    document.getElementById('explanation').value = '';
+    document.getElementById('is_active').checked = true;
+    
+    currentModal = new bootstrap.Modal(document.getElementById('quizModal'));
+    currentModal.show();
+}
+
+function editQuiz(id) {
+    const quiz = quizzesData.find(q => q.id === id);
+    if (!quiz) return;
+    
+    document.getElementById('quiz_id').value = quiz.id;
+    document.getElementById('question').value = quiz.question;
+    document.getElementById('answers').value = quiz.answers.join('\n');
+    document.getElementById('correct_answer_index').value = quiz.correct_answer_index;
+    document.getElementById('points_reward').value = quiz.points_reward;
+    document.getElementById('time_limit').value = quiz.time_limit;
+    document.getElementById('difficulty').value = quiz.difficulty;
+    document.getElementById('category').value = quiz.category || '';
+    document.getElementById('explanation').value = quiz.explanation || '';
+    document.getElementById('is_active').checked = quiz.is_active;
+    
+    currentModal = new bootstrap.Modal(document.getElementById('quizModal'));
+    currentModal.show();
+}
+
+function saveQuiz() {
+    const answersText = document.getElementById('answers').value;
+    const answers = answersText.split('\n').filter(a => a.trim());
+    
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('quiz_id').value || 0,
+        question: document.getElementById('question').value,
+        answers: answers,
+        correct_answer_index: parseInt(document.getElementById('correct_answer_index').value),
+        points_reward: parseInt(document.getElementById('points_reward').value),
+        time_limit: parseInt(document.getElementById('time_limit').value),
+        difficulty: document.getElementById('difficulty').value,
+        category: document.getElementById('category').value,
+        explanation: document.getElementById('explanation').value,
+        is_active: document.getElementById('is_active').checked
+    };
+
+    if (!data.question.trim() || answers.length < 2) {
+        alert('请输入问题和至少2个答案选项');
+        return;
+    }
+
+    fetch('/core/api/save_quiz_game', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === 'ok') {
+            alert('✅ 保存成功！');
+            location.reload();
+        } else {
+            alert('❌ 保存失败: ' + (d.msg || '未知错误'));
+        }
+    })
+    .catch(e => {
+        console.error(e);
+        alert('❌ 网络错误');
+    });
+}
+
+function deleteQuiz(id) {
+    if (!confirm('确定要删除此题目吗？')) return;
+    
+    fetch('/core/api/delete_quiz_game', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === 'ok') {
+            alert('✅ 删除成功！');
+            location.reload();
+        } else {
+            alert('❌ 删除失败: ' + (d.msg || '未知错误'));
+        }
+    })
+    .catch(e => {
+        console.error(e);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

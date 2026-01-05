@@ -2118,38 +2118,39 @@ def api_push_group_bottom_buttons():
                 if has_url_or_callback:
                     # Use InlineKeyboardMarkup for buttons with URLs/callbacks
                     keyboard = []
-                    current_row = []
-                    current_row_num = buttons[0].row_position if buttons else 0
-                    
-                    for button in buttons:
-                        # Start a new row if row_position changes
-                        if button.row_position != current_row_num:
-                            if current_row:
-                                keyboard.append(current_row)
-                            current_row = []
-                            current_row_num = button.row_position
+                    if buttons:  # Only proceed if there are buttons
+                        current_row = []
+                        current_row_num = buttons[0].row_position
                         
-                        # Add button with URL or callback
-                        if button.button_url:
-                            current_row.append(InlineKeyboardButton(
-                                button.button_text,
-                                url=button.button_url
-                            ))
-                        elif button.button_callback:
-                            current_row.append(InlineKeyboardButton(
-                                button.button_text,
-                                callback_data=button.button_callback
-                            ))
-                        else:
-                            # For buttons without URL or callback, use text as callback
-                            current_row.append(InlineKeyboardButton(
-                                button.button_text,
-                                callback_data=f"btn_{button.id}"
-                            ))
-                    
-                    # Add the last row
-                    if current_row:
-                        keyboard.append(current_row)
+                        for button in buttons:
+                            # Start a new row if row_position changes
+                            if button.row_position != current_row_num:
+                                if current_row:
+                                    keyboard.append(current_row)
+                                current_row = []
+                                current_row_num = button.row_position
+                            
+                            # Add button with URL or callback
+                            if button.button_url:
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    url=button.button_url
+                                ))
+                            elif button.button_callback:
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    callback_data=button.button_callback
+                                ))
+                            else:
+                                # For buttons without URL or callback, use text as callback
+                                current_row.append(InlineKeyboardButton(
+                                    button.button_text,
+                                    callback_data=f"btn_{button.id}"
+                                ))
+                        
+                        # Add the last row
+                        if current_row:
+                            keyboard.append(current_row)
                     
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
@@ -2162,22 +2163,23 @@ def api_push_group_bottom_buttons():
                 else:
                     # Use ReplyKeyboardMarkup for text-only buttons
                     keyboard = []
-                    current_row = []
-                    current_row_num = buttons[0].row_position if buttons else 0
-                    
-                    for button in buttons:
-                        # Start a new row if row_position changes
-                        if button.row_position != current_row_num:
-                            if current_row:
-                                keyboard.append(current_row)
-                            current_row = []
-                            current_row_num = button.row_position
+                    if buttons:  # Only proceed if there are buttons
+                        current_row = []
+                        current_row_num = buttons[0].row_position
                         
-                        current_row.append(KeyboardButton(button.button_text))
-                    
-                    # Add the last row
-                    if current_row:
-                        keyboard.append(current_row)
+                        for button in buttons:
+                            # Start a new row if row_position changes
+                            if button.row_position != current_row_num:
+                                if current_row:
+                                    keyboard.append(current_row)
+                                current_row = []
+                                current_row_num = button.row_position
+                            
+                            current_row.append(KeyboardButton(button.button_text))
+                        
+                        # Add the last row
+                        if current_row:
+                            keyboard.append(current_row)
                     
                     reply_markup = ReplyKeyboardMarkup(
                         keyboard,
@@ -4918,7 +4920,7 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
             # Build reply keyboard (menu keyboard) - only button text, no URLs
             keyboard = []
             current_row = []
-            current_row_num = buttons[0].row_position if buttons else 0
+            current_row_num = buttons[0].row_position  # Safe because we checked buttons is not empty
             
             for button in buttons:
                 # Start a new row if row_position changes
@@ -4946,7 +4948,7 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
             # Build inline keyboard (original behavior)
             keyboard = []
             current_row = []
-            current_row_num = buttons[0].row_position if buttons else 0
+            current_row_num = buttons[0].row_position  # Safe because we checked buttons is not empty
             
             for button in buttons:
                 # Start a new row if row_position changes

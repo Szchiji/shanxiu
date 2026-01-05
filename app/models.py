@@ -392,6 +392,20 @@ class OtherSettings(db.Model):
     group = db.relationship('BotGroup', backref='other_settings', lazy=True)
 
 
+class BotClone(db.Model):
+    """机器人克隆"""
+    __tablename__ = 'bot_clones'
+    id = db.Column(db.Integer, primary_key=True)
+    clone_name = db.Column(db.String(255), nullable=False)  # 克隆机器人名称
+    bot_token = db.Column(db.String(255), nullable=False)  # Bot Token (removed unique constraint for flexibility)
+    is_active = db.Column(db.Boolean, default=True)  # 是否启用
+    expiration_date = db.Column(db.DateTime, nullable=True)  # 有效期
+    webhook_url = db.Column(db.String(500), nullable=True)  # Webhook URL
+    description = db.Column(db.Text, nullable=True)  # 描述
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

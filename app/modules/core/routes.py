@@ -3,7 +3,7 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -468,7 +468,18 @@ def page_group_bottom_button(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.button_order).all()
-    return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons)
+    
+    # Convert buttons to JSON-serializable dictionaries
+    buttons_json = json.dumps([{
+        'id': b.id,
+        'button_text': b.button_text,
+        'button_url': b.button_url,
+        'button_callback': b.button_callback,
+        'button_order': b.button_order,
+        'is_active': b.is_active
+    } for b in buttons], ensure_ascii=False)
+    
+    return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons, buttons_json=buttons_json)
 
 @core_bp.route('/group/<int:gid>/sync_group_messages')
 def page_sync_group_messages(gid):
@@ -478,9 +489,9 @@ def page_sync_group_messages(gid):
     group = BotGroup.query.get_or_404(gid)
     settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
     if not settings:
-        settings = SyncGroupMessages(source_group_id=gid)
-        db.session.add(settings)
-        db.session.commit()
+        # Don't create a new record here to avoid constraint violation
+        # Instead, pass None and let the template handle empty state
+        settings = None
     return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
 
 
@@ -505,6 +516,26 @@ def page_sync_message_logs(gid):
     return render_template('sync_message_logs.html', page='sync_message_logs', group=group,
                          logs=logs, current_page=page, per_page=per_page,
                          total_pages=total_pages, total_items=total)
+
+@core_bp.route('/bot_clones')
+def page_bot_clones():
+    """机器人克隆管理 - 只在主机器人后台显示"""
+    if not session.get('logged_in'): return redirect('/core')
+    
+    clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    clones_json = json.dumps([{
+        'id': c.id,
+        'clone_name': c.clone_name,
+        'bot_token': c.bot_token,
+        'is_active': c.is_active,
+        'expiration_date': c.expiration_date.isoformat() if c.expiration_date else None,
+        'webhook_url': c.webhook_url,
+        'description': c.description
+    } for c in clones], ensure_ascii=False)
+    
+    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now())
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -1525,6 +1556,45 @@ def api_delete_group_bottom_button():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/move_group_bottom_button', methods=['POST'])
+def api_move_group_bottom_button():
+    """移动群底部按钮顺序"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d or 'direction' not in d: return jsonify({'status':'error','msg':'Missing parameters'})
+    
+    try:
+        button = GroupBottomButton.query.get(d['id'])
+        if not button: return jsonify({'status':'error','msg':'Button not found'})
+        
+        direction = d['direction']
+        current_order = button.button_order
+        
+        # Get all buttons for the same group, ordered by button_order
+        all_buttons = GroupBottomButton.query.filter_by(group_id=button.group_id).order_by(GroupBottomButton.button_order).all()
+        
+        # Find current position
+        current_index = next((i for i, b in enumerate(all_buttons) if b.id == button.id), None)
+        if current_index is None:
+            return jsonify({'status':'error','msg':'Button position not found'})
+        
+        # Determine swap target
+        if direction == 'up' and current_index > 0:
+            swap_button = all_buttons[current_index - 1]
+        elif direction == 'down' and current_index < len(all_buttons) - 1:
+            swap_button = all_buttons[current_index + 1]
+        else:
+            return jsonify({'status':'error','msg':'Cannot move in that direction'})
+        
+        # Swap orders
+        button.button_order, swap_button.button_order = swap_button.button_order, button.button_order
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
 @core_bp.route('/api/save_sync_group_messages', methods=['POST'])
 def api_save_sync_group_messages():
     """保存同步群消息设置"""
@@ -1532,18 +1602,114 @@ def api_save_sync_group_messages():
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
     
+    # Validate target_group_id is provided
+    target_group_id = d.get('target_group_id', '').strip()
+    if not target_group_id:
+        return jsonify({'status':'error','msg':'目标群组ID不能为空'})
+    
     try:
         settings = SyncGroupMessages.query.filter_by(source_group_id=d['group_id']).first()
         if not settings:
-            settings = SyncGroupMessages(source_group_id=d['group_id'])
+            # Explicitly set all fields when creating new record to ensure consistent behavior
+            settings = SyncGroupMessages(
+                source_group_id=d['group_id'],
+                target_group_id=target_group_id,
+                enabled=d.get('enabled', False),
+                sync_media=d.get('sync_media', True),
+                sync_forwards=d.get('sync_forwards', True),
+                filter_keywords=d.get('filter_keywords', '[]')
+            )
             db.session.add(settings)
+        else:
+            settings.target_group_id = target_group_id
+            settings.enabled = d.get('enabled', False)
+            settings.sync_media = d.get('sync_media', True)
+            settings.sync_forwards = d.get('sync_forwards', True)
+            settings.filter_keywords = d.get('filter_keywords', '[]')
         
-        settings.target_group_id = d.get('target_group_id', '')
-        settings.enabled = d.get('enabled', False)
-        settings.sync_media = d.get('sync_media', True)
-        settings.sync_forwards = d.get('sync_forwards', True)
-        settings.filter_keywords = d.get('filter_keywords', '[]')
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_bot_clone', methods=['POST'])
+def api_save_bot_clone():
+    """保存机器人克隆"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    clone_name = d.get('clone_name', '').strip()
+    bot_token = d.get('bot_token', '').strip()
+    
+    if not clone_name or not bot_token:
+        return jsonify({'status':'error','msg':'克隆名称和Bot Token不能为空'})
+    
+    try:
+        clone_id = d.get('id')
+        if clone_id:
+            # Edit existing clone
+            clone = BotClone.query.get(clone_id)
+            if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        else:
+            # Create new clone
+            clone = BotClone()
+            db.session.add(clone)
         
+        clone.clone_name = clone_name
+        clone.bot_token = bot_token
+        clone.is_active = d.get('is_active', True)
+        clone.description = d.get('description', '').strip() or None
+        clone.webhook_url = d.get('webhook_url', '').strip() or None
+        
+        # Parse expiration date
+        expiration_date_str = d.get('expiration_date')
+        if expiration_date_str:
+            try:
+                # HTML datetime-local format: YYYY-MM-DDTHH:MM (no timezone)
+                # Parse as Beijing time
+                clone.expiration_date = datetime.strptime(expiration_date_str, '%Y-%m-%dT%H:%M')
+            except (ValueError, TypeError):
+                clone.expiration_date = None
+        else:
+            clone.expiration_date = None
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_bot_clone', methods=['POST'])
+def api_delete_bot_clone():
+    """删除机器人克隆"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        clone = BotClone.query.get(d['id'])
+        if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        db.session.delete(clone)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/toggle_bot_clone', methods=['POST'])
+def api_toggle_bot_clone():
+    """切换机器人克隆状态"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        clone = BotClone.query.get(d['id'])
+        if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        clone.is_active = not clone.is_active
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

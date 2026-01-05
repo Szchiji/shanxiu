@@ -52,6 +52,45 @@ def get_beijing_today():
     now = datetime.now(BEIJING_TZ)
     return now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def build_inline_keyboard_from_links(links):
+    """
+    将链接列表转换为内联键盘，支持多个按钮在一行显示
+    
+    Args:
+        links: 链接列表，每个链接应包含 text, url, 以及可选的 row 和 order 字段
+        
+    Returns:
+        List of button rows for InlineKeyboardMarkup
+    """
+    if not links:
+        return []
+    
+    # Group buttons by row
+    rows_dict = {}
+    for link in links:
+        if not link.get('text') or not link.get('url'):
+            continue
+        
+        row_num = link.get('row', 0)
+        order = link.get('order', 0)
+        
+        if row_num not in rows_dict:
+            rows_dict[row_num] = []
+        
+        rows_dict[row_num].append({
+            'button': InlineKeyboardButton(link['text'], url=link['url']),
+            'order': order
+        })
+    
+    # Sort rows and buttons within rows
+    keyboard = []
+    for row_num in sorted(rows_dict.keys()):
+        # Sort buttons in this row by order
+        row_buttons = sorted(rows_dict[row_num], key=lambda x: x['order'])
+        keyboard.append([btn['button'] for btn in row_buttons])
+    
+    return keyboard
+
 async def is_user_admin_in_group(bot, chat_id, user_id):
     """Check if a user is an administrator in a specific group"""
     try:
@@ -2818,9 +2857,7 @@ async def check_scheduled_messages(context):
             buttons = []
             try:
                 links = json.loads(msg_data['links'] or '[]')
-                for link in links:
-                    if link.get('text') and link.get('url'):
-                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                buttons = build_inline_keyboard_from_links(links)
             except:
                 pass
             
@@ -5324,9 +5361,7 @@ async def cmd_start(update: Update, context):
             buttons = []
             try:
                 links = json.loads(start_msg.links or '[]')
-                for link in links:
-                    if link.get('text') and link.get('url'):
-                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                buttons = build_inline_keyboard_from_links(links)
             except:
                 pass
             
@@ -5870,9 +5905,7 @@ async def on_message(update: Update, context):
                             buttons = []
                             try:
                                 links = json.loads(auto_reply.links or '[]')
-                                for link in links:
-                                    if link.get('text') and link.get('url'):
-                                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                                buttons = build_inline_keyboard_from_links(links)
                             except:
                                 pass
                             

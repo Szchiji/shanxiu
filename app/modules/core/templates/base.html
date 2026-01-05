@@ -483,6 +483,14 @@
                             </ul>
                         </li>
                         {% endif %}
+                        
+                        <!-- Bot Clones - Global feature, not group-specific -->
+                        <li class="nav-item">
+                            <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
+                                <i class="fa-solid fa-robot"></i> 机器人克隆
+                            </a>
+                        </li>
+                        
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">
                                 <i class="fa-solid fa-layer-group"></i> 选择群组

@@ -3,7 +3,7 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -516,6 +516,26 @@ def page_sync_message_logs(gid):
     return render_template('sync_message_logs.html', page='sync_message_logs', group=group,
                          logs=logs, current_page=page, per_page=per_page,
                          total_pages=total_pages, total_items=total)
+
+@core_bp.route('/bot_clones')
+def page_bot_clones():
+    """机器人克隆管理 - 只在主机器人后台显示"""
+    if not session.get('logged_in'): return redirect('/core')
+    
+    clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
+    
+    # Convert to JSON for JavaScript
+    clones_json = json.dumps([{
+        'id': c.id,
+        'clone_name': c.clone_name,
+        'bot_token': c.bot_token,
+        'is_active': c.is_active,
+        'expiration_date': c.expiration_date.isoformat() if c.expiration_date else None,
+        'webhook_url': c.webhook_url,
+        'description': c.description
+    } for c in clones], ensure_ascii=False)
+    
+    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json)
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -1607,6 +1627,87 @@ def api_save_sync_group_messages():
             settings.sync_forwards = d.get('sync_forwards', True)
             settings.filter_keywords = d.get('filter_keywords', '[]')
         
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_bot_clone', methods=['POST'])
+def api_save_bot_clone():
+    """保存机器人克隆"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    
+    clone_name = d.get('clone_name', '').strip()
+    bot_token = d.get('bot_token', '').strip()
+    
+    if not clone_name or not bot_token:
+        return jsonify({'status':'error','msg':'克隆名称和Bot Token不能为空'})
+    
+    try:
+        clone_id = d.get('id')
+        if clone_id:
+            # Edit existing clone
+            clone = BotClone.query.get(clone_id)
+            if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        else:
+            # Create new clone
+            clone = BotClone()
+            db.session.add(clone)
+        
+        clone.clone_name = clone_name
+        clone.bot_token = bot_token
+        clone.is_active = d.get('is_active', True)
+        clone.description = d.get('description', '').strip() or None
+        clone.webhook_url = d.get('webhook_url', '').strip() or None
+        
+        # Parse expiration date
+        expiration_date_str = d.get('expiration_date')
+        if expiration_date_str:
+            try:
+                clone.expiration_date = datetime.fromisoformat(expiration_date_str.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                clone.expiration_date = None
+        else:
+            clone.expiration_date = None
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_bot_clone', methods=['POST'])
+def api_delete_bot_clone():
+    """删除机器人克隆"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        clone = BotClone.query.get(d['id'])
+        if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        db.session.delete(clone)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/toggle_bot_clone', methods=['POST'])
+def api_toggle_bot_clone():
+    """切换机器人克隆状态"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+    
+    try:
+        clone = BotClone.query.get(d['id'])
+        if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        clone.is_active = not clone.is_active
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

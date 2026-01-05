@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    }
+    
+    .clones-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .clone-item {
+        border-bottom: 1px solid #eee;
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    
+    .clone-item:last-child {
+        border-bottom: none;
+    }
+    
+    .clone-item:hover {
+        background-color: #f8f9fa;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-0"><i class="fa-solid fa-robot me-2"></i>机器人克隆管理</h4>
+            <p class="mb-0 opacity-75">管理克隆机器人及其配置</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>添加克隆
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="clones-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>克隆列表
+            </div>
+            <div class="card-body p-0">
+                {% if clones %}
+                    {% for clone in clones %}
+                    <div class="clone-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ clone.clone_name }}</h6>
+                                <small class="text-muted">
+                                    Token: {{ clone.bot_token[:20] }}...{{ clone.bot_token[-5:] if clone.bot_token|length > 25 else '' }} | 
+                                    {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}{% else %}永久有效{% endif %}
+                                    {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
+                                </small>
+                                <span class="badge {{ 'bg-success' if clone.is_active else 'bg-secondary' }} ms-2">
+                                    {{ '启用' if clone.is_active else '禁用' }}
+                                </span>
+                                {% if clone.expiration_date and clone.expiration_date < now() %}
+                                <span class="badge bg-danger ms-1">已过期</span>
+                                {% endif %}
+                            </div>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-{{ 'warning' if clone.is_active else 'success' }}" onclick="toggleClone({{ clone.id }})" title="切换状态">
+                                    <i class="fa-solid fa-{{ 'pause' if clone.is_active else 'play' }}"></i>
+                                </button>
+                                <button class="btn btn-sm btn-primary" onclick='editClone({{ clone.id }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteClone({{ clone.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-robot fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无克隆机器人</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="cloneModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-robot me-2"></i><span id="modalTitle">添加克隆</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="clone_id">
+                <div class="mb-3">
+                    <label class="form-label">克隆名称</label>
+                    <input type="text" class="form-control" id="clone_name" placeholder="例如：备用机器人1">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Bot Token</label>
+                    <input type="text" class="form-control" id="bot_token" placeholder="从 BotFather 获取的 Token">
+                    <small class="text-muted">格式: 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">有效期（可选）</label>
+                    <input type="datetime-local" class="form-control" id="expiration_date">
+                    <small class="text-muted">留空表示永久有效</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Webhook URL（可选）</label>
+                    <input type="text" class="form-control" id="webhook_url" placeholder="https://example.com/webhook">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">描述（可选）</label>
+                    <textarea class="form-control" id="description" rows="2" placeholder="关于这个克隆的说明"></textarea>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label">启用克隆</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveClone()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let cloneModal;
+const clonesData = {{ clones_json|safe }};
+
+document.addEventListener('DOMContentLoaded', function() {
+    cloneModal = new bootstrap.Modal(document.getElementById('cloneModal'));
+});
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '添加克隆';
+    document.getElementById('clone_id').value = '';
+    document.getElementById('clone_name').value = '';
+    document.getElementById('bot_token').value = '';
+    document.getElementById('expiration_date').value = '';
+    document.getElementById('webhook_url').value = '';
+    document.getElementById('description').value = '';
+    document.getElementById('is_active').checked = true;
+    cloneModal.show();
+}
+
+function editClone(id) {
+    const clone = clonesData.find(c => c.id === id);
+    if (!clone) return;
+    
+    document.getElementById('modalTitle').textContent = '编辑克隆';
+    document.getElementById('clone_id').value = id;
+    document.getElementById('clone_name').value = clone.clone_name || '';
+    document.getElementById('bot_token').value = clone.bot_token || '';
+    
+    // Format datetime for datetime-local input
+    if (clone.expiration_date) {
+        const date = new Date(clone.expiration_date);
+        const offset = date.getTimezoneOffset();
+        const localDate = new Date(date.getTime() - (offset*60*1000));
+        document.getElementById('expiration_date').value = localDate.toISOString().slice(0, 16);
+    } else {
+        document.getElementById('expiration_date').value = '';
+    }
+    
+    document.getElementById('webhook_url').value = clone.webhook_url || '';
+    document.getElementById('description').value = clone.description || '';
+    document.getElementById('is_active').checked = clone.is_active;
+    cloneModal.show();
+}
+
+function saveClone() {
+    const data = {
+        id: document.getElementById('clone_id').value || null,
+        clone_name: document.getElementById('clone_name').value,
+        bot_token: document.getElementById('bot_token').value,
+        expiration_date: document.getElementById('expiration_date').value || null,
+        webhook_url: document.getElementById('webhook_url').value,
+        description: document.getElementById('description').value,
+        is_active: document.getElementById('is_active').checked
+    };
+    
+    fetch('/core/api/save_bot_clone', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 保存成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function deleteClone(id) {
+    if (!confirm('确定要删除这个克隆吗？克隆的所有配置都将丢失。')) return;
+    
+    fetch('/core/api/delete_bot_clone', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('✅ 删除成功！');
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function toggleClone(id) {
+    fetch('/core/api/toggle_bot_clone', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '切换失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+</script>
+{% endblock %}

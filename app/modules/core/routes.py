@@ -2082,6 +2082,67 @@ def api_move_group_bottom_button():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/push_group_bottom_buttons', methods=['POST'])
+def api_push_group_bottom_buttons():
+    """推送群底部按钮到群组作为菜单键盘"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        group = BotGroup.query.get(d['group_id'])
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        
+        # Get active buttons ordered by button_order
+        buttons = GroupBottomButton.query.filter_by(
+            group_id=group.id,
+            is_active=True
+        ).order_by(GroupBottomButton.button_order).all()
+        
+        if not buttons:
+            return jsonify({'status':'error','msg':'没有可推送的按钮'})
+        
+        # Check if bot is ready
+        if not global_ptb_app or not global_bot_loop:
+            return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
+        
+        # Send message with reply keyboard to group
+        async def _send_menu_keyboard():
+            try:
+                # Build reply keyboard
+                keyboard = []
+                for button in buttons:
+                    keyboard.append([KeyboardButton(button.button_text)])
+                
+                reply_markup = ReplyKeyboardMarkup(
+                    keyboard,
+                    resize_keyboard=True,
+                    one_time_keyboard=False
+                )
+                
+                # Send message with menu keyboard
+                await global_ptb_app.bot.send_message(
+                    chat_id=group.chat_id,
+                    text="📋 群组菜单已更新，请点击下方按钮使用功能：",
+                    reply_markup=reply_markup
+                )
+                return True
+            except Exception as e:
+                print(f"Error pushing buttons to group: {e}")
+                return False
+        
+        # Run async function in bot's event loop
+        future = asyncio.run_coroutine_threadsafe(_send_menu_keyboard(), global_bot_loop)
+        success = future.result(timeout=10)
+        
+        if success:
+            return jsonify({'status':'ok'})
+        else:
+            return jsonify({'status':'error','msg':'推送失败，请检查bot权限'})
+            
+    except Exception as e:
+        return jsonify({'status':'error','msg':str(e)})
+
 @core_bp.route('/api/save_sync_group_messages', methods=['POST'])
 def api_save_sync_group_messages():
     """保存同步群消息设置"""

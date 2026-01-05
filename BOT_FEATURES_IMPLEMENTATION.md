@@ -224,17 +224,32 @@ This document describes the bot handler implementations for all 13 feature modul
 - **Multiple Actions**: URLs or callback data
 - **Display Order**: Sortable button arrangement
 - **Auto Integration**: Buttons automatically added to messages
+- **🆕 Push to Group**: Admin can push menu keyboard to group with one click
 
 **Bot Handlers**:
 - `display_bottom_buttons()` - Helper function to get group buttons
   - Queries active buttons from database
   - Returns InlineKeyboardMarkup with buttons
+- `cmd_menu()` - Displays menu keyboard in group
+  - Shows reply keyboard with all active buttons
+  - Triggered by `/menu` or `/buttons` command
+- `api_push_group_bottom_buttons()` - Push buttons to group via admin interface
+  - Sends message with ReplyKeyboardMarkup to group
+  - Makes buttons permanently visible at bottom of chat
 - Integrated into `on_message()` auto-reply:
   - Automatically adds bottom buttons to auto-reply messages
 - Integrated into `cmd_start()`:
   - Automatically adds bottom buttons to /start messages
+- Keyword trigger support:
+  - Users can trigger button display by sending configured keywords
 
 **Configuration**: `/group/<id>/group_bottom_button`
+
+**Usage**:
+1. Configure buttons in admin interface
+2. Set button order and active status
+3. Click "推送到群组" (Push to Group) button to send menu keyboard to group
+4. Users will see persistent menu keyboard at bottom of chat
 
 ### 11. Sync Group Messages (同步群消息)
 **Status**: ✅ Fully Implemented

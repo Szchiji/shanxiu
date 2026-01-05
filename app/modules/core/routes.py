@@ -175,10 +175,11 @@ def page_users(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated users
@@ -215,10 +216,11 @@ def page_auto_replies(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results
@@ -252,10 +254,11 @@ def page_scheduled_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results
@@ -292,10 +295,11 @@ def page_start_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Pagination parameters
+    # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
-    if per_page not in [10, 20, 50] or per_page <= 0: per_page = 20
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
     # Get total count and paginated results
@@ -1230,6 +1234,16 @@ async def run_bot(app_instance):
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     app.add_handler(CommandHandler("start", cmd_start))
     
+    # Group management commands (群管理机器人功能)
+    app.add_handler(CommandHandler("kick", cmd_kick))
+    app.add_handler(CommandHandler("ban", cmd_ban))
+    app.add_handler(CommandHandler("unban", cmd_unban))
+    app.add_handler(CommandHandler("mute", cmd_mute))
+    app.add_handler(CommandHandler("unmute", cmd_unmute))
+    app.add_handler(CommandHandler("pin", cmd_pin))
+    app.add_handler(CommandHandler("unpin", cmd_unpin))
+    app.add_handler(CommandHandler("warn", cmd_warn))
+    
     # Add periodic job to check expired users
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     
@@ -1268,6 +1282,259 @@ def do_like(chat_id, message_id, emoji):
         url = f"https://api.telegram.org/bot{token}/setMessageReaction"
         requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": clean_emoji}]}, timeout=5)
     except Exception as e: print(f"❌ [Like] 请求异常: {e}", flush=True)
+
+# 🤖 Group Management Commands (群管理机器人功能)
+
+async def cmd_kick(update: Update, context):
+    """踢出群成员命令 /kick"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要踢出的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    try:
+        await context.bot.ban_chat_member(chat.id, target_user.id)
+        await context.bot.unban_chat_member(chat.id, target_user.id)
+        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 踢出群组")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_ban(update: Update, context):
+    """封禁群成员命令 /ban"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要封禁的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    try:
+        await context.bot.ban_chat_member(chat.id, target_user.id)
+        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 封禁")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_unban(update: Update, context):
+    """解封群成员命令 /unban"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要解封的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    try:
+        await context.bot.unban_chat_member(chat.id, target_user.id)
+        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 解封")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_mute(update: Update, context):
+    """禁言群成员命令 /mute [时间(分钟)]"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要禁言的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    
+    # Parse duration (default: 60 minutes)
+    duration = 60
+    if context.args:
+        try:
+            duration = int(context.args[0])
+            if duration <= 0:
+                duration = 60
+        except:
+            duration = 60
+    
+    try:
+        # Restrict user from sending messages
+        permissions = ChatPermissions(
+            can_send_messages=False,
+            can_send_media_messages=False,
+            can_send_polls=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False
+        )
+        until_date = datetime.now() + timedelta(minutes=duration)
+        await context.bot.restrict_chat_member(chat.id, target_user.id, permissions, until_date=until_date)
+        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 禁言 {duration} 分钟")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_unmute(update: Update, context):
+    """解除禁言命令 /unmute"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要解除禁言的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    
+    try:
+        # Restore default permissions
+        permissions = ChatPermissions(
+            can_send_messages=True,
+            can_send_media_messages=True,
+            can_send_polls=True,
+            can_send_other_messages=True,
+            can_add_web_page_previews=True
+        )
+        await context.bot.restrict_chat_member(chat.id, target_user.id, permissions)
+        await update.message.reply_text(f"✅ 已解除 {target_user.first_name} 的禁言")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_pin(update: Update, context):
+    """置顶消息命令 /pin"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要置顶的消息")
+        return
+    
+    try:
+        await context.bot.pin_chat_message(chat.id, update.message.reply_to_message.message_id)
+        await update.message.reply_text("✅ 消息已置顶")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_unpin(update: Update, context):
+    """取消置顶消息命令 /unpin"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    try:
+        if update.message.reply_to_message:
+            # Unpin specific message
+            await context.bot.unpin_chat_message(chat.id, update.message.reply_to_message.message_id)
+        else:
+            # Unpin all messages
+            await context.bot.unpin_all_chat_messages(chat.id)
+        await update.message.reply_text("✅ 已取消置顶")
+    except Exception as e:
+        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+
+async def cmd_warn(update: Update, context):
+    """警告用户命令 /warn [原因]"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    # Check if replying to a message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ 请回复要警告的用户消息")
+        return
+    
+    target_user = update.message.reply_to_message.from_user
+    reason = " ".join(context.args) if context.args else "违反群规"
+    
+    warning_text = f"⚠️ 警告\n\n用户: {target_user.first_name}\n原因: {reason}\n\n请遵守群规，避免再次违规！"
+    await update.message.reply_text(warning_text)
 
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")

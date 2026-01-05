@@ -2264,17 +2264,31 @@ async def cmd_userinfo(update: Update, context):
             
             # Get user points if available
             user_points = None
+            total_earned = 0
+            total_spent = 0
             try:
                 user_points = UserPoints.query.filter_by(
                     group_id=group.id,
                     user_id=target_user.id
                 ).first()
+                
+                # Calculate total earned and spent from logs
+                logs = PointsLog.query.filter_by(
+                    group_id=group.id,
+                    user_id=target_user.id
+                ).all()
+                
+                for log in logs:
+                    if log.points_change > 0:
+                        total_earned += log.points_change
+                    else:
+                        total_spent += abs(log.points_change)
             except:
                 pass
             
-            return group_user, user_points, group
+            return group_user, user_points, group, total_earned, total_spent
     
-    group_user, user_points, group = await asyncio.get_running_loop().run_in_executor(None, _get_user_info)
+    group_user, user_points, group, total_earned, total_spent = await asyncio.get_running_loop().run_in_executor(None, _get_user_info)
     
     # Build user info message
     info_lines = ["👤 用户详细信息\n"]
@@ -2313,9 +2327,10 @@ async def cmd_userinfo(update: Update, context):
     if user_points:
         info_lines.append(f"\n💰 积分信息")
         info_lines.append(f"━━━━━━━━━━━━━━━━")
-        info_lines.append(f"💎 当前积分: {user_points.points}")
-        info_lines.append(f"📈 总获得: {user_points.total_earned}")
-        info_lines.append(f"📉 总消耗: {user_points.total_spent}")
+        info_lines.append(f"💎 当前积分: {user_points.points_balance}")
+        if total_earned > 0 or total_spent > 0:
+            info_lines.append(f"📈 总获得: {total_earned}")
+            info_lines.append(f"📉 总消耗: {total_spent}")
     
     # Get member info from Telegram
     try:

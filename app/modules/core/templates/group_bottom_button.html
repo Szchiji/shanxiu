@@ -68,7 +68,7 @@
                                 </span>
                             </div>
                             <div>
-                                <button class="btn btn-sm btn-primary" onclick='editButton({{ button.id }}, {{ button|tojson }})'>
+                                <button class="btn btn-sm btn-primary" onclick='editButton({{ button.id }})'>
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteButton({{ button.id }})">
@@ -132,6 +132,7 @@
 
 <script>
 let buttonModal;
+const buttonsData = {{ buttons_json|safe }};
 
 document.addEventListener('DOMContentLoaded', function() {
     buttonModal = new bootstrap.Modal(document.getElementById('buttonModal'));
@@ -148,7 +149,10 @@ function showAddModal() {
     buttonModal.show();
 }
 
-function editButton(id, button) {
+function editButton(id) {
+    const button = buttonsData.find(b => b.id === id);
+    if (!button) return;
+    
     document.getElementById('modalTitle').textContent = '编辑按钮';
     document.getElementById('button_id').value = id;
     document.getElementById('button_text').value = button.button_text || '';

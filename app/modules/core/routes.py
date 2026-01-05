@@ -468,7 +468,18 @@ def page_group_bottom_button(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.button_order).all()
-    return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons)
+    
+    # Convert buttons to JSON-serializable dictionaries
+    buttons_json = json.dumps([{
+        'id': b.id,
+        'button_text': b.button_text,
+        'button_url': b.button_url,
+        'button_callback': b.button_callback,
+        'button_order': b.button_order,
+        'is_active': b.is_active
+    } for b in buttons], ensure_ascii=False)
+    
+    return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons, buttons_json=buttons_json)
 
 @core_bp.route('/group/<int:gid>/sync_group_messages')
 def page_sync_group_messages(gid):
@@ -478,9 +489,9 @@ def page_sync_group_messages(gid):
     group = BotGroup.query.get_or_404(gid)
     settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
     if not settings:
-        settings = SyncGroupMessages(source_group_id=gid)
-        db.session.add(settings)
-        db.session.commit()
+        # Don't create a new record here to avoid constraint violation
+        # Instead, pass None and let the template handle empty state
+        settings = None
     return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
 
 
@@ -1532,13 +1543,19 @@ def api_save_sync_group_messages():
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
     
+    # Validate target_group_id is provided
+    target_group_id = d.get('target_group_id', '').strip()
+    if not target_group_id:
+        return jsonify({'status':'error','msg':'目标群组ID不能为空'})
+    
     try:
         settings = SyncGroupMessages.query.filter_by(source_group_id=d['group_id']).first()
         if not settings:
-            settings = SyncGroupMessages(source_group_id=d['group_id'])
+            settings = SyncGroupMessages(source_group_id=d['group_id'], target_group_id=target_group_id)
             db.session.add(settings)
+        else:
+            settings.target_group_id = target_group_id
         
-        settings.target_group_id = d.get('target_group_id', '')
         settings.enabled = d.get('enabled', False)
         settings.sync_media = d.get('sync_media', True)
         settings.sync_forwards = d.get('sync_forwards', True)

@@ -52,6 +52,45 @@ def get_beijing_today():
     now = datetime.now(BEIJING_TZ)
     return now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def build_inline_keyboard_from_links(links):
+    """
+    将链接列表转换为内联键盘，支持多个按钮在一行显示
+    
+    Args:
+        links: 链接列表，每个链接应包含 text, url, 以及可选的 row 和 order 字段
+        
+    Returns:
+        List of button rows for InlineKeyboardMarkup
+    """
+    if not links:
+        return []
+    
+    # Group buttons by row
+    rows_dict = {}
+    for link in links:
+        if not link.get('text') or not link.get('url'):
+            continue
+        
+        row_num = link.get('row', 0)
+        order = link.get('order', 0)
+        
+        if row_num not in rows_dict:
+            rows_dict[row_num] = []
+        
+        rows_dict[row_num].append({
+            'button': InlineKeyboardButton(link['text'], url=link['url']),
+            'order': order
+        })
+    
+    # Sort rows and buttons within rows
+    keyboard = []
+    for row_num in sorted(rows_dict.keys()):
+        # Sort buttons in this row by order
+        row_buttons = sorted(rows_dict[row_num], key=lambda x: x['order'])
+        keyboard.append([btn['button'] for btn in row_buttons])
+    
+    return keyboard
+
 async def is_user_admin_in_group(bot, chat_id, user_id):
     """Check if a user is an administrator in a specific group"""
     try:
@@ -2027,13 +2066,17 @@ def api_save_group_bottom_button():
             button = GroupBottomButton(group_id=d['group_id'])
             db.session.add(button)
         
+        # Active UI fields
         button.button_text = d.get('button_text', '')
-        button.button_url = d.get('button_url')
-        button.button_callback = d.get('button_callback')
-        button.trigger_keyword = d.get('trigger_keyword', '').strip() or None
+        button.input_field_placeholder = d.get('input_field_placeholder', '').strip() or None
         button.button_order = d.get('button_order', 0)
         button.row_position = d.get('row_position', 0)
         button.is_active = d.get('is_active', True)
+        
+        # Keep these fields for backward compatibility but don't expose in UI
+        button.button_url = d.get('button_url')
+        button.button_callback = d.get('button_callback')
+        button.trigger_keyword = d.get('trigger_keyword', '').strip() or None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2099,7 +2142,7 @@ def api_move_group_bottom_button():
 
 @core_bp.route('/api/push_group_bottom_buttons', methods=['POST'])
 def api_push_group_bottom_buttons():
-    """推送群底部按钮到群组作为菜单键盘"""
+    """推送群底部按钮到群组 - 通过发送/menu命令触发"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
@@ -2122,112 +2165,35 @@ def api_push_group_bottom_buttons():
             print(f"❌ Bot未就绪: global_ptb_app={bool(global_ptb_app)}, global_bot_loop={bool(global_bot_loop)}", flush=True)
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
         
-        print(f"🔄 开始推送按钮到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
+        print(f"🔄 推送/menu命令到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
         
-        # Check if any button has URL or callback - if so, use inline keyboard
-        has_url_or_callback = any(btn.button_url or btn.button_callback for btn in buttons)
-        
-        # Send message with keyboard to group
-        async def _send_menu_keyboard():
+        # Send /menu command message to trigger the keyboard
+        async def _send_menu_command():
             try:
-                if has_url_or_callback:
-                    # Use InlineKeyboardMarkup for buttons with URLs/callbacks
-                    keyboard = []
-                    if buttons:  # Only proceed if there are buttons
-                        current_row = []
-                        current_row_num = buttons[0].row_position
-                        
-                        for button in buttons:
-                            # Start a new row if row_position changes
-                            if button.row_position != current_row_num:
-                                if current_row:
-                                    keyboard.append(current_row)
-                                current_row = []
-                                current_row_num = button.row_position
-                            
-                            # Add button with URL or callback
-                            if button.button_url:
-                                current_row.append(InlineKeyboardButton(
-                                    button.button_text,
-                                    url=button.button_url
-                                ))
-                            elif button.button_callback:
-                                current_row.append(InlineKeyboardButton(
-                                    button.button_text,
-                                    callback_data=button.button_callback
-                                ))
-                            else:
-                                # For buttons without URL or callback, use text as callback
-                                current_row.append(InlineKeyboardButton(
-                                    button.button_text,
-                                    callback_data=f"btn_{button.id}"
-                                ))
-                        
-                        # Add the last row
-                        if current_row:
-                            keyboard.append(current_row)
-                    
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    # Send message with inline keyboard
-                    msg = await global_ptb_app.bot.send_message(
-                        chat_id=group.chat_id,
-                        text="📋 群组菜单已更新，请点击下方按钮使用功能：",
-                        reply_markup=reply_markup
-                    )
-                    print(f"✅ 内联键盘推送成功，消息ID: {msg.message_id}", flush=True)
-                else:
-                    # Use ReplyKeyboardMarkup for text-only buttons
-                    keyboard = []
-                    if buttons:  # Only proceed if there are buttons
-                        current_row = []
-                        current_row_num = buttons[0].row_position
-                        
-                        for button in buttons:
-                            # Start a new row if row_position changes
-                            if button.row_position != current_row_num:
-                                if current_row:
-                                    keyboard.append(current_row)
-                                current_row = []
-                                current_row_num = button.row_position
-                            
-                            current_row.append(KeyboardButton(button.button_text))
-                        
-                        # Add the last row
-                        if current_row:
-                            keyboard.append(current_row)
-                    
-                    reply_markup = ReplyKeyboardMarkup(
-                        keyboard,
-                        resize_keyboard=True,
-                        one_time_keyboard=False
-                    )
-                    
-                    # Send message with reply keyboard
-                    msg = await global_ptb_app.bot.send_message(
-                        chat_id=group.chat_id,
-                        text="📋 群组菜单已更新，请点击下方按钮使用功能：",
-                        reply_markup=reply_markup
-                    )
-                    print(f"✅ 回复键盘推送成功，消息ID: {msg.message_id}", flush=True)
+                # Send a message with /menu command hint to trigger the keyboard
+                msg = await global_ptb_app.bot.send_message(
+                    chat_id=group.chat_id,
+                    text="📋 群组菜单已更新！\n\n💡 群成员可以使用 /menu 命令查看和使用底部按钮菜单。"
+                )
+                print(f"✅ 菜单命令提示发送成功，消息ID: {msg.message_id}", flush=True)
                 return True
             except Exception as e:
                 import traceback
-                print(f"❌ 推送按钮时发生错误: {e}", flush=True)
+                print(f"❌ 推送菜单命令提示时发生错误: {e}", flush=True)
                 print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
                 return False
         
         # Run async function in bot's event loop
         try:
-            future = asyncio.run_coroutine_threadsafe(_send_menu_keyboard(), global_bot_loop)
+            future = asyncio.run_coroutine_threadsafe(_send_menu_command(), global_bot_loop)
             success = future.result(timeout=10)
             
             if success:
-                return jsonify({'status':'ok','msg':'按钮已成功推送到群组'})
+                return jsonify({'status':'ok','msg':'菜单已成功推送到群组，群成员可使用 /menu 命令查看'})
             else:
                 return jsonify({'status':'error','msg':'推送失败，请检查bot权限和群组ID是否正确'})
         except asyncio.TimeoutError:
-            print("❌ 推送按钮超时", flush=True)
+            print("❌ 推送菜单超时", flush=True)
             return jsonify({'status':'error','msg':'推送超时，请稍后再试'})
         except Exception as e:
             import traceback
@@ -2893,9 +2859,7 @@ async def check_scheduled_messages(context):
             buttons = []
             try:
                 links = json.loads(msg_data['links'] or '[]')
-                for link in links:
-                    if link.get('text') and link.get('url'):
-                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                buttons = build_inline_keyboard_from_links(links)
             except:
                 pass
             
@@ -5290,6 +5254,13 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
             current_row = []
             current_row_num = buttons[0].row_position  # Safe because we checked buttons is not empty
             
+            # Get the input field placeholder from the first button that has one
+            input_placeholder = None
+            for button in buttons:
+                if button.input_field_placeholder:
+                    input_placeholder = button.input_field_placeholder
+                    break
+            
             for button in buttons:
                 # Start a new row if row_position changes
                 if button.row_position != current_row_num:
@@ -5309,7 +5280,8 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
                 return ReplyKeyboardMarkup(
                     keyboard, 
                     resize_keyboard=True,
-                    one_time_keyboard=False
+                    one_time_keyboard=False,
+                    input_field_placeholder=input_placeholder
                 )
             return None
         else:
@@ -5391,9 +5363,7 @@ async def cmd_start(update: Update, context):
             buttons = []
             try:
                 links = json.loads(start_msg.links or '[]')
-                for link in links:
-                    if link.get('text') and link.get('url'):
-                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                buttons = build_inline_keyboard_from_links(links)
             except:
                 pass
             
@@ -5937,9 +5907,7 @@ async def on_message(update: Update, context):
                             buttons = []
                             try:
                                 links = json.loads(auto_reply.links or '[]')
-                                for link in links:
-                                    if link.get('text') and link.get('url'):
-                                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                                buttons = build_inline_keyboard_from_links(links)
                             except:
                                 pass
                             

@@ -334,54 +334,36 @@
     
     @media (min-width: 768px) {
         .pagination-info {
-            font-size: 0.875rem;
+            font-size: 0.9rem;
         }
     }
     
     .btn-page {
-        border-radius: 10px;
-        padding: 0.5rem 1rem;
-        font-size: 0.875rem;
-        font-weight: 500;
-        transition: all 0.3s ease;
-        border: 2px solid #e9ecef;
-        background: white;
-        color: #495057;
+        padding: 0.3rem 0.6rem;
+        font-size: 0.8rem;
+        border-radius: 6px;
     }
     
-    .btn-page:not(:disabled):hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
-        border-color: #667eea;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-    }
-    
-    .btn-page:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        background: #f8f9fa;
-        border-color: #e9ecef;
-    }
-    
-    @media (max-width: 767.98px) {
+    @media (min-width: 768px) {
         .btn-page {
-            padding: 0.5rem 0.875rem;
-            font-size: 0.813rem;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.9rem;
+            border-radius: 8px;
         }
     }
     
     .pagination-container {
         background: white;
-        border-radius: 15px;
-        padding: 1rem;
-        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
         margin-top: 1rem;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
     }
     
-    @media (max-width: 767.98px) {
+    @media (min-width: 768px) {
         .pagination-container {
-            padding: 0.75rem;
+            padding: 1rem 1.5rem;
+            border-radius: 15px;
         }
     }
     
@@ -461,6 +443,18 @@
             </button>
         </div>
     </div>
+</div>
+
+<!-- Feature Description -->
+<div class="alert alert-info mb-3">
+    <h6 class="fw-bold mb-2"><i class="fa-solid fa-info-circle me-2"></i>功能说明</h6>
+    <ul class="mb-0 small">
+        <li><strong>定时消息：</strong>设置在特定时间或按固定间隔自动向群组发送消息</li>
+        <li><strong>消息类型：</strong>支持文本、图片、视频三种类型的消息</li>
+        <li><strong>重复发送：</strong>设置间隔（分钟）可以让消息定期重复发送，0表示只发送一次</li>
+        <li><strong>时间控制：</strong>可设置开始时间和停止时间来控制消息发送的时间范围</li>
+        <li><strong>自动删除：</strong>启用"删除上一条"可以在发送新消息时自动删除上一条消息，保持群内整洁</li>
+    </ul>
 </div>
 
 <!-- Search Box -->
@@ -632,7 +626,7 @@
                             </button>
                         </div>
                         <div id="linksContainer"></div>
-                        <div class="form-text">链接会以按钮形式显示在消息下方</div>
+                        <div class="form-text">链接会以按钮形式显示在消息下方。设置相同"行号"可实现多个按钮并排显示，"列顺序"控制同行内排列顺序</div>
                     </div>
                     
                     <!-- 时间配置 -->
@@ -847,7 +841,7 @@
     
     // Links management
     function addLinkButton() {
-        currentLinks.push({ text: '', url: '' });
+        currentLinks.push({ text: '', url: '', row: 0, order: 0 });
         renderLinksContainer();
     }
     
@@ -869,8 +863,10 @@
         
         container.innerHTML = currentLinks.map((link, i) => `
             <div class="link-item">
-                <input type="text" class="form-control form-control-sm" placeholder="按钮文字" value="${link.text || ''}" onchange="updateLinkButton(${i}, 'text', this.value)">
-                <input type="url" class="form-control form-control-sm" placeholder="链接URL" value="${link.url || ''}" onchange="updateLinkButton(${i}, 'url', this.value)">
+                <input type="text" class="form-control form-control-sm" placeholder="按钮文字" value="${link.text || ''}" onchange="updateLinkButton(${i}, 'text', this.value)" style="flex: 1 1 30%;">
+                <input type="url" class="form-control form-control-sm" placeholder="链接URL" value="${link.url || ''}" onchange="updateLinkButton(${i}, 'url', this.value)" style="flex: 1 1 40%;">
+                <input type="number" class="form-control form-control-sm" placeholder="行号" value="${link.row || 0}" onchange="updateLinkButton(${i}, 'row', this.value)" min="0" style="flex: 0 0 60px;">
+                <input type="number" class="form-control form-control-sm" placeholder="列" value="${link.order || 0}" onchange="updateLinkButton(${i}, 'order', this.value)" min="0" style="flex: 0 0 60px;">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLinkButton(${i})">
                     <i class="fa-solid fa-times"></i>
                 </button>

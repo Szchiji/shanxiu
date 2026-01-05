@@ -71,6 +71,7 @@ def fix_database_schema(app):
             # Group bottom button table columns
             "ALTER TABLE group_bottom_button ADD COLUMN trigger_keyword VARCHAR(255) NULL",
             "ALTER TABLE group_bottom_button ADD COLUMN row_position INTEGER DEFAULT 0",
+            "ALTER TABLE group_bottom_button ADD COLUMN input_field_placeholder VARCHAR(255) NULL",
             # Bot clones table columns
             "ALTER TABLE bot_clones ADD COLUMN owner_user_id BIGINT",
             "ALTER TABLE bot_clones ADD COLUMN admin_user_ids TEXT DEFAULT '[]'",

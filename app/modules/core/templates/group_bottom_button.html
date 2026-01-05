@@ -64,7 +64,7 @@
                             <div class="flex-grow-1">
                                 <h6 class="mb-1">{{ button.button_text }}</h6>
                                 <small class="text-muted">
-                                    顺序: {{ button.button_order }} | 
+                                    行: {{ button.row_position }} | 列: {{ button.button_order }} | 
                                     {% if button.trigger_keyword %}<span class="badge bg-info">触发: {{ button.trigger_keyword }}</span> | {% endif %}
                                     {% if button.button_url %}URL: {{ button.button_url[:50] }}{% if button.button_url|length > 50 %}...{% endif %}{% endif %}
                                     {% if button.button_callback %}回调: {{ button.button_callback }}{% endif %}
@@ -134,9 +134,17 @@
                     <input type="text" class="form-control" id="trigger_keyword" placeholder="例如：菜单,按钮">
                     <small class="text-muted">用户发送此关键词时自动显示按钮，可用逗号分隔多个（可选）</small>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">显示顺序</label>
-                    <input type="number" class="form-control" id="button_order" value="0" min="0">
+                <div class="row">
+                    <div class="col-6 mb-3">
+                        <label class="form-label">行号</label>
+                        <input type="number" class="form-control" id="row_position" value="0" min="0">
+                        <small class="text-muted">同一行的按钮会并排显示</small>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <label class="form-label">列顺序</label>
+                        <input type="number" class="form-control" id="button_order" value="0" min="0">
+                        <small class="text-muted">同行内的显示顺序</small>
+                    </div>
                 </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="is_active" checked>
@@ -166,6 +174,7 @@ function showAddModal() {
     document.getElementById('button_url').value = '';
     document.getElementById('button_callback').value = '';
     document.getElementById('trigger_keyword').value = '';
+    document.getElementById('row_position').value = '0';
     document.getElementById('button_order').value = '0';
     document.getElementById('is_active').checked = true;
     buttonModal.show();
@@ -181,6 +190,7 @@ function editButton(id) {
     document.getElementById('button_url').value = button.button_url || '';
     document.getElementById('button_callback').value = button.button_callback || '';
     document.getElementById('trigger_keyword').value = button.trigger_keyword || '';
+    document.getElementById('row_position').value = button.row_position || 0;
     document.getElementById('button_order').value = button.button_order || 0;
     document.getElementById('is_active').checked = button.is_active;
     buttonModal.show();
@@ -194,6 +204,7 @@ function saveButton() {
         button_url: document.getElementById('button_url').value,
         button_callback: document.getElementById('button_callback').value,
         trigger_keyword: document.getElementById('trigger_keyword').value,
+        row_position: parseInt(document.getElementById('row_position').value) || 0,
         button_order: parseInt(document.getElementById('button_order').value) || 0,
         is_active: document.getElementById('is_active').checked
     };

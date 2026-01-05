@@ -1715,15 +1715,24 @@ async def check_expired_users(context):
     
     # Now perform all async Telegram operations with rate limiting
     async def ban_user_async(user, group, ban_msg):
-        """Ban a single user and send notification"""
+        """Mute an expired user and send notification"""
         try:
-            # Ban the user in the group
+            # Mute the user in the group with comprehensive restrictions
             await context.bot.restrict_chat_member(
                 chat_id=group.chat_id,
                 user_id=user.tg_id,
-                permissions=ChatPermissions(can_send_messages=False)
+                permissions=ChatPermissions(
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_polls=False,
+                    can_send_other_messages=False,
+                    can_add_web_page_previews=False,
+                    can_change_info=False,
+                    can_invite_users=False,
+                    can_pin_messages=False
+                )
             )
-            print(f"⛔️ Banned expired user {user.tg_id} in group {group.title}", flush=True)
+            print(f"⛔️ Muted expired user {user.tg_id} in group {group.title}", flush=True)
             
             # Try to send notification to user privately
             try:
@@ -1739,7 +1748,7 @@ async def check_expired_users(context):
                 print(f"Failed to send ban notification to user {user.tg_id}: {e}")
                 
         except Exception as e:
-            print(f"Error banning user {user.tg_id}: {e}")
+            print(f"Error muting user {user.tg_id}: {e}")
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -3528,6 +3537,59 @@ async def on_message(update: Update, context):
         
         # Check if this is a verification code from admin in private chat
         if chat.type == 'private':
+            # 🆕 Handle forwarded messages - show detailed user info
+            if msg.forward_from:
+                forwarded_user = msg.forward_from
+                info_lines = ["🔍 转发消息详细信息\n"]
+                info_lines.append("━━━━━━━━━━━━━━━━")
+                info_lines.append(f"📛 用户名: {forwarded_user.first_name or '-'}")
+                if forwarded_user.last_name:
+                    info_lines.append(f"   姓氏: {forwarded_user.last_name}")
+                if forwarded_user.username:
+                    info_lines.append(f"🔗 Username: @{forwarded_user.username}")
+                info_lines.append(f"🆔 用户ID: {forwarded_user.id}")
+                info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
+                
+                # Try to get user's group membership info
+                def _get_forwarded_user_info():
+                    with global_flask_app.app_context():
+                        # Find all groups where this user is a member
+                        group_users = GroupUser.query.filter_by(tg_id=forwarded_user.id).all()
+                        results = []
+                        for gu in group_users:
+                            group = BotGroup.query.get(gu.group_id)
+                            if group:
+                                user_points = UserPoints.query.filter_by(
+                                    group_id=group.id,
+                                    user_id=forwarded_user.id
+                                ).first()
+                                
+                                results.append({
+                                    'group_name': group.title,
+                                    'banned': gu.is_banned,
+                                    'expiration': gu.expiration_date,
+                                    'points': user_points.points_balance if user_points else 0
+                                })
+                        return results
+                
+                user_groups = await asyncio.get_running_loop().run_in_executor(None, _get_forwarded_user_info)
+                
+                if user_groups:
+                    info_lines.append(f"\n📊 群组信息 ({len(user_groups)}个群)")
+                    info_lines.append("━━━━━━━━━━━━━━━━")
+                    for idx, info in enumerate(user_groups[:5], 1):  # Show max 5 groups
+                        info_lines.append(f"\n{idx}. {info['group_name']}")
+                        info_lines.append(f"   状态: {'🚫 已封禁' if info['banned'] else '✅ 正常'}")
+                        if info['expiration']:
+                            info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M')}")
+                        info_lines.append(f"   积分: {info['points']}")
+                    
+                    if len(user_groups) > 5:
+                        info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
+                
+                await msg.reply_text("\n".join(info_lines))
+                return
+            
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
             if user.id == admin_id and txt.isdigit() and len(txt) == 6:
                 # Try to verify the code using constant-time comparison
@@ -3622,30 +3684,45 @@ async def on_message(update: Update, context):
                     msg_text = sanitize_html_for_telegram(conf.get('msg_not_registered', '未认证'))
                     await msg.reply_html(msg_text)
                 else:
-                    # Check if user is expired and should be banned
+                     # Check if user is expired and should be banned
                     if db_user.expiration_date and get_beijing_now() > db_user.expiration_date:
                         if not db_user.is_banned:
                             db_user.is_banned = True
                             db.session.commit()
                             try:
+                                # Mute with comprehensive restrictions
                                 await context.bot.restrict_chat_member(
                                     chat_id=chat.id,
                                     user_id=user.id,
-                                    permissions=ChatPermissions(can_send_messages=False)
+                                    permissions=ChatPermissions(
+                                        can_send_messages=False,
+                                        can_send_media_messages=False,
+                                        can_send_polls=False,
+                                        can_send_other_messages=False,
+                                        can_add_web_page_previews=False,
+                                        can_change_info=False,
+                                        can_invite_users=False,
+                                        can_pin_messages=False
+                                    )
                                 )
+                                print(f"⛔️ Muted expired user {user.id} in group {chat.id}")
                             except Exception as e:
-                                print(f"Failed to ban user {user.id}: {e}")
-                        # Send expiration notification privately to the user, not to the group
-                        msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期'))
+                                print(f"Failed to mute user {user.id}: {e}")
+                        
+                        # 🆕 Send ephemeral message in group (visible only to that user)
+                        msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))
                         try:
-                            await context.bot.send_message(
-                                chat_id=user.id,
-                                text=msg_text,
-                                parse_mode='HTML'
+                            # Send a reply that will be auto-deleted
+                            warning_msg = await msg.reply_html(msg_text)
+                            # Auto-delete after 30 seconds
+                            context.job_queue.run_once(
+                                lambda c: c.job.data.delete(),
+                                30,
+                                data=warning_msg
                             )
                         except Exception as e:
-                            # If private message fails, just log the error - don't send to group
-                            print(f"Failed to send expiration notification to user {user.id}: {e}")
+                            print(f"Failed to send expiration notification: {e}")
+                        return  # Stop processing, don't allow check-in
                     else:
                         # Check if user has already checked in today
                         today = get_beijing_today()

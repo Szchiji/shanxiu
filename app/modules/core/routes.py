@@ -4137,7 +4137,7 @@ async def cmd_quiz(update: Update, context):
 
 
 async def cmd_redpacket(update: Update, context):
-    """发红包命令 /redpacket"""
+    """发红包命令 /redpacket 总积分 数量 [祝福语]"""
     chat = update.effective_chat
     user = update.effective_user
     
@@ -4145,14 +4145,112 @@ async def cmd_redpacket(update: Update, context):
         await update.message.reply_text("❌ 此命令只能在群组中使用")
         return
     
+    # 解析参数
+    try:
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text(
+                "🧧 <b>发红包</b>\n\n"
+                "格式：/redpacket 总积分 红包数量 [祝福语]\n\n"
+                "示例：\n"
+                "/redpacket 100 10 新年快乐\n"
+                "/redpacket 200 5",
+                parse_mode='HTML'
+            )
+            return
+        
+        total_points = int(args[0])
+        packet_count = int(args[1])
+        message = ' '.join(args[2:]) if len(args) > 2 else "恭喜发财 🧧"
+        
+        if total_points < packet_count:
+            await update.message.reply_text("❌ 总积分不能少于红包数量")
+            return
+        
+        if packet_count < 1 or packet_count > 50:
+            await update.message.reply_text("❌ 红包数量需要在1-50之间")
+            return
+        
+        if total_points < 1:
+            await update.message.reply_text("❌ 总积分必须大于0")
+            return
+        
+    except ValueError:
+        await update.message.reply_text("❌ 参数格式错误，请输入数字")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _create_redpacket():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # 检查用户积分
+            user_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).first()
+            
+            if not user_points or user_points.points_balance < total_points:
+                current_balance = user_points.points_balance if user_points else 0
+                return None, f"积分不足！需要 {total_points} 积分，当前 {current_balance} 积分"
+            
+            # 扣除积分
+            user_points.points_balance -= total_points
+            
+            # 创建红包
+            packet = RedPacket(
+                group_id=group.id,
+                creator_id=user.id,
+                packet_type='random',
+                total_points=total_points,
+                packet_count=packet_count,
+                remaining_count=packet_count,
+                remaining_points=total_points,
+                message=message,
+                expire_time=get_beijing_now() + timedelta(hours=24),
+                status='active'
+            )
+            db.session.add(packet)
+            
+            # 记录积分日志
+            log = PointsLog(
+                group_id=group.id,
+                user_id=user.id,
+                points_change=-total_points,
+                reason="发红包",
+                balance_after=user_points.points_balance
+            )
+            db.session.add(log)
+            
+            db.session.commit()
+            return packet.id, None
+    
+    packet_id, error = await asyncio.get_running_loop().run_in_executor(None, _create_redpacket)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    # 发送红包消息
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🧧 领取红包", callback_data=f"redpacket_claim_{packet_id}")
+    ]])
+    
     await update.message.reply_text(
-        "🧧 <b>发红包</b>\n\n"
-        "格式：/redpacket 总积分 红包数量 [祝福语]\n\n"
-        "示例：\n"
-        "/redpacket 100 10 新年快乐\n"
-        "/redpacket 200 5",
+        f"🧧 <b>红包来啦！</b>\n\n"
+        f"💬 {message}\n"
+        f"💰 共 {total_points} 积分\n"
+        f"🎁 {packet_count} 个红包\n"
+        f"⏰ 24小时内有效\n\n"
+        f"👆 点击按钮领取",
+        reply_markup=keyboard,
         parse_mode='HTML'
     )
+
 
 
 async def run_bot(app_instance):
@@ -4913,6 +5011,245 @@ async def handle_channel_pin(update: Update, context):
                     
     except Exception as e:
         print(f"Error in handle_channel_pin: {e}")
+
+async def quiz_answer_callback(update: Update, context):
+    """处理问答答案选择"""
+    query = update.callback_query
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    # 解析回调数据: quiz_answer_{quiz_id}_{answer_idx}
+    try:
+        _, _, quiz_id, answer_idx = query.data.split('_')
+        quiz_id = int(quiz_id)
+        answer_idx = int(answer_idx)
+    except:
+        await query.answer("❌ 无效的选择")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _process_answer():
+        with global_flask_app.app_context():
+            # 1. 获取问题和会话
+            quiz = QuizGame.query.get(quiz_id)
+            if not quiz:
+                return None, "问题不存在"
+            
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            session = QuizSession.query.filter_by(
+                group_id=group.id,
+                quiz_id=quiz_id,
+                status='active'
+            ).first()
+            
+            if not session:
+                return None, "问答已结束"
+            
+            # 2. 检查是否已回答
+            existing = QuizAnswer.query.filter_by(
+                session_id=session.id,
+                user_id=user.id
+            ).first()
+            
+            if existing:
+                return None, "您已经回答过了"
+            
+            # 3. 检查是否超时
+            if get_beijing_now() > session.start_time + timedelta(seconds=quiz.time_limit):
+                session.status = 'ended'
+                db.session.commit()
+                return None, "回答超时"
+            
+            # 4. 验证答案
+            is_correct = (answer_idx == quiz.correct_answer_index)
+            points = quiz.points_reward if is_correct else 0
+            
+            # 5. 记录答案
+            answer = QuizAnswer(
+                session_id=session.id,
+                user_id=user.id,
+                answer_index=answer_idx,
+                is_correct=is_correct,
+                points_awarded=points
+            )
+            db.session.add(answer)
+            
+            # 6. 更新用户积分
+            if is_correct and points > 0:
+                user_points = UserPoints.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).first()
+                
+                if not user_points:
+                    user_points = UserPoints(
+                        group_id=group.id,
+                        user_id=user.id,
+                        points_balance=0
+                    )
+                    db.session.add(user_points)
+                
+                user_points.points_balance += points
+                
+                # 记录积分日志
+                log = PointsLog(
+                    group_id=group.id,
+                    user_id=user.id,
+                    points_change=points,
+                    reason=f"答对问答题",
+                    balance_after=user_points.points_balance
+                )
+                db.session.add(log)
+            
+            db.session.commit()
+            
+            return {
+                'is_correct': is_correct,
+                'points': points,
+                'explanation': quiz.explanation
+            }, None
+    
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _process_answer)
+    
+    if error:
+        await query.answer(f"❌ {error}")
+        return
+    
+    if result['is_correct']:
+        msg = f"✅ 回答正确！\n🎁 获得 {result['points']} 积分"
+    else:
+        msg = "❌ 回答错误"
+    
+    if result.get('explanation'):
+        msg += f"\n\n💡 {result['explanation']}"
+    
+    await query.answer(msg, show_alert=True)
+
+async def redpacket_claim_callback(update: Update, context):
+    """处理红包领取"""
+    query = update.callback_query
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    try:
+        packet_id = int(query.data.split('_')[2])
+    except:
+        await query.answer("❌ 无效的红包")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _claim_packet():
+        with global_flask_app.app_context():
+            import random
+            
+            # 获取红包
+            packet = RedPacket.query.get(packet_id)
+            if not packet:
+                return None, "红包不存在"
+            
+            if packet.status != 'active':
+                return None, "红包已过期"
+            
+            if packet.remaining_count <= 0:
+                return None, "红包已被抢完"
+            
+            group = BotGroup.query.get(packet.group_id)
+            if not group or str(chat.id) != group.chat_id:
+                return None, "群组不匹配"
+            
+            # 检查是否已领取
+            existing = RedPacketClaim.query.filter_by(
+                packet_id=packet_id,
+                user_id=user.id
+            ).first()
+            
+            if existing:
+                return None, "您已经领取过了"
+            
+            # 计算分配积分（随机或平均）
+            if packet.packet_type == 'random':
+                # 拼手气红包：最后一个人拿剩余的，其他人随机
+                if packet.remaining_count == 1:
+                    points = packet.remaining_points
+                else:
+                    # 随机范围：1 到 (剩余积分 / 剩余数量 * 2)
+                    max_points = int(packet.remaining_points / packet.remaining_count * 2)
+                    points = random.randint(1, max(1, max_points))
+            else:
+                # 普通红包：平均分配
+                points = packet.remaining_points // packet.remaining_count
+            
+            # 更新红包状态
+            packet.remaining_count -= 1
+            packet.remaining_points -= points
+            
+            if packet.remaining_count == 0:
+                packet.status = 'claimed'
+            
+            # 记录领取
+            claim = RedPacketClaim(
+                packet_id=packet_id,
+                user_id=user.id,
+                points_received=points
+            )
+            db.session.add(claim)
+            
+            # 更新用户积分
+            user_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).first()
+            
+            if not user_points:
+                user_points = UserPoints(
+                    group_id=group.id,
+                    user_id=user.id,
+                    points_balance=0
+                )
+                db.session.add(user_points)
+            
+            user_points.points_balance += points
+            
+            # 记录积分日志
+            log = PointsLog(
+                group_id=group.id,
+                user_id=user.id,
+                points_change=points,
+                reason="领取红包",
+                balance_after=user_points.points_balance
+            )
+            db.session.add(log)
+            
+            db.session.commit()
+            
+            return {
+                'points': points,
+                'remaining': packet.remaining_count
+            }, None
+    
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _claim_packet)
+    
+    if error:
+        await query.answer(f"❌ {error}")
+        return
+    
+    await query.answer(
+        f"✅ 领取成功！获得 {result['points']} 积分\n"
+        f"剩余 {result['remaining']} 个红包",
+        show_alert=True
+    )
+
+async def vote_callback(update: Update, context):
+    """处理投票回调 - 简化版本，建议使用Telegram原生投票"""
+    query = update.callback_query
+    await query.answer("⚠️ 投票功能建议使用Telegram原生投票功能")
 
 async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
     """显示群底部按钮
@@ -5808,8 +6145,21 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
     return await asyncio.get_running_loop().run_in_executor(None, _sync_query)
 
 async def pagination_callback(update: Update, context):
+    """统一的回调处理器 - 根据callback data路由到不同的处理函数"""
     query = update.callback_query
-    if query.data == "noop": return await query.answer()
+    
+    if query.data == "noop": 
+        return await query.answer()
+    
+    # 路由到不同的处理器
+    if query.data.startswith('quiz_answer_'):
+        return await quiz_answer_callback(update, context)
+    elif query.data.startswith('redpacket_claim_'):
+        return await redpacket_claim_callback(update, context)
+    elif query.data.startswith('vote_'):
+        return await vote_callback(update, context)
+    
+    # 默认处理分页查询
     try:
         parts = query.data.split('|')
         page = int(parts[1])

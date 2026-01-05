@@ -5413,27 +5413,36 @@ async def cmd_start(update: Update, context):
             # Send custom message
             content = sanitize_html_for_telegram(start_msg.content or '')
             
+            # Handle different media types
+            message_sent = False
             if start_msg.media_type == 'image' and start_msg.media_url:
                 await update.message.reply_photo(
                     photo=start_msg.media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup
                 )
+                message_sent = True
             elif start_msg.media_type == 'video' and start_msg.media_url:
                 await update.message.reply_video(
                     video=start_msg.media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup
                 )
-            elif content:
+                message_sent = True
+            elif content or reply_markup:
+                # Send text message if there's content OR buttons (even with no text)
                 await update.message.reply_html(
-                    content,
+                    content if content else '👋',
                     reply_markup=reply_markup,
                     disable_web_page_preview=True
                 )
-            return
+                message_sent = True
+            
+            # If we sent a custom message, return early
+            if message_sent:
+                return
     
     # Default behavior for private chat or when no custom message is set
     if user_id == admin_id:

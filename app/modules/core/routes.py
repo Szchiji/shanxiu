@@ -1536,6 +1536,45 @@ def api_delete_group_bottom_button():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/move_group_bottom_button', methods=['POST'])
+def api_move_group_bottom_button():
+    """移动群底部按钮顺序"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d or 'direction' not in d: return jsonify({'status':'error','msg':'Missing parameters'})
+    
+    try:
+        button = GroupBottomButton.query.get(d['id'])
+        if not button: return jsonify({'status':'error','msg':'Button not found'})
+        
+        direction = d['direction']
+        current_order = button.button_order
+        
+        # Get all buttons for the same group, ordered by button_order
+        all_buttons = GroupBottomButton.query.filter_by(group_id=button.group_id).order_by(GroupBottomButton.button_order).all()
+        
+        # Find current position
+        current_index = next((i for i, b in enumerate(all_buttons) if b.id == button.id), None)
+        if current_index is None:
+            return jsonify({'status':'error','msg':'Button position not found'})
+        
+        # Determine swap target
+        if direction == 'up' and current_index > 0:
+            swap_button = all_buttons[current_index - 1]
+        elif direction == 'down' and current_index < len(all_buttons) - 1:
+            swap_button = all_buttons[current_index + 1]
+        else:
+            return jsonify({'status':'error','msg':'Cannot move in that direction'})
+        
+        # Swap orders
+        button.button_order, swap_button.button_order = swap_button.button_order, button.button_order
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
 @core_bp.route('/api/save_sync_group_messages', methods=['POST'])
 def api_save_sync_group_messages():
     """保存同步群消息设置"""

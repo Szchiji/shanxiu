@@ -67,7 +67,17 @@
                                     {{ '启用' if button.is_active else '禁用' }}
                                 </span>
                             </div>
-                            <div>
+                            <div class="d-flex gap-1">
+                                {% if not loop.first %}
+                                <button class="btn btn-sm btn-secondary" onclick="moveButton({{ button.id }}, 'up')" title="上移">
+                                    <i class="fa-solid fa-arrow-up"></i>
+                                </button>
+                                {% endif %}
+                                {% if not loop.last %}
+                                <button class="btn btn-sm btn-secondary" onclick="moveButton({{ button.id }}, 'down')" title="下移">
+                                    <i class="fa-solid fa-arrow-down"></i>
+                                </button>
+                                {% endif %}
                                 <button class="btn btn-sm btn-primary" onclick='editButton({{ button.id }})'>
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
@@ -209,6 +219,26 @@ function deleteButton(id) {
             location.reload();
         } else {
             alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('❌ 网络错误');
+    });
+}
+
+function moveButton(id, direction) {
+    fetch('/core/api/move_group_bottom_button', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id, direction: direction})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            location.reload();
+        } else {
+            alert('❌ ' + (result.msg || '移动失败'));
         }
     })
     .catch(err => {

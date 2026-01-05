@@ -448,31 +448,39 @@
                             </a>
                         </li>
                         
-                        <!-- Points & Activities - Direct Links -->
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}">
-                                <i class="fa-solid fa-list-check"></i> 积分规则
+                        <!-- Points & Activities - Dropdown -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery'] %}active{% endif %}" 
+                               id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-coins"></i> 积分功能
                             </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}">
-                                <i class="fa-solid fa-comments-dollar"></i> 积分回复
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/points_auction" class="nav-link {% if page == 'points_auction' %}active{% endif %}">
-                                <i class="fa-solid fa-gavel"></i> 积分竞拍
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}">
-                                <i class="fa-solid fa-history"></i> 积分日志
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}">
-                                <i class="fa-solid fa-trophy"></i> 群抽奖
-                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
+                                        <i class="fa-solid fa-list-check"></i> 积分规则
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="dropdown-item {% if page == 'points_auto_reply' %}active{% endif %}">
+                                        <i class="fa-solid fa-comments-dollar"></i> 积分回复
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_auction" class="dropdown-item {% if page == 'points_auction' %}active{% endif %}">
+                                        <i class="fa-solid fa-gavel"></i> 积分竞拍
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_log" class="dropdown-item {% if page == 'points_log' %}active{% endif %}">
+                                        <i class="fa-solid fa-history"></i> 积分日志
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
+                                        <i class="fa-solid fa-trophy"></i> 群抽奖
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         {% endif %}
                         <li class="nav-item">

@@ -7,7 +7,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim)
 from app.services import sanitize_html_for_telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io
@@ -1063,6 +1063,86 @@ def api_delete_auto_reply():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/export_auto_replies/<int:group_id>', methods=['GET'])
+def api_export_auto_replies(group_id):
+    """导出自动回复规则为JSON"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    
+    try:
+        auto_replies = AutoReply.query.filter_by(group_id=group_id).all()
+        
+        export_data = {
+            'version': '1.0',
+            'export_time': get_beijing_now().isoformat(),
+            'group_id': group_id,
+            'count': len(auto_replies),
+            'data': [{
+                'trigger_keyword': ar.trigger_keyword,
+                'media_type': ar.media_type,
+                'media_url': ar.media_url,
+                'content': ar.content,
+                'links': ar.links,
+                'delete_after': ar.delete_after,
+                'remark': ar.remark,
+                'is_active': ar.is_active
+            } for ar in auto_replies]
+        }
+        
+        return jsonify(export_data)
+    except Exception as e:
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/import_auto_replies', methods=['POST'])
+def api_import_auto_replies():
+    """导入自动回复规则从JSON"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    
+    try:
+        d = request.json
+        if not d or 'group_id' not in d or 'data' not in d:
+            return jsonify({'status':'error','msg':'Missing required fields'})
+        
+        group_id = d['group_id']
+        items_data = d['data']
+        
+        # Verify group exists
+        group = BotGroup.query.get(group_id)
+        if not group:
+            return jsonify({'status':'error','msg':'Group not found'})
+        
+        imported_count = 0
+        skipped_count = 0
+        
+        for item_data in items_data:
+            try:
+                # Create new auto reply
+                item = AutoReply(group_id=group_id)
+                item.trigger_keyword = item_data.get('trigger_keyword', '')
+                item.media_type = item_data.get('media_type', 'text')
+                item.media_url = item_data.get('media_url')
+                item.content = item_data.get('content')
+                item.links = item_data.get('links', '[]')
+                item.delete_after = item_data.get('delete_after', 0)
+                item.remark = item_data.get('remark')
+                item.is_active = item_data.get('is_active', True)
+                
+                db.session.add(item)
+                imported_count += 1
+            except Exception as e:
+                print(f"Error importing auto reply: {e}")
+                skipped_count += 1
+                continue
+        
+        db.session.commit()
+        return jsonify({
+            'status':'ok',
+            'imported': imported_count,
+            'skipped': skipped_count
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
 # --- Scheduled Message API Routes ---
 @core_bp.route('/api/save_scheduled_message', methods=['POST'])
 def api_save_scheduled_message():
@@ -1137,6 +1217,95 @@ def api_delete_scheduled_message():
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/export_scheduled_messages/<int:group_id>', methods=['GET'])
+def api_export_scheduled_messages(group_id):
+    """导出定时消息为JSON"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    
+    try:
+        scheduled_messages = ScheduledMessage.query.filter_by(group_id=group_id).all()
+        
+        export_data = {
+            'version': '1.0',
+            'export_time': get_beijing_now().isoformat(),
+            'group_id': group_id,
+            'count': len(scheduled_messages),
+            'data': [{
+                'media_type': sm.media_type,
+                'media_url': sm.media_url,
+                'content': sm.content,
+                'links': sm.links,
+                'repeat_interval': sm.repeat_interval,
+                'delete_previous': sm.delete_previous,
+                'start_time': sm.start_time.isoformat() if sm.start_time else None,
+                'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
+                'remark': sm.remark,
+                'is_active': sm.is_active
+            } for sm in scheduled_messages]
+        }
+        
+        return jsonify(export_data)
+    except Exception as e:
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/import_scheduled_messages', methods=['POST'])
+def api_import_scheduled_messages():
+    """导入定时消息从JSON"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    
+    try:
+        d = request.json
+        if not d or 'group_id' not in d or 'data' not in d:
+            return jsonify({'status':'error','msg':'Missing required fields'})
+        
+        group_id = d['group_id']
+        items_data = d['data']
+        
+        # Verify group exists
+        group = BotGroup.query.get(group_id)
+        if not group:
+            return jsonify({'status':'error','msg':'Group not found'})
+        
+        imported_count = 0
+        skipped_count = 0
+        
+        for item_data in items_data:
+            try:
+                # Create new scheduled message
+                item = ScheduledMessage(group_id=group_id)
+                item.media_type = item_data.get('media_type', 'text')
+                item.media_url = item_data.get('media_url')
+                item.content = item_data.get('content')
+                item.links = item_data.get('links', '[]')
+                item.repeat_interval = item_data.get('repeat_interval', 0)
+                item.delete_previous = item_data.get('delete_previous', False)
+                
+                # Parse timestamps
+                start_time_str = item_data.get('start_time')
+                stop_time_str = item_data.get('stop_time')
+                item.start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
+                item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
+                
+                item.remark = item_data.get('remark')
+                item.is_active = item_data.get('is_active', True)
+                
+                db.session.add(item)
+                imported_count += 1
+            except Exception as e:
+                print(f"Error importing scheduled message: {e}")
+                skipped_count += 1
+                continue
+        
+        db.session.commit()
+        return jsonify({
+            'status':'ok',
+            'imported': imported_count,
+            'skipped': skipped_count
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
@@ -2824,7 +2993,7 @@ async def track_user_name_change(update: Update, context):
         print(f"Error in track_user_name_change: {e}")
 
 async def handle_sync_group_messages(update: Update, context):
-    """Sync messages from source group to target groups"""
+    """Sync messages from source group to target groups - Enhanced to sync all message types"""
     if not global_flask_app or not update.effective_message:
         return
     
@@ -2849,7 +3018,7 @@ async def handle_sync_group_messages(update: Update, context):
             
             for sync_setting in sync_settings:
                 try:
-                    # Check keyword filters
+                    # Check keyword filters for text messages
                     if msg.text and sync_setting.filter_keywords:
                         try:
                             keywords = json.loads(sync_setting.filter_keywords)
@@ -2867,7 +3036,7 @@ async def handle_sync_group_messages(update: Update, context):
                     # target_group_id is stored as string chat_id, not database id
                     target_chat_id = sync_setting.target_group_id
                     
-                    # 🆕 Prepare sender info (include bot messages)
+                    # Prepare sender info (include bot messages)
                     if user:
                         sender_name = user.first_name
                         if user.last_name:
@@ -2876,15 +3045,19 @@ async def handle_sync_group_messages(update: Update, context):
                     else:
                         sender_prefix = "[机器人] "
                     
+                    sent_msg = None
+                    message_type = 'unknown'
+                    
+                    # Handle different message types
                     if msg.text:
-                        # 🆕 Add sender info to synced message
+                        message_type = 'text'
                         synced_text = f"{sender_prefix}{msg.text}"
                         sent_msg = await context.bot.send_message(
                             chat_id=target_chat_id,
                             text=synced_text
                         )
                     elif msg.photo and sync_setting.sync_media:
-                        # 🆕 Add sender info to caption
+                        message_type = 'photo'
                         caption = f"{sender_prefix}{msg.caption or ''}"
                         sent_msg = await context.bot.send_photo(
                             chat_id=target_chat_id,
@@ -2892,31 +3065,124 @@ async def handle_sync_group_messages(update: Update, context):
                             caption=caption
                         )
                     elif msg.video and sync_setting.sync_media:
-                        # 🆕 Add sender info to caption
+                        message_type = 'video'
                         caption = f"{sender_prefix}{msg.caption or ''}"
                         sent_msg = await context.bot.send_video(
                             chat_id=target_chat_id,
                             video=msg.video.file_id,
                             caption=caption
                         )
+                    elif msg.document and sync_setting.sync_media:
+                        message_type = 'document'
+                        caption = f"{sender_prefix}{msg.caption or ''}"
+                        sent_msg = await context.bot.send_document(
+                            chat_id=target_chat_id,
+                            document=msg.document.file_id,
+                            caption=caption
+                        )
+                    elif msg.audio and sync_setting.sync_media:
+                        message_type = 'audio'
+                        caption = f"{sender_prefix}{msg.caption or ''}"
+                        sent_msg = await context.bot.send_audio(
+                            chat_id=target_chat_id,
+                            audio=msg.audio.file_id,
+                            caption=caption
+                        )
+                    elif msg.voice and sync_setting.sync_media:
+                        message_type = 'voice'
+                        caption = f"{sender_prefix}{msg.caption or ''}"
+                        sent_msg = await context.bot.send_voice(
+                            chat_id=target_chat_id,
+                            voice=msg.voice.file_id,
+                            caption=caption
+                        )
+                    elif msg.video_note and sync_setting.sync_media:
+                        message_type = 'video_note'
+                        sent_msg = await context.bot.send_video_note(
+                            chat_id=target_chat_id,
+                            video_note=msg.video_note.file_id
+                        )
+                    elif msg.sticker and sync_setting.sync_media:
+                        message_type = 'sticker'
+                        sent_msg = await context.bot.send_sticker(
+                            chat_id=target_chat_id,
+                            sticker=msg.sticker.file_id
+                        )
+                    elif msg.animation and sync_setting.sync_media:
+                        message_type = 'animation'
+                        caption = f"{sender_prefix}{msg.caption or ''}"
+                        sent_msg = await context.bot.send_animation(
+                            chat_id=target_chat_id,
+                            animation=msg.animation.file_id,
+                            caption=caption
+                        )
+                    elif msg.poll:
+                        message_type = 'poll'
+                        # Forward poll as-is (can't modify poll sender)
+                        sent_msg = await context.bot.forward_message(
+                            chat_id=target_chat_id,
+                            from_chat_id=chat.id,
+                            message_id=msg.message_id
+                        )
+                    elif msg.location:
+                        message_type = 'location'
+                        # Send location with sender prefix as a separate message
+                        await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=sender_prefix
+                        )
+                        sent_msg = await context.bot.send_location(
+                            chat_id=target_chat_id,
+                            latitude=msg.location.latitude,
+                            longitude=msg.location.longitude
+                        )
+                    elif msg.contact:
+                        message_type = 'contact'
+                        # Send contact with sender prefix as a separate message
+                        await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=sender_prefix
+                        )
+                        sent_msg = await context.bot.send_contact(
+                            chat_id=target_chat_id,
+                            phone_number=msg.contact.phone_number,
+                            first_name=msg.contact.first_name,
+                            last_name=msg.contact.last_name
+                        )
+                    elif msg.venue:
+                        message_type = 'venue'
+                        # Send venue with sender prefix as a separate message
+                        await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=sender_prefix
+                        )
+                        sent_msg = await context.bot.send_venue(
+                            chat_id=target_chat_id,
+                            latitude=msg.venue.location.latitude,
+                            longitude=msg.venue.location.longitude,
+                            title=msg.venue.title,
+                            address=msg.venue.address
+                        )
                     else:
+                        # Unknown or unsupported message type, skip
                         continue
                     
-                    # Log the sync
-                    log_entry = SyncMessageLog(
-                        source_group_id=group.id,
-                        target_group_id=target_chat_id,
-                        source_message_id=msg.message_id,
-                        target_message_id=sent_msg.message_id,
-                        user_id=user.id if user else None,
-                        username=user.username if user else None,
-                        message_type='text' if msg.text else ('photo' if msg.photo else 'video'),
-                        content_preview=msg.text[:100] if msg.text else None,
-                        status='success',
-                        synced_at=get_beijing_now()
-                    )
-                    db.session.add(log_entry)
-                    db.session.commit()
+                    # Log the sync if message was sent
+                    if sent_msg:
+                        log_entry = SyncMessageLog(
+                            source_group_id=group.id,
+                            target_group_id=target_chat_id,
+                            source_message_id=msg.message_id,
+                            target_message_id=sent_msg.message_id,
+                            user_id=user.id if user else None,
+                            username=user.username if user else None,
+                            message_type=message_type,
+                            content_preview=msg.text[:100] if msg.text else (msg.caption[:100] if msg.caption else None),
+                            status='success',
+                            synced_at=get_beijing_now()
+                        )
+                        db.session.add(log_entry)
+                        db.session.commit()
                     
                 except Exception as e:
                     print(f"Error syncing message to {sync_setting.target_group_id}: {e}")
@@ -4069,7 +4335,7 @@ async def cmd_userinfo(update: Update, context):
     await update.message.reply_html(info_text)
 
 async def cmd_menu(update: Update, context):
-    """显示群底部按钮菜单命令 /menu 或 /buttons"""
+    """显示群底部按钮菜单命令 /menu 或 /buttons - 使用菜单键盘"""
     chat = update.effective_chat
     
     # Only work in groups
@@ -4077,16 +4343,16 @@ async def cmd_menu(update: Update, context):
         await update.message.reply_text("❌ 此命令只能在群组中使用")
         return
     
-    # Get bottom buttons
-    bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+    # Get bottom buttons as reply keyboard (menu keyboard)
+    bottom_buttons_markup = await display_bottom_buttons(chat.id, context, use_reply_keyboard=True)
     
-    if not bottom_buttons_markup or not bottom_buttons_markup.inline_keyboard:
+    if not bottom_buttons_markup:
         await update.message.reply_text("ℹ️ 该群组暂未设置底部按钮")
         return
     
-    # Send message with buttons
+    # Send message with menu keyboard
     await update.message.reply_text(
-        "📋 群组菜单：",
+        "📋 群组菜单（点击下方按钮使用功能）：",
         reply_markup=bottom_buttons_markup
     )
 
@@ -4307,8 +4573,17 @@ async def handle_channel_pin(update: Update, context):
     except Exception as e:
         print(f"Error in handle_channel_pin: {e}")
 
-async def display_bottom_buttons(chat_id, context):
-    """显示群底部按钮"""
+async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
+    """显示群底部按钮
+    
+    Args:
+        chat_id: 群组ID
+        context: 上下文
+        use_reply_keyboard: 是否使用回复键盘（菜单键盘），默认False（使用内联键盘）
+    
+    Returns:
+        ReplyKeyboardMarkup 或 InlineKeyboardMarkup
+    """
     if not global_flask_app:
         return None
     
@@ -4331,24 +4606,39 @@ async def display_bottom_buttons(chat_id, context):
         if not buttons:
             return None
         
-        # Build inline keyboard
-        keyboard = []
-        for button in buttons:
-            if button.button_url:
-                keyboard.append([InlineKeyboardButton(
-                    button.button_text,
-                    url=button.button_url
-                )])
-            elif button.button_callback:
-                keyboard.append([InlineKeyboardButton(
-                    button.button_text,
-                    callback_data=button.button_callback
-                )])
-        
-        if keyboard:
-            return InlineKeyboardMarkup(keyboard)
-        
-        return None
+        if use_reply_keyboard:
+            # Build reply keyboard (menu keyboard) - only button text, no URLs
+            keyboard = []
+            for button in buttons:
+                # Reply keyboard buttons don't support URLs, just text
+                keyboard.append([KeyboardButton(button.button_text)])
+            
+            if keyboard:
+                return ReplyKeyboardMarkup(
+                    keyboard, 
+                    resize_keyboard=True,
+                    one_time_keyboard=False
+                )
+            return None
+        else:
+            # Build inline keyboard (original behavior)
+            keyboard = []
+            for button in buttons:
+                if button.button_url:
+                    keyboard.append([InlineKeyboardButton(
+                        button.button_text,
+                        url=button.button_url
+                    )])
+                elif button.button_callback:
+                    keyboard.append([InlineKeyboardButton(
+                        button.button_text,
+                        callback_data=button.button_callback
+                    )])
+            
+            if keyboard:
+                return InlineKeyboardMarkup(keyboard)
+            
+            return None
         
     except Exception as e:
         print(f"Error displaying bottom buttons: {e}")

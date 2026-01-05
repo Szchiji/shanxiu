@@ -392,9 +392,17 @@
         <div>
             <h4 class="fw-bold mb-0"><i class="fa-solid fa-reply me-2"></i>自动回复管理</h4>
         </div>
-        <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
-            <i class="fa-solid fa-plus me-1 me-md-2"></i>新增规则
-        </button>
+        <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-success btn-sm" onclick="exportData()" title="导出配置">
+                <i class="fa-solid fa-download me-1"></i>导出
+            </button>
+            <button class="btn btn-info btn-sm" onclick="showImportModal()" title="导入配置">
+                <i class="fa-solid fa-upload me-1"></i>导入
+            </button>
+            <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
+                <i class="fa-solid fa-plus me-1 me-md-2"></i>新增规则
+            </button>
+        </div>
     </div>
 </div>
 
@@ -948,5 +956,91 @@
             alert('网络错误，请重试');
         }
     }
+
+// Export auto-replies data
+async function exportData() {
+    try {
+        const response = await fetch('/core/api/export_auto_replies/{{ group.id }}');
+        const data = await response.json();
+        
+        if (data.status === 'error') {
+            alert(data.msg || '导出失败');
+            return;
+        }
+        
+        // Create download link
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `auto_replies_${data.group_id}_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        alert(`成功导出 ${data.count} 条自动回复规则`);
+    } catch (e) {
+        console.error('Export error:', e);
+        alert('导出失败，请重试');
+    }
+}
+
+// Show import modal
+function showImportModal() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            
+            if (!data.data || !Array.isArray(data.data)) {
+                alert('无效的导入文件格式');
+                return;
+            }
+            
+            if (!confirm(`确定要导入 ${data.count || data.data.length} 条自动回复规则吗？`)) {
+                return;
+            }
+            
+            await importData(data.data);
+        } catch (e) {
+            console.error('Import error:', e);
+            alert('导入失败：文件格式错误');
+        }
+    };
+    input.click();
+}
+
+// Import auto-replies data
+async function importData(items) {
+    try {
+        const response = await fetch('/core/api/import_auto_replies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                group_id: {{ group.id }},
+                data: items
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'ok') {
+            alert(`成功导入 ${result.imported} 条规则，跳过 ${result.skipped} 条`);
+            location.reload();
+        } else {
+            alert(result.msg || '导入失败');
+        }
+    } catch (e) {
+        console.error('Import error:', e);
+        alert('导入失败，请重试');
+    }
+}
 </script>
 {% endblock %}

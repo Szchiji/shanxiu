@@ -327,6 +327,51 @@ def page_start_messages(gid):
                           start_messages=start_messages, start_messages_json=start_messages_json,
                           current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
 
+@core_bp.route('/group/<int:gid>/entry_exit_settings')
+def page_entry_exit_settings(gid):
+    """进退群设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = GroupEntryExitSettings.query.filter_by(group_id=gid).first()
+    if not settings:
+        settings = GroupEntryExitSettings(group_id=gid)
+        db.session.add(settings)
+        db.session.commit()
+    return render_template('entry_exit_settings.html', page='entry_exit_settings', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/spam_protection')
+def page_spam_protection(gid):
+    """垃圾防护"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = SpamProtection.query.filter_by(group_id=gid).first()
+    whitelist_users = json.loads(settings.whitelist_users if settings and settings.whitelist_users else '[]')
+    return render_template('spam_protection.html', page='spam_protection', group=group, settings=settings, whitelist_users=whitelist_users)
+
+@core_bp.route('/group/<int:gid>/timed_group_control')
+def page_timed_group_control(gid):
+    """定时开关群"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = TimedGroupControl.query.filter_by(group_id=gid).first()
+    return render_template('timed_group_control.html', page='timed_group_control', group=group, settings=settings)
+
+@core_bp.route('/group/<int:gid>/other_settings')
+def page_other_settings(gid):
+    """其他设置"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    settings = OtherSettings.query.filter_by(group_id=gid).first()
+    if not settings:
+        settings = OtherSettings(group_id=gid)
+        db.session.add(settings)
+        db.session.commit()
+    return render_template('other_settings.html', page='other_settings', group=group, settings=settings)
+
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
 def api_toggle_group():
@@ -862,6 +907,123 @@ def api_delete_start_message():
         item = StartMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_entry_exit_settings', methods=['POST'])
+def api_save_entry_exit_settings():
+    """保存进退群设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = GroupEntryExitSettings.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = GroupEntryExitSettings(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.entry_verification_enabled = d.get('entry_verification_enabled', False)
+        settings.verification_question = d.get('verification_question')
+        settings.verification_answer = d.get('verification_answer')
+        settings.verification_timeout = d.get('verification_timeout', 60)
+        settings.welcome_enabled = d.get('welcome_enabled', False)
+        settings.welcome_message = d.get('welcome_message')
+        settings.welcome_media_type = d.get('welcome_media_type', 'text')
+        settings.welcome_media_url = d.get('welcome_media_url')
+        settings.exit_ban_enabled = d.get('exit_ban_enabled', False)
+        settings.exit_ban_duration = d.get('exit_ban_duration', 0)
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_spam_protection', methods=['POST'])
+def api_save_spam_protection():
+    """保存垃圾防护设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = SpamProtection.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = SpamProtection(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        settings.max_messages_per_minute = d.get('max_messages_per_minute', 10)
+        settings.block_links = d.get('block_links', False)
+        settings.block_forwards = d.get('block_forwards', False)
+        settings.block_stickers = d.get('block_stickers', False)
+        settings.punishment_type = d.get('punishment_type', 'mute')
+        settings.punishment_duration = d.get('punishment_duration', 60)
+        settings.whitelist_users = json.dumps(d.get('whitelist_users', []))
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_timed_group_control', methods=['POST'])
+def api_save_timed_group_control():
+    """保存定时开关群设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = TimedGroupControl.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = TimedGroupControl(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.enabled = d.get('enabled', False)
+        # Parse time strings to time objects
+        from datetime import datetime as dt
+        if d.get('open_time'):
+            settings.open_time = dt.strptime(d['open_time'], '%H:%M').time()
+        if d.get('close_time'):
+            settings.close_time = dt.strptime(d['close_time'], '%H:%M').time()
+        settings.timezone = d.get('timezone', 'Asia/Shanghai')
+        settings.close_message = d.get('close_message')
+        settings.open_message = d.get('open_message')
+        
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_other_settings', methods=['POST'])
+def api_save_other_settings():
+    """保存其他设置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+    
+    try:
+        settings = OtherSettings.query.filter_by(group_id=d['group_id']).first()
+        if not settings:
+            settings = OtherSettings(group_id=d['group_id'])
+            db.session.add(settings)
+        
+        settings.auto_delete_join_msg = d.get('auto_delete_join_msg', False)
+        settings.auto_delete_leave_msg = d.get('auto_delete_leave_msg', False)
+        settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
+        settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
+        settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
+        
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

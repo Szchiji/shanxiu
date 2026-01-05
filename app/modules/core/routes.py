@@ -2142,7 +2142,7 @@ def api_move_group_bottom_button():
 
 @core_bp.route('/api/push_group_bottom_buttons', methods=['POST'])
 def api_push_group_bottom_buttons():
-    """推送群底部按钮到群组 - 通过发送/menu命令触发"""
+    """推送群底部按钮到群组 - 直接显示菜单键盘给所有群成员"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
@@ -2165,21 +2165,56 @@ def api_push_group_bottom_buttons():
             print(f"❌ Bot未就绪: global_ptb_app={bool(global_ptb_app)}, global_bot_loop={bool(global_bot_loop)}", flush=True)
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
         
-        print(f"🔄 推送/menu命令到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
+        print(f"🔄 推送菜单键盘到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
         
-        # Send /menu command message to trigger the keyboard
+        # Build the reply keyboard markup from buttons
+        keyboard = []
+        current_row = []
+        current_row_num = buttons[0].row_position
+        
+        # Get the input field placeholder from the first button that has one
+        input_placeholder = None
+        for button in buttons:
+            if hasattr(button, 'input_field_placeholder') and button.input_field_placeholder:
+                input_placeholder = button.input_field_placeholder
+                break
+        
+        for button in buttons:
+            # Start a new row if row_position changes
+            if button.row_position != current_row_num:
+                if current_row:
+                    keyboard.append(current_row)
+                current_row = []
+                current_row_num = button.row_position
+            
+            # Reply keyboard buttons don't support URLs, just text
+            current_row.append(KeyboardButton(button.button_text))
+        
+        # Add the last row
+        if current_row:
+            keyboard.append(current_row)
+        
+        reply_markup = ReplyKeyboardMarkup(
+            keyboard, 
+            resize_keyboard=True,
+            one_time_keyboard=False,
+            input_field_placeholder=input_placeholder
+        ) if keyboard else None
+        
+        # Send message with menu keyboard to the group
         async def _send_menu_command():
             try:
-                # Send a message with /menu command hint to trigger the keyboard
+                # Send a message with the menu keyboard attached
                 msg = await global_ptb_app.bot.send_message(
                     chat_id=group.chat_id,
-                    text="📋 群组菜单已更新！\n\n💡 群成员可以使用 /menu 命令查看和使用底部按钮菜单。"
+                    text="📋 群组菜单已更新！\n\n👇 请使用下方按钮菜单：",
+                    reply_markup=reply_markup
                 )
-                print(f"✅ 菜单命令提示发送成功，消息ID: {msg.message_id}", flush=True)
+                print(f"✅ 菜单键盘推送成功，消息ID: {msg.message_id}", flush=True)
                 return True
             except Exception as e:
                 import traceback
-                print(f"❌ 推送菜单命令提示时发生错误: {e}", flush=True)
+                print(f"❌ 推送菜单键盘时发生错误: {e}", flush=True)
                 print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
                 return False
         
@@ -2189,7 +2224,7 @@ def api_push_group_bottom_buttons():
             success = future.result(timeout=10)
             
             if success:
-                return jsonify({'status':'ok','msg':'菜单已成功推送到群组，群成员可使用 /menu 命令查看'})
+                return jsonify({'status':'ok','msg':'菜单已成功推送到群组，群成员现在可以看到底部按钮菜单'})
             else:
                 return jsonify({'status':'error','msg':'推送失败，请检查bot权限和群组ID是否正确'})
         except asyncio.TimeoutError:

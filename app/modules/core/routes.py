@@ -5418,7 +5418,7 @@ async def cmd_start(update: Update, context):
             if start_msg.media_type == 'image' and start_msg.media_url:
                 await update.message.reply_photo(
                     photo=start_msg.media_url,
-                    caption=content if content else None,
+                    caption=content or None,
                     parse_mode='HTML' if content else None,
                     reply_markup=reply_markup
                 )
@@ -5426,7 +5426,7 @@ async def cmd_start(update: Update, context):
             elif start_msg.media_type == 'video' and start_msg.media_url:
                 await update.message.reply_video(
                     video=start_msg.media_url,
-                    caption=content if content else None,
+                    caption=content or None,
                     parse_mode='HTML' if content else None,
                     reply_markup=reply_markup
                 )
@@ -5434,7 +5434,7 @@ async def cmd_start(update: Update, context):
             elif content or reply_markup:
                 # Send text message if there's content OR buttons (even with no text)
                 await update.message.reply_html(
-                    content if content else '👋',
+                    content or '👋',
                     reply_markup=reply_markup,
                     disable_web_page_preview=True
                 )

@@ -343,26 +343,23 @@
                     </div>
                     <ul class="nav flex-column">
                         {% if current_group is defined and current_group %}
+                        <!-- Dashboard -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/dashboard" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
-                                <i class="fa-solid fa-chart-line"></i> 数据概览
+                                <i class="fa-solid fa-chart-line"></i> 📊 数据概览
                             </a>
                         </li>
-                        <!-- Dropdown for management features -->
+                        
+                        <!-- User Management -->
                         <li class="nav-item dropdown">
                             <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'fields', 'settings'] %}active{% endif %}" 
                                id="managementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-user-check"></i> 认证用户
+                                <i class="fa-solid fa-user-check"></i> 👥 用户管理
                             </a>
                             <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="managementDropdown">
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/users" class="dropdown-item {% if page == 'users' %}active{% endif %}">
-                                        <i class="fa-solid fa-users"></i> 用户管理
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-sliders"></i> 功能配置
+                                        <i class="fa-solid fa-users"></i> 认证用户
                                     </a>
                                 </li>
                                 <li>
@@ -370,104 +367,140 @@
                                         <i class="fa-solid fa-list-check"></i> 资料字段
                                     </a>
                                 </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-sliders"></i> 功能配置
+                                    </a>
+                                </li>
                             </ul>
                         </li>
-                        <!-- Auto Replies - Standalone menu item -->
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}">
-                                <i class="fa-solid fa-reply"></i> 自动回复
+                        
+                        <!-- Messages & Automation -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['auto_replies', 'scheduled_messages', 'start_messages', 'group_bottom_button'] %}active{% endif %}" 
+                               id="messagesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-message"></i> 💬 消息 & 自动化
                             </a>
-                        </li>
-                        <!-- Scheduled Messages - Standalone menu item -->
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}">
-                                <i class="fa-solid fa-clock"></i> 定时消息
-                            </a>
-                        </li>
-                        <!-- Start Messages - Standalone menu item -->
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}">
-                                <i class="fa-solid fa-rocket"></i> /start 消息
-                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="messagesDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/auto_replies" class="dropdown-item {% if page == 'auto_replies' %}active{% endif %}">
+                                        <i class="fa-solid fa-reply"></i> 自动回复
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="dropdown-item {% if page == 'scheduled_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-clock"></i> 定时消息
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/start_messages" class="dropdown-item {% if page == 'start_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-rocket"></i> /start 消息
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="dropdown-item {% if page == 'group_bottom_button' %}active{% endif %}">
+                                        <i class="fa-solid fa-hand-pointer"></i> 底部按钮
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         
-                        <!-- Group Management - Direct Links -->
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-user-shield"></i> 进退群设置
+                        <!-- Group Security & Control -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['entry_exit_settings', 'spam_protection', 'keyword_filter', 'forced_channel_subscription', 'inactive_user_settings'] %}active{% endif %}" 
+                               id="securityDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-shield"></i> 🛡️ 群组安全
                             </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}">
-                                <i class="fa-solid fa-shield-virus"></i> 垃圾防护
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}">
-                                <i class="fa-solid fa-clock"></i> 定时开关群
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}">
-                                <i class="fa-solid fa-user-plus"></i> 邀请活动
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="nav-link {% if page == 'forced_channel_subscription' %}active{% endif %}">
-                                <i class="fa-solid fa-rss"></i> 强制订阅
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}">
-                                <i class="fa-solid fa-medal"></i> 成员等级
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="nav-link {% if page == 'inactive_user_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-user-clock"></i> 不活跃用户
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/keyword_filter" class="nav-link {% if page == 'keyword_filter' %}active{% endif %}">
-                                <i class="fa-solid fa-filter"></i> 关键词过滤
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}">
-                                <i class="fa-solid fa-chart-line"></i> 消息统计
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}">
-                                <i class="fa-solid fa-user-edit"></i> 改名监控
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="nav-link {% if page == 'group_bottom_button' %}active{% endif %}">
-                                <i class="fa-solid fa-hand-pointer"></i> 底部按钮
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}">
-                                <i class="fa-solid fa-sync"></i> 同步设置
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}">
-                                <i class="fa-solid fa-list"></i> 同步日志
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-cog"></i> 其他设置
-                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="securityDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="dropdown-item {% if page == 'entry_exit_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-shield"></i> 进退群设置
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/spam_protection" class="dropdown-item {% if page == 'spam_protection' %}active{% endif %}">
+                                        <i class="fa-solid fa-shield-virus"></i> 垃圾防护
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/keyword_filter" class="dropdown-item {% if page == 'keyword_filter' %}active{% endif %}">
+                                        <i class="fa-solid fa-filter"></i> 关键词过滤
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="dropdown-item {% if page == 'forced_channel_subscription' %}active{% endif %}">
+                                        <i class="fa-solid fa-rss"></i> 强制订阅
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="dropdown-item {% if page == 'inactive_user_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-clock"></i> 不活跃用户
+                                    </a>
+                                </li>
+                            </ul>
                         </li>
                         
-                        <!-- Points & Activities - Dropdown -->
+                        <!-- Group Features -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['timed_group_control', 'invitation_activity', 'member_level', 'sync_group_messages', 'sync_message_logs'] %}active{% endif %}" 
+                               id="featuresDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-layer-group"></i> ⚙️ 群组功能
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="featuresDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/timed_group_control" class="dropdown-item {% if page == 'timed_group_control' %}active{% endif %}">
+                                        <i class="fa-solid fa-clock"></i> 定时开关群
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/invitation_activity" class="dropdown-item {% if page == 'invitation_activity' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-plus"></i> 邀请活动
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/member_level" class="dropdown-item {% if page == 'member_level' %}active{% endif %}">
+                                        <i class="fa-solid fa-medal"></i> 成员等级
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="dropdown-item {% if page == 'sync_group_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-sync"></i> 同步设置
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/sync_message_logs" class="dropdown-item {% if page == 'sync_message_logs' %}active{% endif %}">
+                                        <i class="fa-solid fa-list"></i> 同步日志
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+                        
+                        <!-- Analytics & Monitoring -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['message_statistics', 'user_name_change'] %}active{% endif %}" 
+                               id="analyticsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-chart-bar"></i> 📈 统计 & 监控
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="analyticsDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/message_statistics" class="dropdown-item {% if page == 'message_statistics' %}active{% endif %}">
+                                        <i class="fa-solid fa-chart-line"></i> 消息统计
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/user_name_change" class="dropdown-item {% if page == 'user_name_change' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-edit"></i> 改名监控
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+                        
+                        <!-- Points & Activities -->
                         <li class="nav-item dropdown">
                             <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
                                id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-coins"></i> 积分 & 互动
+                                <i class="fa-solid fa-coins"></i> 🎮 积分 & 互动
                             </a>
                             <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsDropdown">
                                 <li>
@@ -512,6 +545,13 @@
                                     </a>
                                 </li>
                             </ul>
+                        </li>
+                        
+                        <!-- Other Settings -->
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-cog"></i> ⚙️ 其他设置
+                            </a>
                         </li>
                         {% endif %}
                         

@@ -948,7 +948,30 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                location.reload();
+                // Remove from local data
+                const index = itemsData.findIndex(item => item.id === id);
+                if (index > -1) {
+                    itemsData.splice(index, 1);
+                }
+                
+                // Update filtered items
+                const filteredIndex = filteredItems.findIndex(item => item.id === id);
+                if (filteredIndex > -1) {
+                    filteredItems.splice(filteredIndex, 1);
+                }
+                
+                // Remove row from table
+                const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
+                if (row) {
+                    row.remove();
+                }
+                
+                // Update pagination
+                updatePagination();
+                updateTableDisplay();
+                
+                // Show success message
+                alert('删除成功');
             } else {
                 alert(result.msg || '删除失败');
             }

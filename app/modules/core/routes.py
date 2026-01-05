@@ -3,7 +3,7 @@ from app import db
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone)
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -2702,19 +2702,56 @@ async def run_lottery_draws(context):
                     winners = []
                     
                     if lottery.lottery_type == 'message_count':
-                        # Find users who sent enough messages (simplified)
-                        # In real implementation, would need message tracking
-                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
-                        if eligible_users:
+                        # 🆕 Use actual message tracking data
+                        # Get participants who sent at least one message
+                        # Limit to top 10000 participants for performance in very large groups
+                        message_counts = LotteryMessageCount.query.filter_by(
+                            lottery_id=lottery.id
+                        ).filter(LotteryMessageCount.message_count > 0).order_by(
+                            LotteryMessageCount.message_count.desc()
+                        ).limit(10000).all()
+                        
+                        if message_counts:
+                            # Create weighted random selection based on message counts
+                            # Users with more messages have higher chance to win
                             import random
-                            winner = random.choice(eligible_users)
-                            winners = [winner.tg_id]
+                            participants = [(mc.user_id, mc.message_count) for mc in message_counts]
+                            
+                            # Weighted random selection
+                            total_messages = sum(count for _, count in participants)
+                            if total_messages > 0:
+                                rand_val = random.uniform(0, total_messages)
+                                cumulative = 0
+                                for user_id, count in participants:
+                                    cumulative += count
+                                    if cumulative >= rand_val:
+                                        winners = [user_id]
+                                        break
+                        else:
+                            # Fallback: if no one sent messages, pick from group users (limited sample)
+                            eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                            if eligible_users:
+                                import random
+                                winner = random.choice(eligible_users)
+                                winners = [winner.tg_id]
                     
                     elif lottery.lottery_type == 'message_rank':
-                        # Find top N users (simplified)
-                        # In real implementation, would track message counts
-                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(lottery.top_n_winners).all()
-                        winners = [u.tg_id for u in top_users]
+                        # 🆕 Use actual message tracking data - top N senders
+                        # Optimized: use limit() to avoid loading all records
+                        top_senders = LotteryMessageCount.query.filter_by(
+                            lottery_id=lottery.id
+                        ).order_by(LotteryMessageCount.message_count.desc()).limit(
+                            min(lottery.top_n_winners or 1, 100)  # Cap at 100 winners for performance
+                        ).all()
+                        
+                        winners = [mc.user_id for mc in top_senders]
+                        
+                        if not winners:
+                            # Fallback: if no tracking data, use group users (limited sample)
+                            top_users = GroupUser.query.filter_by(group_id=group.id).limit(
+                                min(lottery.top_n_winners or 1, 100)
+                            ).all()
+                            winners = [u.tg_id for u in top_users]
                     
                     # Update lottery with winners
                     lottery.winner_ids = json.dumps(winners)
@@ -3174,7 +3211,7 @@ async def cmd_userinfo(update: Update, context):
         info_lines.append(f"   姓氏: {target_user.last_name}")
     if target_user.username:
         info_lines.append(f"🔗 Username: @{target_user.username}")
-    info_lines.append(f"🆔 用户ID: {target_user.id}")
+    info_lines.append(f"🆔 用户ID: <code>{target_user.id}</code>")
     info_lines.append(f"🤖 机器人: {'是' if target_user.is_bot else '否'}")
     
     if group_user:
@@ -3252,7 +3289,7 @@ async def cmd_userinfo(update: Update, context):
         print(f"Error getting member info: {e}")
     
     info_text = "\n".join(info_lines)
-    await update.message.reply_text(info_text)
+    await update.message.reply_html(info_text)
 
 async def cmd_bid(update: Update, context):
     """积分竞拍出价命令 /bid <auction_id> <amount>"""
@@ -3835,6 +3872,49 @@ async def on_message(update: Update, context):
                         db.session.add(points_log)
                         db.session.commit()
             
+            # 🆕 Track messages for active lotteries (optimized for large groups)
+            if chat.type in ['group', 'supergroup']:
+                # Track for both message_count and message_rank lotteries
+                # Limit to 10 concurrent active lotteries to prevent performance issues in large groups
+                active_lotteries = GroupLottery.query.filter_by(
+                    group_id=group.id,
+                    status='active'
+                ).filter(GroupLottery.lottery_type.in_(['message_count', 'message_rank'])).limit(10).all()
+                
+                # Batch check: only process if user is registered (avoid unnecessary queries)
+                if active_lotteries:
+                    db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+                    if db_user:
+                        now = get_beijing_now()
+                        for lottery in active_lotteries:
+                            # Only track if lottery is still within its time window
+                            if lottery.start_time and lottery.end_time:
+                                if lottery.start_time <= now <= lottery.end_time:
+                                    # Get or create message count record
+                                    msg_count = LotteryMessageCount.query.filter_by(
+                                        lottery_id=lottery.id,
+                                        user_id=user.id
+                                    ).first()
+                                    
+                                    if not msg_count:
+                                        msg_count = LotteryMessageCount(
+                                            lottery_id=lottery.id,
+                                            group_id=group.id,
+                                            user_id=user.id,
+                                            message_count=0
+                                        )
+                                        db.session.add(msg_count)
+                                    
+                                    msg_count.message_count += 1
+                                    msg_count.updated_at = now
+                        
+                        # Batch commit all lottery tracking updates
+                        try:
+                            db.session.commit()
+                        except Exception as e:
+                            print(f"Error committing lottery tracking: {e}")
+                            db.session.rollback()
+            
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
@@ -3946,70 +4026,144 @@ async def on_message(update: Update, context):
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
 
-            # 3. 自动回复检查 (可与查询一起触发)
-            # Check for auto-reply, then continue to query check (both can trigger)
+            # 3. 自动回复检查 (Check points-based first, then regular auto-reply)
             if conf.get('auto_reply_open', True):
-                auto_reply = AutoReply.query.filter_by(
+                # 3.1 先检查积分自动回复 (Check Points-based Auto-Reply first)
+                points_reply = PointsAutoReply.query.filter_by(
                     group_id=group.id,
                     trigger_keyword=txt,
                     is_active=True
                 ).first()
                 
-                if auto_reply:
+                if points_reply and points_reply.points_cost > 0:
+                    # Points-based content found - handle it
                     try:
-                        # 构建按钮
-                        buttons = []
-                        try:
-                            links = json.loads(auto_reply.links or '[]')
-                            for link in links:
-                                if link.get('text') and link.get('url'):
-                                    buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
-                        except:
-                            pass
+                        # Check user points
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=user.id
+                        ).first()
                         
-                        # 🆕 Add bottom buttons from group settings
-                        bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
-                        if bottom_buttons_markup:
-                            # Merge bottom buttons with auto-reply buttons
-                            buttons.extend(bottom_buttons_markup.inline_keyboard)
-                        
-                        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-                        
-                        # 发送回复
-                        sent_reply = None
-                        content = sanitize_html_for_telegram(auto_reply.content or '')
-                        
-                        if auto_reply.media_type == 'image' and auto_reply.media_url:
-                            sent_reply = await msg.reply_photo(
-                                photo=auto_reply.media_url,
-                                caption=content,
-                                parse_mode='HTML',
-                                reply_markup=reply_markup
+                        if not user_points or user_points.points_balance < points_reply.points_cost:
+                            current_balance = user_points.points_balance if user_points else 0
+                            await msg.reply_text(
+                                f"❌ 积分不足！\n"
+                                f"需要: {points_reply.points_cost} 积分\n"
+                                f"当前: {current_balance} 积分"
                             )
-                        elif auto_reply.media_type == 'video' and auto_reply.media_url:
-                            sent_reply = await msg.reply_video(
-                                video=auto_reply.media_url,
-                                caption=content,
-                                parse_mode='HTML',
-                                reply_markup=reply_markup
-                            )
-                        elif content:
-                            sent_reply = await msg.reply_html(
-                                content,
-                                reply_markup=reply_markup,
-                                disable_web_page_preview=True
-                            )
-                        
-                        # 自动删除回复
-                        if sent_reply and auto_reply.delete_after > 0:
-                            context.job_queue.run_once(
-                                lambda c: c.job.data.delete(),
-                                auto_reply.delete_after,
-                                data=sent_reply
-                            )
+                        else:
+                            try:
+                                # Deduct points and log in a transaction
+                                user_points.points_balance -= points_reply.points_cost
+                                
+                                # Log the transaction
+                                points_log = PointsLog(
+                                    group_id=group.id,
+                                    user_id=user.id,
+                                    points_change=-points_reply.points_cost,
+                                    reason=f"查看内容: {txt}",
+                                    balance_after=user_points.points_balance
+                                )
+                                db.session.add(points_log)
+                                db.session.commit()
+                                
+                                # Send the content only after successful commit
+                                content = sanitize_html_for_telegram(points_reply.content or '')
+                                
+                                if points_reply.media_type == 'image' and points_reply.media_url:
+                                    await msg.reply_photo(
+                                        photo=points_reply.media_url,
+                                        caption=content,
+                                        parse_mode='HTML'
+                                    )
+                                elif points_reply.media_type == 'video' and points_reply.media_url:
+                                    await msg.reply_video(
+                                        video=points_reply.media_url,
+                                        caption=content,
+                                        parse_mode='HTML'
+                                    )
+                                elif content:
+                                    await msg.reply_html(
+                                        content,
+                                        disable_web_page_preview=True
+                                    )
+                                
+                                # Notify about deduction
+                                await msg.reply_text(
+                                    f"💎 已扣除 {points_reply.points_cost} 积分\n"
+                                    f"剩余: {user_points.points_balance} 积分"
+                                )
+                            except Exception as e:
+                                # Rollback on any database error
+                                db.session.rollback()
+                                print(f"Points deduction error: {e}")
+                                await msg.reply_text("❌ 积分扣除失败，请重试")
                     except Exception as e:
-                        print(f"Auto reply error: {e}")
-                # Continue to check for query functionality instead of returning
+                        print(f"Points-based auto reply error: {e}")
+                    # Don't check regular auto-reply if points-based was triggered
+                else:
+                    # 3.2 No points-based reply found, check regular auto-reply
+                    auto_reply = AutoReply.query.filter_by(
+                        group_id=group.id,
+                        trigger_keyword=txt,
+                        is_active=True
+                    ).first()
+                    
+                    if auto_reply:
+                        try:
+                            # 构建按钮
+                            buttons = []
+                            try:
+                                links = json.loads(auto_reply.links or '[]')
+                                for link in links:
+                                    if link.get('text') and link.get('url'):
+                                        buttons.append([InlineKeyboardButton(link['text'], url=link['url'])])
+                            except:
+                                pass
+                            
+                            # 🆕 Add bottom buttons from group settings
+                            bottom_buttons_markup = await display_bottom_buttons(chat.id, context)
+                            if bottom_buttons_markup:
+                                # Merge bottom buttons with auto-reply buttons
+                                buttons.extend(bottom_buttons_markup.inline_keyboard)
+                            
+                            reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+                            
+                            # 发送回复
+                            sent_reply = None
+                            content = sanitize_html_for_telegram(auto_reply.content or '')
+                            
+                            if auto_reply.media_type == 'image' and auto_reply.media_url:
+                                sent_reply = await msg.reply_photo(
+                                    photo=auto_reply.media_url,
+                                    caption=content,
+                                    parse_mode='HTML',
+                                    reply_markup=reply_markup
+                                )
+                            elif auto_reply.media_type == 'video' and auto_reply.media_url:
+                                sent_reply = await msg.reply_video(
+                                    video=auto_reply.media_url,
+                                    caption=content,
+                                    parse_mode='HTML',
+                                    reply_markup=reply_markup
+                                )
+                            elif content:
+                                sent_reply = await msg.reply_html(
+                                    content,
+                                    reply_markup=reply_markup,
+                                    disable_web_page_preview=True
+                                )
+                            
+                            # 自动删除回复
+                            if sent_reply and auto_reply.delete_after > 0:
+                                context.job_queue.run_once(
+                                    lambda c: c.job.data.delete(),
+                                    auto_reply.delete_after,
+                                    data=sent_reply
+                                )
+                        except Exception as e:
+                            print(f"Auto reply error: {e}")
+                # Continue to check for query functionality
             
             # 4. 查询功能
             query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]

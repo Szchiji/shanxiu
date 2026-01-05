@@ -116,7 +116,7 @@ This document describes the bot handler implementations for all 13 feature modul
 - **Multiple Point Rules**: Check-in, messages, invitations, etc.
 - **Points Tracking**: Real-time balance updates
 - **Transaction Logging**: Complete audit trail
-- **Points Auto-Reply**: Content that requires points (can use existing auto-reply)
+- **Points-based Auto-Reply**: Premium content that costs points to view (✅ Now Implemented!)
 - **Auction System**: Bidding with points for items
 
 **Bot Handlers**:
@@ -124,6 +124,7 @@ This document describes the bot handler implementations for all 13 feature modul
   - Awards points for messages based on active rules
   - Updates user point balances
   - Creates transaction logs
+  - **Handles points-based auto-reply with balance checks and deductions**
 - Integrated into check-in handler:
   - Awards points for daily check-ins
   - Tracks cumulative balances
@@ -140,41 +141,34 @@ This document describes the bot handler implementations for all 13 feature modul
 **Commands**:
 - `/bid <auction_id> <amount>` - Place a bid on an auction
 - `/auction` - View all active auctions
+- `/userinfo` - View user details including points and level
 
 **Configuration**:
 - `/group/<id>/points_rules` - Define point earning rules
+- `/group/<id>/points_auto_reply` - Create premium content with point costs
 - `/group/<id>/points_auction` - Create and manage auctions
-- `/group/<id>/points_log` - View transaction history
-- **Auction System**: Points-based bidding (requires additional commands)
-
-**Bot Handlers**:
-- Integrated into `on_message()`:
-  - Awards points for messages based on active rules
-  - Updates user point balances
-  - Creates transaction logs
-- Integrated into check-in handler:
-  - Awards points for daily check-ins
-  - Tracks cumulative balances
-- Integrated into `handle_new_chat_member()`:
-  - Awards points for successful invitations
-
-**Configuration**:
-- `/group/<id>/points_rules` - Define point earning rules
 - `/group/<id>/points_log` - View transaction history
 
 ### 7. Group Lottery (群抽奖)
-**Status**: ✅ Implemented with automated draws
+**Status**: ✅ Fully Implemented with Message Tracking
 
 **Features**:
-- **Message Count Lottery**: Random draw from active participants
-- **Top Sender Lottery**: Rewards most active members
+- **Message Count Lottery**: Weighted random selection based on participant activity (✅ Now with tracking!)
+- **Top Sender Lottery**: Rewards most active members based on actual message counts (✅ Now with tracking!)
 - **Automated Draws**: Background task runs lotteries when time expires
 - **Winner Announcements**: Automatic notification in group
+- **Message Tracking**: Individual user message counts tracked during lottery period
 
 **Bot Handlers**:
+- Integrated into `on_message()`:
+  - **Tracks message counts for active lotteries** (both message_count and message_rank types)
+  - Updates LotteryMessageCount table in real-time
+  - Only tracks during lottery active period (start_time to end_time)
 - `run_lottery_draws()` - Background task (runs every 5 minutes)
   - Finds ended but undrawn lotteries
-  - Selects winners based on lottery type
+  - **Uses actual message tracking data for winner selection**
+  - message_count: Weighted random (more messages = higher chance)
+  - message_rank: Top N users by message count
   - Announces results in group chat
   - Updates lottery status
 
@@ -384,18 +378,20 @@ To enable features in a group:
 
 ## Future Enhancements
 
-### Potential Additions
-1. **Auction Bidding Commands**: Add `/bid` command for auctions
-2. **Bottom Button Integration**: Display buttons with messages
-3. **Points-based Auto-reply**: Deduct points for premium content
-4. **Advanced Lottery**: Track message counts per user
-5. **Level Badges**: Display badges in user queries
-6. **Channel Pin Control**: Implement pin cancellation logic
+### ✅ Recently Completed (2024)
+1. ✅ **Auction Bidding Commands**: `/bid` and `/auction` commands fully implemented
+2. ✅ **Bottom Button Integration**: Buttons auto-display on /start and auto-reply messages
+3. ✅ **Points-based Auto-reply**: Premium content with point deduction now working
+4. ✅ **Advanced Lottery**: Message count tracking per user fully implemented
+5. ✅ **Level Badges**: Badges displayed in /userinfo command
+6. ✅ **Channel Pin Control**: Pin cancellation logic fully implemented
 
-### Scalability
+### Potential Future Additions
 - Message queuing for high-volume groups
 - Caching for frequently accessed settings
 - Distributed processing for large deployments
+- Advanced analytics dashboard
+- Multi-bot support with load balancing
 
 ## Conclusion
 
@@ -403,9 +399,12 @@ All 13 feature modules now have working bot handlers integrated into the system.
 - ✅ Complete entry/exit management
 - ✅ Robust spam protection
 - ✅ Automated group scheduling
-- ✅ Points and rewards system
+- ✅ Points and rewards system (with premium content)
+- ✅ Advanced lottery with message tracking
 - ✅ Message synchronization
 - ✅ Comprehensive monitoring
 - ✅ Flexible configuration
 
-The bot is production-ready with proper error handling, logging, and performance optimization.
+**All documented features are now fully functional in the Telegram bot!**
+
+The bot is production-ready with proper error handling, logging, transaction management, and performance optimization.

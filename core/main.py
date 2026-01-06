@@ -72,6 +72,17 @@ async def cmd_start(update: Update, context):
 如需帮助，请联系管理员。"""
         
         keyboard = [[InlineKeyboardButton('📣 官方群组', url='https://t.me/')]]
+        
+        # Add admin backend login button if user is an admin
+        if user.id in ADMIN_IDS:
+            # Build backend login URL
+            railway_domain = getattr(settings, 'RAILWAY_PUBLIC_DOMAIN', '')
+            if railway_domain:
+                login_url = f'https://{railway_domain}/login/'
+            else:
+                login_url = 'http://localhost:8000/login/'
+            keyboard.append([InlineKeyboardButton('🔐 登录后台', url=login_url)])
+        
         await update.message.reply_text(
             hello_msg,
             reply_markup=InlineKeyboardMarkup(keyboard)

@@ -1,142 +1,82 @@
-from app import create_app, db
-import threading
-import asyncio
+#!/usr/bin/env python
+"""
+Entry point for running the application.
+
+This script can:
+1. Run the Django development server
+2. Run the Telegram bot
+3. Run both together (for production)
+"""
+
 import os
 import sys
-import time
-from sqlalchemy import text
+import threading
 
-app = create_app()
 
-def init_database(app):
-    """Initialize database tables synchronously on startup."""
-    with app.app_context():
-        try:
-            db.create_all()
-            print("✅ 数据库表初始化完成", flush=True)
-        except Exception as e:
-            print(f"❌ 数据库初始化失败: {e}", flush=True)
-            raise
-
-def fix_database_schema(app):
-    """Add missing columns to existing tables (synchronous, runs before server starts)."""
-    with app.app_context():
-        # List of ALTER TABLE statements to execute
-        alter_statements = [
-            "ALTER TABLE bot_groups ADD COLUMN last_query_msg_id INTEGER",
-            "ALTER TABLE group_users ADD COLUMN expiration_date TIMESTAMP",
-            "ALTER TABLE group_users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE",
-            "ALTER TABLE group_users ADD COLUMN last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            # Auto replies table columns
-            "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
-            "CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)",
-            "ALTER TABLE auto_replies ADD COLUMN trigger_keyword VARCHAR(255) NOT NULL DEFAULT ''",
-            "ALTER TABLE auto_replies ADD COLUMN media_type VARCHAR(20) DEFAULT 'text'",
-            "ALTER TABLE auto_replies ADD COLUMN media_url TEXT",
-            "ALTER TABLE auto_replies ADD COLUMN content TEXT",
-            "ALTER TABLE auto_replies ADD COLUMN links TEXT DEFAULT '[]'",
-            "ALTER TABLE auto_replies ADD COLUMN delete_after INTEGER DEFAULT 0",
-            "ALTER TABLE auto_replies ADD COLUMN remark TEXT",
-            "ALTER TABLE auto_replies ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
-            "ALTER TABLE auto_replies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            "ALTER TABLE auto_replies ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            # Scheduled messages table columns
-            "ALTER TABLE scheduled_messages ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
-            "CREATE INDEX IF NOT EXISTS ix_scheduled_messages_group_id ON scheduled_messages(group_id)",
-            "ALTER TABLE scheduled_messages ADD COLUMN media_type VARCHAR(20) DEFAULT 'text'",
-            "ALTER TABLE scheduled_messages ADD COLUMN media_url TEXT",
-            "ALTER TABLE scheduled_messages ADD COLUMN content TEXT",
-            "ALTER TABLE scheduled_messages ADD COLUMN links TEXT DEFAULT '[]'",
-            "ALTER TABLE scheduled_messages ADD COLUMN repeat_interval INTEGER DEFAULT 0",
-            "ALTER TABLE scheduled_messages ADD COLUMN delete_previous BOOLEAN DEFAULT FALSE",
-            "ALTER TABLE scheduled_messages ADD COLUMN last_message_id BIGINT",
-            "ALTER TABLE scheduled_messages ADD COLUMN start_time TIMESTAMP",
-            "ALTER TABLE scheduled_messages ADD COLUMN stop_time TIMESTAMP",
-            "ALTER TABLE scheduled_messages ADD COLUMN remark TEXT",
-            "ALTER TABLE scheduled_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
-            "ALTER TABLE scheduled_messages ADD COLUMN last_sent_at TIMESTAMP",
-            "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            "ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            # Start messages table columns
-            "ALTER TABLE start_messages ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
-            "CREATE INDEX IF NOT EXISTS ix_start_messages_group_id ON start_messages(group_id)",
-            "ALTER TABLE start_messages ADD COLUMN message_type VARCHAR(20) DEFAULT 'user'",
-            "ALTER TABLE start_messages ADD COLUMN media_type VARCHAR(20) DEFAULT 'text'",
-            "ALTER TABLE start_messages ADD COLUMN media_url TEXT",
-            "ALTER TABLE start_messages ADD COLUMN content TEXT",
-            "ALTER TABLE start_messages ADD COLUMN links TEXT DEFAULT '[]'",
-            "ALTER TABLE start_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
-            "ALTER TABLE start_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            "ALTER TABLE start_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            # Group bottom button table columns
-            "ALTER TABLE group_bottom_button ADD COLUMN trigger_keyword VARCHAR(255) NULL",
-            "ALTER TABLE group_bottom_button ADD COLUMN row_position INTEGER DEFAULT 0",
-            "ALTER TABLE group_bottom_button ADD COLUMN input_field_placeholder VARCHAR(255) NULL",
-            # Bot clones table columns
-            "ALTER TABLE bot_clones ADD COLUMN owner_user_id BIGINT",
-            "ALTER TABLE bot_clones ADD COLUMN admin_user_ids TEXT DEFAULT '[]'",
-            # User points table columns - add current_level_id to track member levels
-            # Column is nullable, so existing records will have NULL until update_member_levels runs
-            "ALTER TABLE user_points ADD COLUMN current_level_id INTEGER REFERENCES member_level(id)",
-        ]
-        
-        # Execute each statement in its own transaction to handle PostgreSQL properly
-        for stmt in alter_statements:
-            try:
-                with db.engine.connect() as conn:
-                    conn.execute(text(stmt))
-                    conn.commit()
-            except Exception:
-                # Column/index likely already exists, which is fine
-                pass
-        
-        print("✅ 数据库结构检查完成", flush=True)
-
-def run_flask():
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
-
-def start_bot_process_forever(flask_app):
+def run_django(use_reloader=True):
+    """Run Django server
+    
+    Args:
+        use_reloader: Whether to use Django's autoreloader. Must be False when
+                      running in a non-main thread.
     """
-    启动一个永不退出的事件循环，供 Webhook 使用
-    """
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+    from django.core.management import execute_from_command_line
+    
+    port = int(os.getenv('PORT', 8000))
+    cmd = [sys.argv[0], 'runserver', f'0.0.0.0:{port}']
+    if not use_reloader:
+        cmd.append('--noreload')
+    execute_from_command_line(cmd)
+
+
+def is_bot_configured():
+    """Check if Telegram bot token is configured and not empty"""
+    return bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+
+
+def run_bot():
+    """Run Telegram bot"""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+    
+    # Wait for Django to be ready
+    import time
     time.sleep(3)
-    from app.modules.core.routes import run_bot
     
-    print("🤖 启动机器人后台循环...", flush=True)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    from core.main import main
+    main()
+
+
+def main():
+    """Main entry point"""
+    import argparse
     
-    # 1. 初始化 (传入 Flask App 实例)
-    loop.run_until_complete(run_bot(flask_app))
+    parser = argparse.ArgumentParser(description='Run the application')
+    parser.add_argument('--mode', choices=['web', 'bot', 'both'], default='both',
+                       help='Running mode: web (Django), bot (Telegram), both')
+    args = parser.parse_args()
     
-    # 2. ⚡ 核心：让 Loop 永远跑下去，活着等待 Flask 的投喂
-    print("✅ 机器人循环已启动，正在监听 Webhook 任务...", flush=True)
-    loop.run_forever()
+    print(f"🚀 Starting in {args.mode} mode...")
+    
+    if args.mode == 'web':
+        run_django()
+    elif args.mode == 'bot':
+        run_bot()
+    else:
+        # Check if bot is configured
+        if is_bot_configured():
+            # Run both in separate threads
+            # Disable autoreload when running Django in a thread (signal handlers only work in main thread)
+            django_thread = threading.Thread(target=run_django, args=(False,), daemon=True)
+            django_thread.start()
+            
+            # Run bot in main thread
+            run_bot()
+        else:
+            # Bot token not configured, only run Django
+            print("ℹ️ TELEGRAM_BOT_TOKEN not configured, starting web server only.")
+            run_django()
+
 
 if __name__ == '__main__':
-    domain = os.getenv('RAILWAY_PUBLIC_DOMAIN')
-    mode = "Webhook" if domain else "Polling"
-    print(f"🚀 系统启动中 ({mode} 模式)...", flush=True)
-
-    # 1. 初始化数据库表 (同步执行，确保表存在后再启动服务)
-    init_database(app)
-    
-    # 2. 数据库修复 (同步执行，确保列存在后再启动 Web 服务)
-    fix_database_schema(app)
-    
-    # 3. 启动 Web (Flask)
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # 4. 启动机器人 (在独立线程中跑 loop_forever)
-    # ⚡️ 修复点：将 app 传入机器人线程
-    bot_thread = threading.Thread(target=start_bot_process_forever, args=(app,), daemon=True)
-    bot_thread.start()
-    
-    # 5. 主线程死循环保活
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        sys.exit(0)
+    main()

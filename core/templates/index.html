@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统计面板 - 管理后台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background: #f8f9fa;
+        }
+        .sidebar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .sidebar a {
+            color: white;
+            text-decoration: none;
+            display: block;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-2 sidebar">
+                <h4 class="text-white mb-4">🤖 管理后台</h4>
+                <a href="/">📊 统计面板</a>
+                <a href="/home/">🏠 首页</a>
+                <a href="/logout/">🚪 退出登录</a>
+            </div>
+            
+            <!-- Main Content -->
+            <div class="col-md-10 p-4">
+                <h2 class="mb-4">📊 统计面板</h2>
+                
+                <!-- Stats Cards -->
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="stat-card">
+                            <h6>总用户数</h6>
+                            <div class="stat-number">{{ total }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="stat-card">
+                            <h6>本页用户</h6>
+                            <div class="stat-number">{{ user_count }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="stat-card">
+                            <h6>今日新增</h6>
+                            <div class="stat-number">{{ daily_data|last }}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <h5>月度统计</h5>
+                            <canvas id="monthlyChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <h5>近7天统计</h5>
+                            <canvas id="dailyChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Search -->
+                <div class="stat-card">
+                    <h5>🔍 搜索用户</h5>
+                    <form method="get" action="{% url 'statistics_view' %}" class="d-flex gap-2">
+                        <input type="text" name="query" class="form-control" placeholder="输入用户ID..." value="{{ query }}">
+                        <button type="submit" class="btn btn-primary">搜索</button>
+                    </form>
+                </div>
+                
+                <!-- Users Table -->
+                <div class="stat-card">
+                    <h5>👤 用户列表</h5>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>用户ID</th>
+                                <th>用户名</th>
+                                <th>注册日期</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user, username in users %}
+                            <tr>
+                                <td>{{ user.telegram_id }}</td>
+                                <td>{{ username }}</td>
+                                <td>{{ user.joining_date }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="3" class="text-center">暂无数据</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    
+                    {% if next_page %}
+                    <a href="?page={{ next_page }}" class="btn btn-outline-primary">加载更多</a>
+                    {% endif %}
+                </div>
+                
+                <!-- Message Form -->
+                <div class="stat-card">
+                    <h5>📤 发送消息</h5>
+                    <form method="post" action="{% url 'send_message_api' %}" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label">用户ID</label>
+                            <input type="text" name="user_id" class="form-control" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">消息内容</label>
+                            <textarea name="message" class="form-control" rows="3" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">图片（可选）</label>
+                            <input type="file" name="image" class="form-control" accept="image/*">
+                        </div>
+                        <button type="submit" class="btn btn-primary">发送</button>
+                    </form>
+                </div>
+                
+                <!-- Broadcast Form -->
+                <div class="stat-card">
+                    <h5>📢 群发消息</h5>
+                    <form method="post" action="{% url 'broadcast_message_api' %}" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label">消息内容</label>
+                            <textarea name="message" class="form-control" rows="3" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">图片（可选）</label>
+                            <input type="file" name="image" class="form-control" accept="image/*">
+                        </div>
+                        <button type="submit" class="btn btn-danger">发送给所有用户</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Monthly Chart
+        const monthlyCtx = document.getElementById('monthlyChart').getContext('2d');
+        new Chart(monthlyCtx, {
+            type: 'bar',
+            data: {
+                labels: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+                datasets: [{
+                    label: '新增用户',
+                    data: {{ monthly_data|safe }},
+                    backgroundColor: 'rgba(102, 126, 234, 0.6)',
+                    borderColor: 'rgba(102, 126, 234, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+        
+        // Daily Chart
+        const dailyCtx = document.getElementById('dailyChart').getContext('2d');
+        new Chart(dailyCtx, {
+            type: 'line',
+            data: {
+                labels: {{ last_seven_days|safe }},
+                datasets: [{
+                    label: '新增用户',
+                    data: {{ daily_data|safe }},
+                    backgroundColor: 'rgba(118, 75, 162, 0.2)',
+                    borderColor: 'rgba(118, 75, 162, 1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

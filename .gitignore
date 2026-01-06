@@ -36,6 +36,7 @@ env/
 # Database
 *.db
 *.sqlite3
+db.sqlite3
 
 # OS
 .DS_Store
@@ -44,3 +45,11 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Django
+staticfiles/
+media/
+*.log
+
+# Node
+node_modules/

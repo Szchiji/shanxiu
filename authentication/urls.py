@@ -15,5 +15,6 @@ urlpatterns = [
     path('search/', statistics_view, name='statistics_view'),
     path('sendmessage/', send_message_api, name='send_message_api'),
     path('broadcastmessage/', broadcast_message_api, name='broadcast_message_api'),
-    path('logout/', LogoutView.as_view(), name="logout"),
+    path('logout/', LogoutView.as_view(next_page='/login/'), name="logout"),
+    path('core/logout', LogoutView.as_view(next_page='/login/'), name="core_logout"),
 ]

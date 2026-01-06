@@ -5424,9 +5424,10 @@ async def cmd_start(update: Update, context):
         # Get custom private start message from configuration
         def _get_private_start_msg():
             with global_flask_app.app_context():
-                # Try to get configuration from the first active group (bot-level setting)
+                # Try to get configuration from the most recently updated group (bot-level setting)
+                # This ensures the latest edited msg_private_start is used
                 # or use DEFAULT_SYSTEM as fallback
-                group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.id).first()
+                group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.updated_at.desc()).first()
                 conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
                 return conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
         

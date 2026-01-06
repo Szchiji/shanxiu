@@ -6,25 +6,24 @@
 
 <style>
     .page-header {
-        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
         color: white;
-        padding: 1.5rem 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 20px rgba(250, 112, 154, 0.3);
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 25px rgba(245, 158, 11, 0.4);
     }
     
     .lotteries-card {
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
-        transition: all 0.3s ease;
+        border-radius: 14px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
         margin-bottom: 1.5rem;
     }
     
     .lottery-item {
-        border-bottom: 1px solid #eee;
-        padding: 1rem;
+        border-bottom: 1px solid var(--border-color);
+        padding: 1.25rem;
         transition: background-color 0.2s;
     }
     
@@ -33,7 +32,42 @@
     }
     
     .lottery-item:hover {
-        background-color: #f8f9fa;
+        background-color: var(--bg-card-hover);
+    }
+    
+    .lottery-item h6 {
+        color: var(--text-primary);
+    }
+    
+    .lottery-item p {
+        color: var(--text-muted);
+    }
+    
+    .lottery-item small {
+        color: var(--text-muted);
+    }
+    
+    .card-header {
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
+    }
+    
+    .modal-body input, .modal-body select, .modal-body textarea {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+    }
+    
+    .modal-body input:focus, .modal-body select:focus, .modal-body textarea:focus {
+        background: var(--bg-secondary);
+        border-color: #7c3aed;
+        color: var(--text-primary);
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25);
+    }
+    
+    .modal-body label {
+        color: var(--text-secondary);
     }
 </style>
 

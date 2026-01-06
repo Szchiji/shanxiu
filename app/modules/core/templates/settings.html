@@ -17,6 +17,9 @@
         font-size: 0.8rem;
         font-family: 'Courier New', Consolas, monospace;
         tab-size: 2;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
     }
     
     @media (min-width: 768px) {
@@ -26,37 +29,37 @@
     }
     
     #editor a {
-        color: #007bff;
+        color: #a855f7;
         text-decoration: underline;
     }
     .section-title { 
         font-size: 0.75rem; 
         font-weight: 700; 
-        color: #6c757d; 
+        color: var(--text-muted); 
         text-transform: uppercase; 
         margin-bottom: 0.5rem; 
     }
     
     @media (min-width: 768px) {
         .section-title {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
         }
     }
     
     .settings-header {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        background: var(--info-gradient);
         color: white;
         padding: 1rem 1.25rem;
         border-radius: 12px;
         margin-bottom: 1rem;
-        box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+        box-shadow: 0 8px 25px rgba(6, 182, 212, 0.4);
     }
     
     @media (min-width: 768px) {
         .settings-header {
-            padding: 1.5rem 2rem;
-            border-radius: 15px;
-            margin-bottom: 2rem;
+            padding: 1.25rem 1.5rem;
+            border-radius: 14px;
+            margin-bottom: 1.5rem;
         }
     }
     
@@ -66,7 +69,7 @@
     
     @media (min-width: 768px) {
         .settings-header h4 {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
         }
     }
     
@@ -76,52 +79,53 @@
     
     @media (min-width: 768px) {
         .settings-header p {
-            font-size: 1rem;
+            font-size: 0.9rem;
         }
     }
     
     .config-card {
         border-radius: 12px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
         transition: all 0.3s ease;
     }
     
     @media (min-width: 768px) {
         .config-card {
-            border-radius: 15px;
+            border-radius: 14px;
         }
     }
     
     .config-card:hover {
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        border-color: rgba(124, 58, 237, 0.5);
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.2);
         transform: translateY(-2px);
     }
     
     .config-section {
-        background: white;
+        background: var(--bg-secondary);
         border-radius: 10px;
         padding: 1rem;
         margin-bottom: 1rem;
-        border: 2px solid #f0f0f0;
+        border: 1px solid var(--border-color);
         transition: all 0.3s ease;
     }
     
     @media (min-width: 768px) {
         .config-section {
             border-radius: 12px;
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
     }
     
     .config-section:hover {
-        border-color: #4facfe;
-        box-shadow: 0 5px 15px rgba(79, 172, 254, 0.1);
+        border-color: rgba(6, 182, 212, 0.5);
+        box-shadow: 0 5px 15px rgba(6, 182, 212, 0.15);
     }
     
     .editor-toolbar {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        border-bottom: 2px solid #e0e0e0;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
         padding: 0.75rem;
         border-radius: 10px 10px 0 0;
     }
@@ -136,12 +140,12 @@
         border-radius: 0 0 10px 10px;
         min-height: 250px;
         padding: 1rem;
-        background: white;
+        background: var(--bg-secondary);
     }
     
     @media (min-width: 768px) {
         .editor-content {
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
     }
     
@@ -159,16 +163,17 @@
     }
     
     .form-switch .form-check-input:checked {
-        background-color: #4facfe;
-        border-color: #4facfe;
+        background-color: #7c3aed;
+        border-color: #7c3aed;
     }
     
     .template-selector {
         border-radius: 8px;
-        border: 2px solid #4facfe;
+        border: 1px solid var(--border-color);
         padding: 0.5rem 0.75rem;
         font-weight: 600;
-        background: white;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
         font-size: 0.85rem;
     }
     
@@ -176,17 +181,17 @@
         .template-selector {
             border-radius: 10px;
             padding: 0.6rem 1rem;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
     }
     
     .btn-toolbar-action {
-        border: none;
-        background: white;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        color: var(--text-secondary);
         padding: 0.4rem 0.6rem;
         border-radius: 6px;
         transition: all 0.3s ease;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         font-size: 0.85rem;
     }
     
@@ -194,14 +199,15 @@
         .btn-toolbar-action {
             padding: 0.5rem 0.8rem;
             border-radius: 8px;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
     }
     
     .btn-toolbar-action:hover {
-        background: #4facfe;
+        background: var(--primary-gradient);
         color: white;
         transform: scale(1.05);
+        border-color: transparent;
     }
     
     .badge-variable {
@@ -209,47 +215,33 @@
         transition: all 0.3s ease;
         padding: 0.4rem 0.75rem;
         font-weight: 600;
-        font-size: 0.8rem;
+        font-size: 0.75rem;
     }
     
     @media (min-width: 768px) {
         .badge-variable {
-            padding: 0.5rem 1rem;
-            font-size: 0.85rem;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
         }
     }
     
     .badge-variable:hover {
         transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
     
-    .form-control {
-        font-size: 0.85rem;
-        padding: 0.5rem 0.75rem;
-        border-radius: 8px;
+    .card-header {
+        background: var(--bg-card) !important;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
     }
     
-    @media (min-width: 768px) {
-        .form-control {
-            font-size: 0.9rem;
-            padding: 0.6rem 1rem;
-            border-radius: 10px;
-        }
+    .config-section label {
+        color: var(--text-secondary);
     }
     
-    .btn {
-        font-size: 0.85rem;
-        padding: 0.5rem 0.75rem;
-        border-radius: 8px;
-    }
-    
-    @media (min-width: 768px) {
-        .btn {
-            font-size: 0.9rem;
-            padding: 0.6rem 1rem;
-            border-radius: 10px;
-        }
+    .config-section .form-text {
+        color: var(--text-muted);
     }
 </style>
 

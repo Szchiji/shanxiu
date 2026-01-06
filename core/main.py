@@ -27,6 +27,7 @@ from django.conf import settings
 from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM
 from authentication.models import TelegramUser
 from datetime import date
+from asgiref.sync import sync_to_async
 import json
 
 # Configure logging
@@ -48,12 +49,16 @@ async def cmd_start(update: Update, context):
     
     print(f"✅ /start command triggered by user ID: {user.id}")
     
-    # Record user if not exists
+    # Record user if not exists - use sync_to_async for Django ORM
     try:
-        tg_user, created = TelegramUser.objects.get_or_create(
-            telegram_id=user.id,
-            defaults={'joining_date': date.today()}
-        )
+        @sync_to_async
+        def get_or_create_user():
+            return TelegramUser.objects.get_or_create(
+                telegram_id=user.id,
+                defaults={'joining_date': date.today()}
+            )
+        
+        tg_user, created = await get_or_create_user()
         if created:
             print(f"📝 New user registered: {user.id}")
     except Exception as e:
@@ -120,8 +125,12 @@ async def on_message(update: Update, context):
         return
     
     try:
-        # Get group configuration
-        group = BotGroup.objects.filter(chat_id=str(chat.id)).first()
+        # Get group configuration - use sync_to_async for Django ORM
+        @sync_to_async
+        def get_group():
+            return BotGroup.objects.filter(chat_id=str(chat.id)).first()
+        
+        group = await get_group()
         if not group or not group.is_active:
             return
         
@@ -141,22 +150,34 @@ async def on_message(update: Update, context):
         # Check-in command
         checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
         if conf.get('checkin_open') and text in checkin_cmds:
-            db_user = GroupUser.objects.filter(group_id=group.id, tg_id=user.id).first()
+            @sync_to_async
+            def get_db_user():
+                return GroupUser.objects.filter(group_id=group.id, tg_id=user.id).first()
+            
+            db_user = await get_db_user()
             if not db_user:
                 await update.message.reply_html(conf.get('msg_not_registered', '⚠️ 未认证用户'))
             else:
                 from django.utils import timezone
-                db_user.checkin_time = timezone.now()
-                db_user.online = True
-                db_user.save()
+                
+                @sync_to_async
+                def update_checkin():
+                    db_user.checkin_time = timezone.now()
+                    db_user.online = True
+                    db_user.save()
+                
+                await update_checkin()
                 await update.message.reply_html(conf.get('msg_checkin_success', '✅ 打卡成功！'))
             return
         
         # Query command
         query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]
         if conf.get('query_open') and text in query_cmds:
-            # Simple query response
-            users = GroupUser.objects.filter(group_id=group.id, online=True).count()
+            @sync_to_async
+            def count_online_users():
+                return GroupUser.objects.filter(group_id=group.id, online=True).count()
+            
+            users = await count_online_users()
             await update.message.reply_text(f"🔍 当前在线用户: {users} 人")
             return
         
@@ -171,16 +192,20 @@ async def on_my_chat_member(update: Update, context):
         status = update.my_chat_member.new_chat_member.status
         
         if chat.type in ['group', 'supergroup'] and status in ['administrator', 'member']:
-            # Register group
-            group, created = BotGroup.objects.get_or_create(
-                chat_id=str(chat.id),
-                defaults={
-                    'title': chat.title,
-                    'type': chat.type,
-                    'is_active': True,
-                    'fields_config': json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
-                }
-            )
+            # Register group - use sync_to_async for Django ORM
+            @sync_to_async
+            def get_or_create_group():
+                return BotGroup.objects.get_or_create(
+                    chat_id=str(chat.id),
+                    defaults={
+                        'title': chat.title,
+                        'type': chat.type,
+                        'is_active': True,
+                        'fields_config': json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+                    }
+                )
+            
+            group, created = await get_or_create_group()
             if created:
                 print(f"➕ New group registered: {chat.title}")
             

@@ -174,6 +174,24 @@
             font-size: 0.9rem;
         }
         
+        /* Feature description for nav-links */
+        .sidebar .nav-link .feature-desc {
+            display: block;
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+            font-weight: normal;
+            margin-left: 28px;
+        }
+        
+        .sidebar .nav-link:hover .feature-desc {
+            color: var(--text-secondary);
+        }
+        
+        .sidebar .nav-link.active .feature-desc {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
         .sidebar-heading {
             color: var(--text-muted);
             font-size: 0.7rem;
@@ -543,6 +561,24 @@
             color: #fff;
         }
         
+        /* Feature description styles */
+        .dropdown-item .feature-desc {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+            font-weight: normal;
+        }
+        
+        .dropdown-item:hover .feature-desc,
+        .dropdown-item:focus .feature-desc {
+            color: var(--text-secondary);
+        }
+        
+        .dropdown-item.active .feature-desc {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
         .dropdown-divider {
             border-color: var(--border-color);
         }
@@ -693,6 +729,7 @@
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/dashboard" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
                                 <i class="fa-solid fa-chart-line"></i> 📊 数据概览
+                                <span class="feature-desc">查看群组统计数据和概览</span>
                             </a>
                         </li>
                         
@@ -706,16 +743,19 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/users" class="dropdown-item {% if page == 'users' %}active{% endif %}">
                                         <i class="fa-solid fa-users"></i> 认证用户
+                                        <span class="feature-desc">管理群组已认证的用户列表</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/fields" class="dropdown-item {% if page == 'fields' %}active{% endif %}">
                                         <i class="fa-solid fa-list-check"></i> 资料字段
+                                        <span class="feature-desc">自定义用户资料的字段结构</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
                                         <i class="fa-solid fa-sliders"></i> 功能配置
+                                        <span class="feature-desc">配置打卡、查询等核心功能</span>
                                     </a>
                                 </li>
                             </ul>
@@ -731,21 +771,25 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/auto_replies" class="dropdown-item {% if page == 'auto_replies' %}active{% endif %}">
                                         <i class="fa-solid fa-reply"></i> 自动回复
+                                        <span class="feature-desc">设置关键词触发的自动回复消息</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="dropdown-item {% if page == 'scheduled_messages' %}active{% endif %}">
                                         <i class="fa-solid fa-clock"></i> 定时消息
+                                        <span class="feature-desc">定时发送消息到群组</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/start_messages" class="dropdown-item {% if page == 'start_messages' %}active{% endif %}">
                                         <i class="fa-solid fa-rocket"></i> /start 消息
+                                        <span class="feature-desc">设置用户点击 /start 时的回复</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="dropdown-item {% if page == 'group_bottom_button' %}active{% endif %}">
                                         <i class="fa-solid fa-hand-pointer"></i> 底部按钮
+                                        <span class="feature-desc">自定义群组消息底部的按钮</span>
                                     </a>
                                 </li>
                             </ul>
@@ -761,26 +805,31 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="dropdown-item {% if page == 'entry_exit_settings' %}active{% endif %}">
                                         <i class="fa-solid fa-user-shield"></i> 进退群设置
+                                        <span class="feature-desc">配置新成员进群和退群的提醒</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/spam_protection" class="dropdown-item {% if page == 'spam_protection' %}active{% endif %}">
                                         <i class="fa-solid fa-shield-virus"></i> 垃圾防护
+                                        <span class="feature-desc">自动检测和过滤垃圾消息</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/keyword_filter" class="dropdown-item {% if page == 'keyword_filter' %}active{% endif %}">
                                         <i class="fa-solid fa-filter"></i> 关键词过滤
+                                        <span class="feature-desc">过滤包含特定关键词的消息</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="dropdown-item {% if page == 'forced_channel_subscription' %}active{% endif %}">
                                         <i class="fa-solid fa-rss"></i> 强制订阅
+                                        <span class="feature-desc">要求用户订阅指定频道才能发言</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="dropdown-item {% if page == 'inactive_user_settings' %}active{% endif %}">
                                         <i class="fa-solid fa-user-clock"></i> 不活跃用户
+                                        <span class="feature-desc">处理长期不活跃的群成员</span>
                                     </a>
                                 </li>
                             </ul>
@@ -796,27 +845,32 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/timed_group_control" class="dropdown-item {% if page == 'timed_group_control' %}active{% endif %}">
                                         <i class="fa-solid fa-clock"></i> 定时开关群
+                                        <span class="feature-desc">设置群组定时开启或关闭</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/invitation_activity" class="dropdown-item {% if page == 'invitation_activity' %}active{% endif %}">
                                         <i class="fa-solid fa-user-plus"></i> 邀请活动
+                                        <span class="feature-desc">邀请好友奖励活动设置</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/member_level" class="dropdown-item {% if page == 'member_level' %}active{% endif %}">
                                         <i class="fa-solid fa-medal"></i> 成员等级
+                                        <span class="feature-desc">设置群成员等级和特权</span>
                                     </a>
                                 </li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="dropdown-item {% if page == 'sync_group_messages' %}active{% endif %}">
                                         <i class="fa-solid fa-sync"></i> 同步设置
+                                        <span class="feature-desc">设置消息同步到其他群组</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/sync_message_logs" class="dropdown-item {% if page == 'sync_message_logs' %}active{% endif %}">
                                         <i class="fa-solid fa-list"></i> 同步日志
+                                        <span class="feature-desc">查看消息同步历史记录</span>
                                     </a>
                                 </li>
                             </ul>
@@ -832,11 +886,13 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/message_statistics" class="dropdown-item {% if page == 'message_statistics' %}active{% endif %}">
                                         <i class="fa-solid fa-chart-line"></i> 消息统计
+                                        <span class="feature-desc">查看群组消息数量统计</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/user_name_change" class="dropdown-item {% if page == 'user_name_change' %}active{% endif %}">
                                         <i class="fa-solid fa-user-edit"></i> 改名监控
+                                        <span class="feature-desc">监控用户名称变更记录</span>
                                     </a>
                                 </li>
                             </ul>
@@ -852,42 +908,50 @@
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
                                         <i class="fa-solid fa-list-check"></i> 积分规则
+                                        <span class="feature-desc">设置积分获取和扣除规则</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="dropdown-item {% if page == 'points_auto_reply' %}active{% endif %}">
                                         <i class="fa-solid fa-comments-dollar"></i> 积分回复
+                                        <span class="feature-desc">需要消耗积分查看的内容</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/points_auction" class="dropdown-item {% if page == 'points_auction' %}active{% endif %}">
                                         <i class="fa-solid fa-gavel"></i> 积分竞拍
+                                        <span class="feature-desc">使用积分参与物品竞拍</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/points_log" class="dropdown-item {% if page == 'points_log' %}active{% endif %}">
                                         <i class="fa-solid fa-history"></i> 积分日志
+                                        <span class="feature-desc">查看积分变动历史记录</span>
                                     </a>
                                 </li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
                                         <i class="fa-solid fa-trophy"></i> 群抽奖
+                                        <span class="feature-desc">创建和管理群内抽奖活动</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/group_votes" class="dropdown-item {% if page == 'group_votes' %}active{% endif %}">
                                         <i class="fa-solid fa-square-poll-vertical"></i> 群投票
+                                        <span class="feature-desc">创建群内投票和问卷</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/quiz_games" class="dropdown-item {% if page == 'quiz_games' %}active{% endif %}">
                                         <i class="fa-solid fa-brain"></i> 问答游戏
+                                        <span class="feature-desc">创建知识问答赢取积分</span>
                                     </a>
                                 </li>
                                 <li>
                                     <a href="/core/group/{{ current_group.id }}/red_packet_settings" class="dropdown-item {% if page == 'red_packet_settings' %}active{% endif %}">
                                         <i class="fa-solid fa-gift"></i> 🧧 红包
+                                        <span class="feature-desc">发送积分红包给群成员</span>
                                     </a>
                                 </li>
                             </ul>
@@ -897,6 +961,7 @@
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
                                 <i class="fa-solid fa-cog"></i> ⚙️ 其他设置
+                                <span class="feature-desc">自动删除系统消息等杂项设置</span>
                             </a>
                         </li>
                         {% endif %}
@@ -905,12 +970,14 @@
                         <li class="nav-item">
                             <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
                                 <i class="fa-solid fa-robot"></i> 机器人克隆
+                                <span class="feature-desc">管理机器人克隆实例</span>
                             </a>
                         </li>
                         
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">
                                 <i class="fa-solid fa-layer-group"></i> 选择群组
+                                <span class="feature-desc">切换管理的群组</span>
                             </a>
                         </li>
                     </ul>

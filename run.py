@@ -30,6 +30,11 @@ def run_django(use_reloader=True):
     execute_from_command_line(cmd)
 
 
+def is_bot_configured():
+    """Check if Telegram bot token is configured"""
+    return bool(os.getenv('TELEGRAM_BOT_TOKEN', ''))
+
+
 def run_bot():
     """Run Telegram bot"""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
@@ -58,13 +63,19 @@ def main():
     elif args.mode == 'bot':
         run_bot()
     else:
-        # Run both in separate threads
-        # Disable autoreload when running Django in a thread (signal handlers only work in main thread)
-        django_thread = threading.Thread(target=run_django, args=(False,), daemon=True)
-        django_thread.start()
-        
-        # Run bot in main thread
-        run_bot()
+        # Check if bot is configured
+        if is_bot_configured():
+            # Run both in separate threads
+            # Disable autoreload when running Django in a thread (signal handlers only work in main thread)
+            django_thread = threading.Thread(target=run_django, args=(False,), daemon=True)
+            django_thread.start()
+            
+            # Run bot in main thread
+            run_bot()
+        else:
+            # Bot token not configured, only run Django
+            print("ℹ️ TELEGRAM_BOT_TOKEN not configured, starting web server only.")
+            run_django()
 
 
 if __name__ == '__main__':

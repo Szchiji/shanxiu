@@ -1,13 +1,14 @@
 # Bot Features Implementation Guide
 
 ## Overview
-This document describes the bot handler implementations for all 13 feature modules in the Telegram group management system.
+This document describes the bot handler implementations for all feature modules in the Telegram group management system.
 
-**All 13 modules are now fully implemented and production-ready! ✅**
+**All 14 modules are now fully implemented and production-ready! ✅**
 
 ## Implementation Summary
 
-### ✅ Fully Implemented (13/13)
+### ✅ Fully Implemented (14/14)
+0. **/start Command** - Custom start messages with media and buttons
 1. Entry/Exit Management - Verification, welcome, exit ban
 2. Spam Protection - Content filtering, punishment system
 3. Timed Group Control - Scheduled open/close
@@ -23,6 +24,63 @@ This document describes the bot handler implementations for all 13 feature modul
 13. Pagination Fix - Already completed
 
 ## Implemented Features
+
+### 0. /start Command (启动命令)
+**Status**: ✅ Fully Implemented
+
+**Features**:
+- **Group Start Messages**: Custom welcome messages when users send `/start` in groups
+- **Private Chat Start**: Admin authentication flow for bot management
+- **Message Types**: Separate messages for regular users and administrators
+- **Media Support**: Text, image, and video messages
+- **Button Integration**: Inline buttons with multiple rows and custom URLs
+- **Bottom Button Integration**: Automatically includes group bottom buttons
+- **Rich Text Formatting**: HTML formatting support for text content
+
+**Bot Handlers**:
+- `cmd_start()` - Main command handler (lines 5366-5552 in routes.py)
+  - Detects if command is in group or private chat
+  - For groups:
+    - Queries custom start messages from database
+    - Checks `start_msg_open` configuration setting
+    - Determines if user is admin to show appropriate message type
+    - Sends text/image/video with inline buttons
+    - Integrates group bottom buttons automatically
+  - For private chat:
+    - Shows admin authentication flow if user is ADMIN_ID
+    - Shows custom private start message for regular users
+    - Supports magic login links for admin access
+
+**Database Model**: `StartMessage`
+- `group_id` - Associated group
+- `message_type` - 'user' or 'admin'
+- `media_type` - 'text', 'image', or 'video'
+- `media_url` - URL for image/video
+- `content` - Message text (HTML formatted)
+- `links` - JSON array of inline buttons
+- `is_active` - Enable/disable toggle
+
+**Configuration**:
+- `/group/<id>/start_messages` - Manage start messages
+- Settings in group config: `start_msg_open` (enable/disable feature)
+- Environment variable: `ADMIN_ID` (determines admin user)
+
+**API Endpoints**:
+- `POST /api/save_start_message` - Create/update start message
+- `POST /api/toggle_start_message` - Enable/disable message
+- `POST /api/delete_start_message` - Remove message
+
+**Commands**:
+- `/start` - In private chat, shows admin login or welcome message
+- `/start@botname` - In groups, shows custom start message (requires bot privacy mode disabled)
+
+**Important Notes**:
+- By default, Telegram bots in groups cannot see `/start` unless privacy mode is disabled in BotFather
+- Users can use `/start@botname` to trigger the command explicitly
+- The feature integrates seamlessly with group bottom buttons
+- Admin messages only show for users matching ADMIN_ID environment variable
+
+**Documentation**: See `START_MESSAGE_FEATURE.md` for detailed user guide
 
 ### 1. Entry/Exit Management (进退群设置)
 **Status**: ✅ Fully Implemented
@@ -315,7 +373,8 @@ Handlers are registered in specific order to ensure correct processing:
 1. **ChatMemberHandler** - Bot join/leave events
 2. **Status Update Handlers** - New members, departures, pins
 3. **Auto-delete Handler** - Early deletion of system messages
-4. **Text Message Handler** - Main message processing with:
+4. **Channel Message Handler** - Handle channel pins
+5. **Text Message Handler** - Main message processing with:
    - Spam protection check
    - Name change tracking
    - Message syncing
@@ -323,8 +382,17 @@ Handlers are registered in specific order to ensure correct processing:
    - Check-in handling
    - Auto-reply system
    - Query functionality
-5. **Callback Query Handler** - Pagination and buttons
-6. **Command Handlers** - Admin commands (kick, ban, mute, etc.)
+6. **Callback Query Handler** - Pagination and buttons
+7. **Command Handlers** - Bot commands:
+   - `/start` - Show custom start message or admin login
+   - `/kick`, `/ban`, `/unban` - User management
+   - `/mute`, `/unmute` - Muting controls
+   - `/pin`, `/unpin` - Message pinning
+   - `/warn` - Warning system
+   - `/userinfo` - User information with points and level
+   - `/menu`, `/buttons` - Display group menu
+   - `/bid`, `/auction` - Points auction system
+   - `/vote`, `/quiz`, `/redpacket` - Interactive features
 
 ## Integration Points
 
@@ -393,13 +461,14 @@ To enable features in a group:
 
 ## Future Enhancements
 
-### ✅ Recently Completed (2024)
-1. ✅ **Auction Bidding Commands**: `/bid` and `/auction` commands fully implemented
-2. ✅ **Bottom Button Integration**: Buttons auto-display on /start and auto-reply messages
-3. ✅ **Points-based Auto-reply**: Premium content with point deduction now working
-4. ✅ **Advanced Lottery**: Message count tracking per user fully implemented
-5. ✅ **Level Badges**: Badges displayed in /userinfo command
-6. ✅ **Channel Pin Control**: Pin cancellation logic fully implemented
+### ✅ Recently Completed (2024-2025)
+1. ✅ **/start Command Feature**: Full implementation with custom messages, media, and buttons
+2. ✅ **Auction Bidding Commands**: `/bid` and `/auction` commands fully implemented
+3. ✅ **Bottom Button Integration**: Buttons auto-display on /start and auto-reply messages
+4. ✅ **Points-based Auto-reply**: Premium content with point deduction now working
+5. ✅ **Advanced Lottery**: Message count tracking per user fully implemented
+6. ✅ **Level Badges**: Badges displayed in /userinfo command
+7. ✅ **Channel Pin Control**: Pin cancellation logic fully implemented
 
 ### Potential Future Additions
 - Message queuing for high-volume groups
@@ -410,7 +479,8 @@ To enable features in a group:
 
 ## Conclusion
 
-All 13 feature modules now have working bot handlers integrated into the system. The implementation provides:
+All 14 feature modules now have working bot handlers integrated into the system. The implementation provides:
+- ✅ **Custom /start command** with media and button support
 - ✅ Complete entry/exit management
 - ✅ Robust spam protection
 - ✅ Automated group scheduling

@@ -1,652 +1,687 @@
-from . import db
-from datetime import datetime
+# -*- encoding: utf-8 -*-
+"""
+Django models for the app
+"""
+
+from django.db import models
+from django.utils import timezone
 import json
 
-class BotGroup(db.Model):
-    __tablename__ = 'bot_groups'
-    id = db.Column(db.Integer, primary_key=True)
-    chat_id = db.Column(db.String(50), unique=True, index=True)
-    title = db.Column(db.String(255))
-    type = db.Column(db.String(50))
-    is_active = db.Column(db.Boolean, default=True)
-    config = db.Column(db.Text, default='{}')
-    fields_config = db.Column(db.Text)
-    last_query_msg_id = db.Column(db.Integer, nullable=True)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
-class GroupUser(db.Model):
-    __tablename__ = 'group_users'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    tg_id = db.Column(db.BigInteger)
-    profile_data = db.Column(db.Text, default='{}')
-    expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
-    is_banned = db.Column(db.Boolean, default=False)
-    checkin_time = db.Column(db.DateTime)
-    last_activity = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)  # Track last message activity
-    online = db.Column(db.Boolean, default=False)
-    __table_args__ = (db.UniqueConstraint('group_id', 'tg_id', name='_group_user_uc'),)
-    
-    # Relationship to BotGroup for efficient querying
-    group = db.relationship('BotGroup', backref='users', lazy=True)
+class BotGroup(models.Model):
+    """群组信息"""
+    chat_id = models.CharField(max_length=50, unique=True, db_index=True)
+    title = models.CharField(max_length=255, blank=True, null=True)
+    type = models.CharField(max_length=50, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    config = models.TextField(default='{}')
+    fields_config = models.TextField(blank=True, null=True)
+    last_query_msg_id = models.IntegerField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-class AuthSession(db.Model):
-    __tablename__ = 'auth_sessions'
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    session_token = db.Column(db.String(100), unique=True, index=True)
-    verification_code = db.Column(db.String(10))
-    is_verified = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    expires_at = db.Column(db.DateTime)
+    class Meta:
+        db_table = 'bot_groups'
+        verbose_name = '群组'
+        verbose_name_plural = '群组'
 
-class AutoReply(db.Model):
+    def __str__(self):
+        return self.title or self.chat_id
+
+
+class GroupUser(models.Model):
+    """群用户"""
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='users')
+    tg_id = models.BigIntegerField(db_index=True)
+    profile_data = models.TextField(default='{}')
+    expiration_date = models.DateTimeField(blank=True, null=True)
+    is_banned = models.BooleanField(default=False)
+    checkin_time = models.DateTimeField(blank=True, null=True)
+    last_activity = models.DateTimeField(auto_now=True)
+    online = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'group_users'
+        unique_together = [['group', 'tg_id']]
+        verbose_name = '群用户'
+        verbose_name_plural = '群用户'
+
+    def __str__(self):
+        return f"{self.tg_id} in {self.group}"
+
+
+class AuthSession(models.Model):
+    """认证会话"""
+    user_id = models.BigIntegerField(db_index=True)
+    session_token = models.CharField(max_length=100, unique=True, db_index=True)
+    verification_code = models.CharField(max_length=10)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = 'auth_sessions'
+        verbose_name = '认证会话'
+        verbose_name_plural = '认证会话'
+
+
+class AutoReply(models.Model):
     """自动回复规则"""
-    __tablename__ = 'auto_replies'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    trigger_keyword = db.Column(db.String(255), nullable=False)  # 触发关键词
-    media_type = db.Column(db.String(20), default='text')  # text, image, video
-    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
-    content = db.Column(db.Text, nullable=True)  # 富文本内容
-    links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
-    delete_after = db.Column(db.Integer, default=0)  # 删除上一条消息的时间(秒)，0表示不删除
-    remark = db.Column(db.Text, nullable=True)  # 备注
-    is_active = db.Column(db.Boolean, default=True)  # 是否启用
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='auto_replies', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='auto_replies')
+    trigger_keyword = models.CharField(max_length=255)
+    media_type = models.CharField(max_length=20, default='text')
+    media_url = models.TextField(blank=True, null=True)
+    content = models.TextField(blank=True, null=True)
+    links = models.TextField(default='[]')
+    delete_after = models.IntegerField(default=0)
+    remark = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'auto_replies'
+        verbose_name = '自动回复'
+        verbose_name_plural = '自动回复'
 
 
-class ScheduledMessage(db.Model):
+class ScheduledMessage(models.Model):
     """定时消息"""
-    __tablename__ = 'scheduled_messages'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    media_type = db.Column(db.String(20), default='text')  # text, image, video
-    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
-    content = db.Column(db.Text, nullable=True)  # 富文本内容
-    links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
-    repeat_interval = db.Column(db.Integer, default=0)  # 重复间隔(分钟)，0表示不重复
-    delete_previous = db.Column(db.Boolean, default=False)  # 是否删除上一条
-    last_message_id = db.Column(db.BigInteger, nullable=True)  # 上一条消息ID，用于删除
-    start_time = db.Column(db.DateTime, nullable=True)  # 开始时间
-    stop_time = db.Column(db.DateTime, nullable=True)  # 停止时间
-    remark = db.Column(db.Text, nullable=True)  # 备注
-    is_active = db.Column(db.Boolean, default=True)  # 是否启用
-    last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='scheduled_messages', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='scheduled_messages')
+    media_type = models.CharField(max_length=20, default='text')
+    media_url = models.TextField(blank=True, null=True)
+    content = models.TextField(blank=True, null=True)
+    links = models.TextField(default='[]')
+    repeat_interval = models.IntegerField(default=0)
+    delete_previous = models.BooleanField(default=False)
+    last_message_id = models.BigIntegerField(blank=True, null=True)
+    start_time = models.DateTimeField(blank=True, null=True)
+    stop_time = models.DateTimeField(blank=True, null=True)
+    remark = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    last_sent_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'scheduled_messages'
+        verbose_name = '定时消息'
+        verbose_name_plural = '定时消息'
 
 
-class StartMessage(db.Model):
+class StartMessage(models.Model):
     """自定义 /start 消息"""
-    __tablename__ = 'start_messages'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    message_type = db.Column(db.String(20), default='user')  # 'user' or 'admin'
-    media_type = db.Column(db.String(20), default='text')  # text, image, video
-    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
-    content = db.Column(db.Text, nullable=True)  # 富文本内容
-    links = db.Column(db.Text, default='[]')  # JSON格式的链接按钮数组
-    is_active = db.Column(db.Boolean, default=True)  # 是否启用
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='start_messages', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='start_messages')
+    message_type = models.CharField(max_length=20, default='user')
+    media_type = models.CharField(max_length=20, default='text')
+    media_url = models.TextField(blank=True, null=True)
+    content = models.TextField(blank=True, null=True)
+    links = models.TextField(default='[]')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'start_messages'
+        verbose_name = 'Start消息'
+        verbose_name_plural = 'Start消息'
 
 
-class GroupEntryExitSettings(db.Model):
+class GroupEntryExitSettings(models.Model):
     """进退群设置"""
-    __tablename__ = 'group_entry_exit_settings'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    # 进群验证
-    entry_verification_enabled = db.Column(db.Boolean, default=False)
-    verification_question = db.Column(db.Text, nullable=True)
-    verification_answer = db.Column(db.Text, nullable=True)
-    verification_timeout = db.Column(db.Integer, default=60)  # 验证超时时间(秒)
-    # 进群欢迎
-    welcome_enabled = db.Column(db.Boolean, default=False)
-    welcome_message = db.Column(db.Text, nullable=True)
-    welcome_media_type = db.Column(db.String(20), default='text')
-    welcome_media_url = db.Column(db.Text, nullable=True)
-    # 退群拉黑
-    exit_ban_enabled = db.Column(db.Boolean, default=False)
-    exit_ban_duration = db.Column(db.Integer, default=0)  # 0=永久
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='entry_exit_settings', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='entry_exit_settings')
+    entry_verification_enabled = models.BooleanField(default=False)
+    verification_question = models.TextField(blank=True, null=True)
+    verification_answer = models.TextField(blank=True, null=True)
+    verification_timeout = models.IntegerField(default=60)
+    welcome_enabled = models.BooleanField(default=False)
+    welcome_message = models.TextField(blank=True, null=True)
+    welcome_media_type = models.CharField(max_length=20, default='text')
+    welcome_media_url = models.TextField(blank=True, null=True)
+    exit_ban_enabled = models.BooleanField(default=False)
+    exit_ban_duration = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_entry_exit_settings'
+        verbose_name = '进退群设置'
+        verbose_name_plural = '进退群设置'
 
 
-class SpamProtection(db.Model):
+class SpamProtection(models.Model):
     """垃圾防护"""
-    __tablename__ = 'spam_protection'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    enabled = db.Column(db.Boolean, default=False)
-    # 防护规则
-    max_messages_per_minute = db.Column(db.Integer, default=10)
-    block_links = db.Column(db.Boolean, default=False)
-    block_forwards = db.Column(db.Boolean, default=False)
-    block_stickers = db.Column(db.Boolean, default=False)
-    # 惩罚措施
-    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban
-    punishment_duration = db.Column(db.Integer, default=60)  # 分钟
-    # 白名单
-    whitelist_users = db.Column(db.Text, default='[]')  # JSON array of user IDs
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='spam_protection', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='spam_protection')
+    enabled = models.BooleanField(default=False)
+    max_messages_per_minute = models.IntegerField(default=10)
+    block_links = models.BooleanField(default=False)
+    block_forwards = models.BooleanField(default=False)
+    block_stickers = models.BooleanField(default=False)
+    punishment_type = models.CharField(max_length=20, default='mute')
+    punishment_duration = models.IntegerField(default=60)
+    whitelist_users = models.TextField(default='[]')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'spam_protection'
+        verbose_name = '垃圾防护'
+        verbose_name_plural = '垃圾防护'
 
 
-class TimedGroupControl(db.Model):
+class TimedGroupControl(models.Model):
     """定时开关群"""
-    __tablename__ = 'timed_group_control'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    enabled = db.Column(db.Boolean, default=False)
-    open_time = db.Column(db.Time, nullable=True)  # 开群时间
-    close_time = db.Column(db.Time, nullable=True)  # 关群时间
-    timezone = db.Column(db.String(50), default='Asia/Shanghai')
-    close_message = db.Column(db.Text, nullable=True)  # 关群提示消息
-    open_message = db.Column(db.Text, nullable=True)  # 开群提示消息
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='timed_group_control', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='timed_group_control')
+    enabled = models.BooleanField(default=False)
+    open_time = models.TimeField(blank=True, null=True)
+    close_time = models.TimeField(blank=True, null=True)
+    timezone = models.CharField(max_length=50, default='Asia/Shanghai')
+    close_message = models.TextField(blank=True, null=True)
+    open_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'timed_group_control'
+        verbose_name = '定时开关群'
+        verbose_name_plural = '定时开关群'
 
 
-class InvitationActivity(db.Model):
+class InvitationActivity(models.Model):
     """邀请活动"""
-    __tablename__ = 'invitation_activity'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    enabled = db.Column(db.Boolean, default=False)
-    reward_points = db.Column(db.Integer, default=10)  # 每邀请一人获得的积分
-    minimum_invites = db.Column(db.Integer, default=1)  # 最少邀请人数
-    activity_start = db.Column(db.DateTime, nullable=True)
-    activity_end = db.Column(db.DateTime, nullable=True)
-    description = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='invitation_activity', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='invitation_activity')
+    enabled = models.BooleanField(default=False)
+    reward_points = models.IntegerField(default=10)
+    minimum_invites = models.IntegerField(default=1)
+    activity_start = models.DateTimeField(blank=True, null=True)
+    activity_end = models.DateTimeField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'invitation_activity'
+        verbose_name = '邀请活动'
+        verbose_name_plural = '邀请活动'
 
 
-class ForcedChannelSubscription(db.Model):
+class ForcedChannelSubscription(models.Model):
     """强制订阅频道"""
-    __tablename__ = 'forced_channel_subscription'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    enabled = db.Column(db.Boolean, default=False)
-    channel_id = db.Column(db.String(50), nullable=True)  # 必须订阅的频道ID
-    channel_username = db.Column(db.String(255), nullable=True)  # 频道用户名
-    check_interval = db.Column(db.Integer, default=3600)  # 检查间隔(秒)
-    unsubscribe_action = db.Column(db.String(20), default='kick')  # kick, ban, mute
-    verification_message = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='forced_channel_subscription', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='forced_channel_subscription')
+    enabled = models.BooleanField(default=False)
+    channel_id = models.CharField(max_length=50, blank=True, null=True)
+    channel_username = models.CharField(max_length=255, blank=True, null=True)
+    check_interval = models.IntegerField(default=3600)
+    unsubscribe_action = models.CharField(max_length=20, default='kick')
+    verification_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'forced_channel_subscription'
+        verbose_name = '强制订阅频道'
+        verbose_name_plural = '强制订阅频道'
 
 
-class PointsRule(db.Model):
+class PointsRule(models.Model):
     """积分规则"""
-    __tablename__ = 'points_rules'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    rule_name = db.Column(db.String(255), nullable=False)
-    rule_type = db.Column(db.String(50), nullable=False)  # checkin, message, invite, etc.
-    points_amount = db.Column(db.Integer, default=1)
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='points_rules', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='points_rules')
+    rule_name = models.CharField(max_length=255)
+    rule_type = models.CharField(max_length=50)
+    points_amount = models.IntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'points_rules'
+        verbose_name = '积分规则'
+        verbose_name_plural = '积分规则'
 
 
-class PointsAutoReply(db.Model):
+class PointsAutoReply(models.Model):
     """积分自动回复"""
-    __tablename__ = 'points_auto_reply'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    trigger_keyword = db.Column(db.String(255), nullable=False)
-    points_cost = db.Column(db.Integer, default=0)  # 消耗积分
-    content = db.Column(db.Text, nullable=True)
-    media_type = db.Column(db.String(20), default='text')
-    media_url = db.Column(db.Text, nullable=True)
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='points_auto_reply', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='points_auto_reply')
+    trigger_keyword = models.CharField(max_length=255)
+    points_cost = models.IntegerField(default=0)
+    content = models.TextField(blank=True, null=True)
+    media_type = models.CharField(max_length=20, default='text')
+    media_url = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'points_auto_reply'
+        verbose_name = '积分自动回复'
+        verbose_name_plural = '积分自动回复'
 
 
-class PointsAuction(db.Model):
+class PointsAuction(models.Model):
     """积分竞拍"""
-    __tablename__ = 'points_auction'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    item_name = db.Column(db.String(255), nullable=False)
-    item_description = db.Column(db.Text, nullable=True)
-    starting_price = db.Column(db.Integer, default=100)
-    current_bid = db.Column(db.Integer, default=0)
-    current_bidder_id = db.Column(db.BigInteger, nullable=True)
-    auction_start = db.Column(db.DateTime, nullable=True)
-    auction_end = db.Column(db.DateTime, nullable=True)
-    status = db.Column(db.String(20), default='pending')  # pending, active, ended
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='points_auction', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='points_auction')
+    item_name = models.CharField(max_length=255)
+    item_description = models.TextField(blank=True, null=True)
+    starting_price = models.IntegerField(default=100)
+    current_bid = models.IntegerField(default=0)
+    current_bidder_id = models.BigIntegerField(blank=True, null=True)
+    auction_start = models.DateTimeField(blank=True, null=True)
+    auction_end = models.DateTimeField(blank=True, null=True)
+    status = models.CharField(max_length=20, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'points_auction'
+        verbose_name = '积分竞拍'
+        verbose_name_plural = '积分竞拍'
 
 
-class PointsLog(db.Model):
+class PointsLog(models.Model):
     """积分日志"""
-    __tablename__ = 'points_log'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    points_change = db.Column(db.Integer, nullable=False)  # 正数=获得，负数=消耗
-    reason = db.Column(db.String(255), nullable=True)
-    balance_after = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='points_log', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='points_log')
+    user_id = models.BigIntegerField(db_index=True)
+    points_change = models.IntegerField()
+    reason = models.CharField(max_length=255, blank=True, null=True)
+    balance_after = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'points_log'
+        verbose_name = '积分日志'
+        verbose_name_plural = '积分日志'
 
 
-class UserPoints(db.Model):
-    """用户积分"""
-    __tablename__ = 'user_points'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    points_balance = db.Column(db.Integer, default=0)
-    current_level_id = db.Column(db.Integer, db.ForeignKey('member_level.id'), nullable=True)  # Track current member level
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='_group_user_points_uc'),)
-    
-    group = db.relationship('BotGroup', backref='user_points', lazy=True)
-    current_level = db.relationship('MemberLevel', backref='users_at_level', lazy=True)
-
-
-class GroupLottery(db.Model):
-    """群抽奖"""
-    __tablename__ = 'group_lottery'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    lottery_name = db.Column(db.String(255), nullable=False)
-    lottery_type = db.Column(db.String(50), nullable=False)  # message_count, message_rank
-    prize_description = db.Column(db.Text, nullable=True)
-    # 发言数量抽奖
-    min_messages = db.Column(db.Integer, default=10)  # 最少发言数
-    # 发言排行抽奖
-    top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖
-    # 通用设置
-    start_time = db.Column(db.DateTime, nullable=True)
-    end_time = db.Column(db.DateTime, nullable=True)
-    winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
-    status = db.Column(db.String(20), default='pending')  # pending, active, ended
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='group_lottery', lazy=True)
-
-
-class MemberLevel(db.Model):
+class MemberLevel(models.Model):
     """群成员等级"""
-    __tablename__ = 'member_level'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    level_name = db.Column(db.String(255), nullable=False)
-    required_points = db.Column(db.Integer, default=0)
-    permissions = db.Column(db.Text, default='{}')  # JSON格式的权限配置
-    badge_emoji = db.Column(db.String(10), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='member_level', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='member_level')
+    level_name = models.CharField(max_length=255)
+    required_points = models.IntegerField(default=0)
+    permissions = models.TextField(default='{}')
+    badge_emoji = models.CharField(max_length=10, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'member_level'
+        verbose_name = '成员等级'
+        verbose_name_plural = '成员等级'
 
 
-class UserNameChange(db.Model):
+class UserPoints(models.Model):
+    """用户积分"""
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='user_points')
+    user_id = models.BigIntegerField(db_index=True)
+    points_balance = models.IntegerField(default=0)
+    current_level = models.ForeignKey(MemberLevel, on_delete=models.SET_NULL, blank=True, null=True, related_name='users_at_level')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'user_points'
+        unique_together = [['group', 'user_id']]
+        verbose_name = '用户积分'
+        verbose_name_plural = '用户积分'
+
+
+class GroupLottery(models.Model):
+    """群抽奖"""
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='group_lottery')
+    lottery_name = models.CharField(max_length=255)
+    lottery_type = models.CharField(max_length=50)
+    prize_description = models.TextField(blank=True, null=True)
+    min_messages = models.IntegerField(default=10)
+    top_n_winners = models.IntegerField(default=3)
+    start_time = models.DateTimeField(blank=True, null=True)
+    end_time = models.DateTimeField(blank=True, null=True)
+    winner_ids = models.TextField(default='[]')
+    status = models.CharField(max_length=20, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_lottery'
+        verbose_name = '群抽奖'
+        verbose_name_plural = '群抽奖'
+
+
+class UserNameChange(models.Model):
     """用户改名监控"""
-    __tablename__ = 'user_name_change'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    old_name = db.Column(db.String(255), nullable=True)
-    new_name = db.Column(db.String(255), nullable=True)
-    changed_at = db.Column(db.DateTime, default=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='user_name_change', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='user_name_change')
+    user_id = models.BigIntegerField(db_index=True)
+    old_name = models.CharField(max_length=255, blank=True, null=True)
+    new_name = models.CharField(max_length=255, blank=True, null=True)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_name_change'
+        verbose_name = '用户改名'
+        verbose_name_plural = '用户改名'
 
 
-class GroupBottomButton(db.Model):
+class GroupBottomButton(models.Model):
     """群底部按钮"""
-    __tablename__ = 'group_bottom_button'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    button_text = db.Column(db.String(255), nullable=False)
-    button_url = db.Column(db.Text, nullable=True)
-    button_callback = db.Column(db.String(255), nullable=True)  # Callback data for inline button
-    trigger_keyword = db.Column(db.String(255), nullable=True)  # 触发关键词，支持逗号分隔多个
-    input_field_placeholder = db.Column(db.String(255), nullable=True)  # 输入框提示文案（显示在群输入框）
-    button_order = db.Column(db.Integer, default=0)  # 显示顺序
-    row_position = db.Column(db.Integer, default=0)  # 行号，同一行的按钮会并排显示
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='group_bottom_button', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='group_bottom_button')
+    button_text = models.CharField(max_length=255)
+    button_url = models.TextField(blank=True, null=True)
+    button_callback = models.CharField(max_length=255, blank=True, null=True)
+    trigger_keyword = models.CharField(max_length=255, blank=True, null=True)
+    input_field_placeholder = models.CharField(max_length=255, blank=True, null=True)
+    button_order = models.IntegerField(default=0)
+    row_position = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_bottom_button'
+        verbose_name = '群底部按钮'
+        verbose_name_plural = '群底部按钮'
 
 
-class SyncGroupMessages(db.Model):
+class SyncGroupMessages(models.Model):
     """同步群消息"""
-    __tablename__ = 'sync_group_messages'
-    id = db.Column(db.Integer, primary_key=True)
-    source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    target_group_id = db.Column(db.String(50), nullable=False)  # 目标群组ID
-    enabled = db.Column(db.Boolean, default=False)
-    sync_media = db.Column(db.Boolean, default=True)  # 是否同步媒体文件
-    sync_forwards = db.Column(db.Boolean, default=True)  # 是否同步转发消息
-    filter_keywords = db.Column(db.Text, default='[]')  # JSON array of keywords to filter
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='sync_group_messages', lazy=True, foreign_keys=[source_group_id])
+    source_group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='sync_group_messages')
+    target_group_id = models.CharField(max_length=50)
+    enabled = models.BooleanField(default=False)
+    sync_media = models.BooleanField(default=True)
+    sync_forwards = models.BooleanField(default=True)
+    filter_keywords = models.TextField(default='[]')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'sync_group_messages'
+        verbose_name = '同步群消息'
+        verbose_name_plural = '同步群消息'
 
 
-class SyncMessageLog(db.Model):
+class SyncMessageLog(models.Model):
     """同步消息日志"""
-    __tablename__ = 'sync_message_logs'
-    id = db.Column(db.Integer, primary_key=True)
-    source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    target_group_id = db.Column(db.String(50), nullable=False)
-    source_message_id = db.Column(db.BigInteger, nullable=True)
-    target_message_id = db.Column(db.BigInteger, nullable=True)
-    user_id = db.Column(db.BigInteger, nullable=True)  # 消息发送者ID
-    username = db.Column(db.String(255), nullable=True)  # 消息发送者用户名
-    message_type = db.Column(db.String(20), default='text')  # text, photo, video, document, etc.
-    content_preview = db.Column(db.Text, nullable=True)  # 内容预览（前100字符）
-    status = db.Column(db.String(20), default='success')  # success, failed, filtered
-    error_message = db.Column(db.Text, nullable=True)  # 错误信息（如果同步失败）
-    synced_at = db.Column(db.DateTime, default=datetime.now, index=True)
-    
-    group = db.relationship('BotGroup', backref='sync_message_logs', lazy=True, foreign_keys=[source_group_id])
+    source_group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='sync_message_logs')
+    target_group_id = models.CharField(max_length=50)
+    source_message_id = models.BigIntegerField(blank=True, null=True)
+    target_message_id = models.BigIntegerField(blank=True, null=True)
+    user_id = models.BigIntegerField(blank=True, null=True)
+    username = models.CharField(max_length=255, blank=True, null=True)
+    message_type = models.CharField(max_length=20, default='text')
+    content_preview = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, default='success')
+    error_message = models.TextField(blank=True, null=True)
+    synced_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'sync_message_logs'
+        verbose_name = '同步消息日志'
+        verbose_name_plural = '同步消息日志'
 
 
-class OtherSettings(db.Model):
+class OtherSettings(models.Model):
     """其他设置"""
-    __tablename__ = 'other_settings'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    # 自动删除消息开关
-    auto_delete_join_msg = db.Column(db.Boolean, default=False)  # 自动删除进群消息
-    auto_delete_leave_msg = db.Column(db.Boolean, default=False)  # 自动删除退群消息
-    auto_delete_promote_msg = db.Column(db.Boolean, default=False)  # 自动删除互推消息
-    auto_delete_pin_msg = db.Column(db.Boolean, default=False)  # 自动删除置顶提示消息
-    cancel_channel_pin = db.Column(db.Boolean, default=False)  # 取消频道消息置顶
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='other_settings', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='other_settings')
+    auto_delete_join_msg = models.BooleanField(default=False)
+    auto_delete_leave_msg = models.BooleanField(default=False)
+    auto_delete_promote_msg = models.BooleanField(default=False)
+    auto_delete_pin_msg = models.BooleanField(default=False)
+    cancel_channel_pin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'other_settings'
+        verbose_name = '其他设置'
+        verbose_name_plural = '其他设置'
 
 
-class BotClone(db.Model):
+class BotClone(models.Model):
     """机器人克隆"""
-    __tablename__ = 'bot_clones'
-    id = db.Column(db.Integer, primary_key=True)
-    clone_name = db.Column(db.String(255), nullable=False)  # 克隆机器人名称
-    bot_token = db.Column(db.String(255), nullable=False)  # Bot Token (removed unique constraint for flexibility)
-    owner_user_id = db.Column(db.BigInteger, nullable=True)  # 克隆机器人拥有者的用户ID
-    admin_user_ids = db.Column(db.Text, default='[]')  # 管理员用户ID列表，JSON格式
-    is_active = db.Column(db.Boolean, default=True)  # 是否启用
-    expiration_date = db.Column(db.DateTime, nullable=True)  # 有效期
-    webhook_url = db.Column(db.String(500), nullable=True)  # Webhook URL
-    description = db.Column(db.Text, nullable=True)  # 描述
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    clone_name = models.CharField(max_length=255)
+    bot_token = models.CharField(max_length=255)
+    owner_user_id = models.BigIntegerField(blank=True, null=True)
+    admin_user_ids = models.TextField(default='[]')
+    is_active = models.BooleanField(default=True)
+    expiration_date = models.DateTimeField(blank=True, null=True)
+    webhook_url = models.CharField(max_length=500, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-class LotteryMessageCount(db.Model):
-    """抽奖消息计数 - 跟踪用户在抽奖期间发送的消息数"""
-    __tablename__ = 'lottery_message_count'
-    id = db.Column(db.Integer, primary_key=True)
-    lottery_id = db.Column(db.Integer, db.ForeignKey('group_lottery.id'), index=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    user_id = db.Column(db.BigInteger, nullable=False)  # Telegram user ID
-    message_count = db.Column(db.Integer, default=0)  # Number of messages sent
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    __table_args__ = (
-        db.UniqueConstraint('lottery_id', 'user_id', name='_lottery_user_uc'),
-        db.Index('ix_lottery_message_count_lookup', 'lottery_id', 'group_id', 'user_id'),
-    )
-    
-    lottery = db.relationship('GroupLottery', backref='message_counts', lazy=True)
-    group = db.relationship('BotGroup', backref='lottery_message_counts', lazy=True)
+    class Meta:
+        db_table = 'bot_clones'
+        verbose_name = '机器人克隆'
+        verbose_name_plural = '机器人克隆'
 
 
-class InactiveUserSettings(db.Model):
+class LotteryMessageCount(models.Model):
+    """抽奖消息计数"""
+    lottery = models.ForeignKey(GroupLottery, on_delete=models.CASCADE, related_name='message_counts')
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='lottery_message_counts')
+    user_id = models.BigIntegerField()
+    message_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'lottery_message_count'
+        unique_together = [['lottery', 'user_id']]
+        verbose_name = '抽奖消息计数'
+        verbose_name_plural = '抽奖消息计数'
+
+
+class InactiveUserSettings(models.Model):
     """不活跃用户设置"""
-    __tablename__ = 'inactive_user_settings'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    enabled = db.Column(db.Boolean, default=False)
-    inactivity_days = db.Column(db.Integer, default=30)  # 不活跃天数阈值
-    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute
-    check_interval = db.Column(db.Integer, default=86400)  # 检查间隔(秒)，默认24小时
-    warning_enabled = db.Column(db.Boolean, default=False)  # 是否提前警告
-    warning_days = db.Column(db.Integer, default=7)  # 提前警告天数
-    warning_message = db.Column(db.Text, nullable=True)  # 警告消息
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='inactive_user_settings', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='inactive_user_settings')
+    enabled = models.BooleanField(default=False)
+    inactivity_days = models.IntegerField(default=30)
+    action_type = models.CharField(max_length=20, default='kick')
+    check_interval = models.IntegerField(default=86400)
+    warning_enabled = models.BooleanField(default=False)
+    warning_days = models.IntegerField(default=7)
+    warning_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'inactive_user_settings'
+        verbose_name = '不活跃用户设置'
+        verbose_name_plural = '不活跃用户设置'
 
 
-class KeywordFilter(db.Model):
+class KeywordFilter(models.Model):
     """关键词过滤"""
-    __tablename__ = 'keyword_filter'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    keyword = db.Column(db.String(255), nullable=False)
-    filter_type = db.Column(db.String(20), default='blacklist')  # blacklist, whitelist
-    match_type = db.Column(db.String(20), default='contains')  # contains, exact, regex
-    action = db.Column(db.String(20), default='delete')  # delete, warn, mute, kick, ban
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='keyword_filters', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='keyword_filters')
+    keyword = models.CharField(max_length=255)
+    filter_type = models.CharField(max_length=20, default='blacklist')
+    match_type = models.CharField(max_length=20, default='contains')
+    action = models.CharField(max_length=20, default='delete')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'keyword_filter'
+        verbose_name = '关键词过滤'
+        verbose_name_plural = '关键词过滤'
 
 
-class MessageStatistics(db.Model):
+class MessageStatistics(models.Model):
     """消息统计"""
-    __tablename__ = 'message_statistics'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    date = db.Column(db.Date, index=True, default=datetime.now)
-    message_count = db.Column(db.Integer, default=0)
-    text_count = db.Column(db.Integer, default=0)
-    photo_count = db.Column(db.Integer, default=0)
-    video_count = db.Column(db.Integer, default=0)
-    sticker_count = db.Column(db.Integer, default=0)
-    document_count = db.Column(db.Integer, default=0)
-    voice_count = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    __table_args__ = (
-        db.UniqueConstraint('group_id', 'user_id', 'date', name='_group_user_date_uc'),
-    )
-    
-    group = db.relationship('BotGroup', backref='message_statistics', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='message_statistics')
+    user_id = models.BigIntegerField(db_index=True)
+    date = models.DateField(db_index=True, default=timezone.now)
+    message_count = models.IntegerField(default=0)
+    text_count = models.IntegerField(default=0)
+    photo_count = models.IntegerField(default=0)
+    video_count = models.IntegerField(default=0)
+    sticker_count = models.IntegerField(default=0)
+    document_count = models.IntegerField(default=0)
+    voice_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'message_statistics'
+        unique_together = [['group', 'user_id', 'date']]
+        verbose_name = '消息统计'
+        verbose_name_plural = '消息统计'
 
 
-class GroupVote(db.Model):
+class GroupVote(models.Model):
     """群投票"""
-    __tablename__ = 'group_vote'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    title = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.Text, nullable=True)
-    options = db.Column(db.Text, default='[]')  # JSON array of options
-    vote_type = db.Column(db.String(20), default='single')  # single, multiple
-    max_choices = db.Column(db.Integer, default=1)  # 多选时最多选择数
-    is_anonymous = db.Column(db.Boolean, default=False)
-    allow_revote = db.Column(db.Boolean, default=True)  # 允许改投
-    start_time = db.Column(db.DateTime, nullable=True)
-    end_time = db.Column(db.DateTime, nullable=True)
-    status = db.Column(db.String(20), default='pending')  # pending, active, ended
-    message_id = db.Column(db.BigInteger, nullable=True)  # 投票消息ID
-    created_by = db.Column(db.BigInteger, nullable=True)  # 创建者用户ID
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='group_votes', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='group_votes')
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    options = models.TextField(default='[]')
+    vote_type = models.CharField(max_length=20, default='single')
+    max_choices = models.IntegerField(default=1)
+    is_anonymous = models.BooleanField(default=False)
+    allow_revote = models.BooleanField(default=True)
+    start_time = models.DateTimeField(blank=True, null=True)
+    end_time = models.DateTimeField(blank=True, null=True)
+    status = models.CharField(max_length=20, default='pending')
+    message_id = models.BigIntegerField(blank=True, null=True)
+    created_by = models.BigIntegerField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'group_vote'
+        verbose_name = '群投票'
+        verbose_name_plural = '群投票'
 
 
-class VoteRecord(db.Model):
+class VoteRecord(models.Model):
     """投票记录"""
-    __tablename__ = 'vote_record'
-    id = db.Column(db.Integer, primary_key=True)
-    vote_id = db.Column(db.Integer, db.ForeignKey('group_vote.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    choices = db.Column(db.Text, default='[]')  # JSON array of option indices
-    voted_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    __table_args__ = (
-        db.UniqueConstraint('vote_id', 'user_id', name='_vote_user_uc'),
-    )
-    
-    vote = db.relationship('GroupVote', backref='vote_records', lazy=True)
+    vote = models.ForeignKey(GroupVote, on_delete=models.CASCADE, related_name='vote_records')
+    user_id = models.BigIntegerField(db_index=True)
+    choices = models.TextField(default='[]')
+    voted_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'vote_record'
+        unique_together = [['vote', 'user_id']]
+        verbose_name = '投票记录'
+        verbose_name_plural = '投票记录'
 
 
-class QuizGame(db.Model):
+class QuizGame(models.Model):
     """问答游戏"""
-    __tablename__ = 'quiz_game'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    question = db.Column(db.Text, nullable=False)
-    answers = db.Column(db.Text, default='[]')  # JSON array of answers
-    correct_answer_index = db.Column(db.Integer, nullable=False)
-    explanation = db.Column(db.Text, nullable=True)  # 答案解析
-    points_reward = db.Column(db.Integer, default=10)  # 答对奖励积分
-    time_limit = db.Column(db.Integer, default=60)  # 答题时限(秒)
-    difficulty = db.Column(db.String(20), default='medium')  # easy, medium, hard
-    category = db.Column(db.String(50), nullable=True)  # 题目分类
-    is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='quiz_games', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='quiz_games')
+    question = models.TextField()
+    answers = models.TextField(default='[]')
+    correct_answer_index = models.IntegerField()
+    explanation = models.TextField(blank=True, null=True)
+    points_reward = models.IntegerField(default=10)
+    time_limit = models.IntegerField(default=60)
+    difficulty = models.CharField(max_length=20, default='medium')
+    category = models.CharField(max_length=50, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'quiz_game'
+        verbose_name = '问答游戏'
+        verbose_name_plural = '问答游戏'
 
 
-class QuizSession(db.Model):
+class QuizSession(models.Model):
     """问答会话"""
-    __tablename__ = 'quiz_session'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz_game.id'), index=True)
-    message_id = db.Column(db.BigInteger, nullable=True)  # 问题消息ID
-    start_time = db.Column(db.DateTime, default=datetime.now)
-    end_time = db.Column(db.DateTime, nullable=True)
-    status = db.Column(db.String(20), default='active')  # active, ended
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='quiz_sessions', lazy=True)
-    quiz = db.relationship('QuizGame', backref='quiz_sessions', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='quiz_sessions')
+    quiz = models.ForeignKey(QuizGame, on_delete=models.CASCADE, related_name='quiz_sessions')
+    message_id = models.BigIntegerField(blank=True, null=True)
+    start_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(blank=True, null=True)
+    status = models.CharField(max_length=20, default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'quiz_session'
+        verbose_name = '问答会话'
+        verbose_name_plural = '问答会话'
 
 
-class QuizAnswer(db.Model):
+class QuizAnswer(models.Model):
     """问答答案记录"""
-    __tablename__ = 'quiz_answer'
-    id = db.Column(db.Integer, primary_key=True)
-    session_id = db.Column(db.Integer, db.ForeignKey('quiz_session.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    answer_index = db.Column(db.Integer, nullable=False)
-    is_correct = db.Column(db.Boolean, default=False)
-    points_awarded = db.Column(db.Integer, default=0)
-    answered_at = db.Column(db.DateTime, default=datetime.now)
-    
-    __table_args__ = (
-        db.UniqueConstraint('session_id', 'user_id', name='_session_user_uc'),
-    )
-    
-    session = db.relationship('QuizSession', backref='quiz_answers', lazy=True)
+    session = models.ForeignKey(QuizSession, on_delete=models.CASCADE, related_name='quiz_answers')
+    user_id = models.BigIntegerField(db_index=True)
+    answer_index = models.IntegerField()
+    is_correct = models.BooleanField(default=False)
+    points_awarded = models.IntegerField(default=0)
+    answered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'quiz_answer'
+        unique_together = [['session', 'user_id']]
+        verbose_name = '问答答案'
+        verbose_name_plural = '问答答案'
 
 
-class RedPacket(db.Model):
+class RedPacket(models.Model):
     """红包"""
-    __tablename__ = 'red_packet'
-    id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    creator_id = db.Column(db.BigInteger, index=True)  # 发红包的用户
-    packet_type = db.Column(db.String(20), default='random')  # random=拼手气, equal=普通
-    total_points = db.Column(db.Integer, nullable=False)  # 总积分
-    packet_count = db.Column(db.Integer, nullable=False)  # 红包数量
-    remaining_count = db.Column(db.Integer, nullable=False)  # 剩余数量
-    remaining_points = db.Column(db.Integer, nullable=False)  # 剩余积分
-    message = db.Column(db.Text, nullable=True)  # 红包祝福语
-    message_id = db.Column(db.BigInteger, nullable=True)  # 红包消息ID
-    expire_time = db.Column(db.DateTime, nullable=True)  # 过期时间
-    status = db.Column(db.String(20), default='active')  # active, expired, claimed
-    created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    group = db.relationship('BotGroup', backref='red_packets', lazy=True)
+    group = models.ForeignKey(BotGroup, on_delete=models.CASCADE, related_name='red_packets')
+    creator_id = models.BigIntegerField(db_index=True)
+    packet_type = models.CharField(max_length=20, default='random')
+    total_points = models.IntegerField()
+    packet_count = models.IntegerField()
+    remaining_count = models.IntegerField()
+    remaining_points = models.IntegerField()
+    message = models.TextField(blank=True, null=True)
+    message_id = models.BigIntegerField(blank=True, null=True)
+    expire_time = models.DateTimeField(blank=True, null=True)
+    status = models.CharField(max_length=20, default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'red_packet'
+        verbose_name = '红包'
+        verbose_name_plural = '红包'
 
 
-class RedPacketClaim(db.Model):
+class RedPacketClaim(models.Model):
     """红包领取记录"""
-    __tablename__ = 'red_packet_claim'
-    id = db.Column(db.Integer, primary_key=True)
-    packet_id = db.Column(db.Integer, db.ForeignKey('red_packet.id'), index=True)
-    user_id = db.Column(db.BigInteger, index=True)
-    points_received = db.Column(db.Integer, nullable=False)
-    claimed_at = db.Column(db.DateTime, default=datetime.now)
-    
-    __table_args__ = (
-        db.UniqueConstraint('packet_id', 'user_id', name='_packet_user_uc'),
-    )
-    
-    packet = db.relationship('RedPacket', backref='red_packet_claims', lazy=True)
+    packet = models.ForeignKey(RedPacket, on_delete=models.CASCADE, related_name='red_packet_claims')
+    user_id = models.BigIntegerField(db_index=True)
+    points_received = models.IntegerField()
+    claimed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'red_packet_claim'
+        unique_together = [['packet', 'user_id']]
+        verbose_name = '红包领取'
+        verbose_name_plural = '红包领取'
 
 
+# 默认字段配置
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
-    {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},
+    {"key": "region", "label": "地区", "type": "select", "options": ["福田", "南山"]},
 ]
 
+# 默认系统配置
 DEFAULT_SYSTEM = {
-    "checkin_open": True, "checkin_cmd": "打卡", 
-    "query_open": True, "query_cmd": "查询", # 🆕 普通查询开关
-    "query_filter_open": True,             # 🆕 筛选查询开关
-    "checkin_del_time": 30, 
+    "checkin_open": True,
+    "checkin_cmd": "打卡",
+    "query_open": True,
+    "query_cmd": "查询",
+    "query_filter_open": True,
+    "checkin_del_time": 30,
     "query_del_time": 60,
     "page_size": 10,
-    "auto_like": True, "like_emoji": "❤️",
-    "auto_reply_open": True,  # 自动回复开关
-    "scheduled_msg_open": True,  # 定时消息开关
-    "start_msg_open": True,  # /start 消息开关
+    "auto_like": True,
+    "like_emoji": "❤️",
+    "auto_reply_open": True,
+    "scheduled_msg_open": True,
+    "start_msg_open": True,
     "push_channel_id": "",
-    "msg_checkin_success": "✅ <b>打卡成功！</b>", 
+    "msg_checkin_success": "✅ <b>打卡成功！</b>",
     "msg_not_registered": "⚠️ <b>未认证用户</b>",
-    "msg_repeat_checkin": "🔄 <b>今天已打卡</b>", 
+    "msg_repeat_checkin": "🔄 <b>今天已打卡</b>",
     "msg_query_header": "🔍 <b>今日在线用户：</b>\n",
     "msg_filter_header": "🔍 <b>筛选结果：</b>\n",
     "msg_expired_ban": "⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>",
-    "msg_private_start": "👋 你好！我是打卡机器人。",  # 私聊 /start 消息
+    "msg_private_start": "👋 你好！我是打卡机器人。",
     "template": "{onlineEmoji} {昵称} | {地区}",
     "push_template": "<b>👤 名片推送</b>\n昵称：{昵称}\n<a href='tg://user?id={tg_id}'>联系我</a>",
-    "custom_buttons": "[]" # 🆕 初始化为空数组
+    "custom_buttons": "[]"
 }

@@ -27,6 +27,7 @@ from django.conf import settings
 from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM
 from authentication.models import TelegramUser
 from datetime import date
+from asgiref.sync import sync_to_async
 import json
 
 # Configure logging
@@ -41,6 +42,57 @@ TOKEN = settings.TELEGRAM_BOT_TOKEN
 ADMIN_IDS = [settings.ADMIN_ID] if settings.ADMIN_ID else []
 
 
+# Async wrappers for Django ORM operations
+@sync_to_async
+def get_or_create_telegram_user(telegram_id):
+    """Get or create a TelegramUser record"""
+    return TelegramUser.objects.get_or_create(
+        telegram_id=telegram_id,
+        defaults={'joining_date': date.today()}
+    )
+
+
+@sync_to_async
+def get_group_by_chat_id(chat_id):
+    """Get a BotGroup by chat_id"""
+    return BotGroup.objects.filter(chat_id=str(chat_id)).first()
+
+
+@sync_to_async
+def get_group_user(group_id, tg_id):
+    """Get a GroupUser by group and telegram ID"""
+    return GroupUser.objects.filter(group_id=group_id, tg_id=tg_id).first()
+
+
+@sync_to_async
+def update_user_checkin(db_user):
+    """Update a user's checkin time and online status"""
+    from django.utils import timezone
+    db_user.checkin_time = timezone.now()
+    db_user.online = True
+    db_user.save()
+
+
+@sync_to_async
+def count_online_users(group_id):
+    """Count online users in a group"""
+    return GroupUser.objects.filter(group_id=group_id, online=True).count()
+
+
+@sync_to_async
+def get_or_create_bot_group(chat_id, title, chat_type):
+    """Get or create a BotGroup record"""
+    return BotGroup.objects.get_or_create(
+        chat_id=str(chat_id),
+        defaults={
+            'title': title,
+            'type': chat_type,
+            'is_active': True,
+            'fields_config': json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+        }
+    )
+
+
 async def cmd_start(update: Update, context):
     """Handle /start command"""
     user = update.effective_user
@@ -50,10 +102,7 @@ async def cmd_start(update: Update, context):
     
     # Record user if not exists
     try:
-        tg_user, created = TelegramUser.objects.get_or_create(
-            telegram_id=user.id,
-            defaults={'joining_date': date.today()}
-        )
+        tg_user, created = await get_or_create_telegram_user(user.id)
         if created:
             print(f"📝 New user registered: {user.id}")
     except Exception as e:
@@ -121,7 +170,7 @@ async def on_message(update: Update, context):
     
     try:
         # Get group configuration
-        group = BotGroup.objects.filter(chat_id=str(chat.id)).first()
+        group = await get_group_by_chat_id(chat.id)
         if not group or not group.is_active:
             return
         
@@ -141,22 +190,18 @@ async def on_message(update: Update, context):
         # Check-in command
         checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
         if conf.get('checkin_open') and text in checkin_cmds:
-            db_user = GroupUser.objects.filter(group_id=group.id, tg_id=user.id).first()
+            db_user = await get_group_user(group.id, user.id)
             if not db_user:
                 await update.message.reply_html(conf.get('msg_not_registered', '⚠️ 未认证用户'))
             else:
-                from django.utils import timezone
-                db_user.checkin_time = timezone.now()
-                db_user.online = True
-                db_user.save()
+                await update_user_checkin(db_user)
                 await update.message.reply_html(conf.get('msg_checkin_success', '✅ 打卡成功！'))
             return
         
         # Query command
         query_cmds = [c.strip() for c in conf.get('query_cmd', '查询').split(',')]
         if conf.get('query_open') and text in query_cmds:
-            # Simple query response
-            users = GroupUser.objects.filter(group_id=group.id, online=True).count()
+            users = await count_online_users(group.id)
             await update.message.reply_text(f"🔍 当前在线用户: {users} 人")
             return
         
@@ -172,15 +217,7 @@ async def on_my_chat_member(update: Update, context):
         
         if chat.type in ['group', 'supergroup'] and status in ['administrator', 'member']:
             # Register group
-            group, created = BotGroup.objects.get_or_create(
-                chat_id=str(chat.id),
-                defaults={
-                    'title': chat.title,
-                    'type': chat.type,
-                    'is_active': True,
-                    'fields_config': json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
-                }
-            )
+            group, created = await get_or_create_bot_group(chat.id, chat.title, chat.type)
             if created:
                 print(f"➕ New group registered: {chat.title}")
             

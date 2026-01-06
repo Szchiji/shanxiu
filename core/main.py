@@ -14,6 +14,7 @@ This module handles all Telegram bot functionality including:
 import os
 import sys
 import django
+import logging
 
 # Setup Django settings
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
@@ -21,11 +22,19 @@ django.setup()
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.error import Conflict, NetworkError
 from django.conf import settings
 from app.models import BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM
 from authentication.models import TelegramUser
 from datetime import date
 import json
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Bot token from settings
 TOKEN = settings.TELEGRAM_BOT_TOKEN
@@ -177,10 +186,15 @@ def main():
         print("Please set TELEGRAM_BOT_TOKEN in your environment variables.")
         return
     
-    print("🤖 Starting Telegram bot...")
+    logger.info("🤖 Starting Telegram bot...")
     
-    # Create application
-    application = Application.builder().token(TOKEN).build()
+    # Create application with post_init to delete any existing webhook
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init_callback)
+        .build()
+    )
     
     # Add handlers
     application.add_handler(CommandHandler("start", cmd_start))
@@ -192,11 +206,55 @@ def main():
     from telegram.ext import ChatMemberHandler
     application.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
-    print("✅ Bot handlers registered")
-    print("🚀 Bot is running...")
+    # Add error handler
+    async def error_handler(update: object, context) -> None:
+        """Handle errors in the telegram bot"""
+        logger.error("Exception while handling an update:", exc_info=context.error)
+        
+        # Handle specific errors
+        if isinstance(context.error, Conflict):
+            logger.error(
+                "Conflict error: Another bot instance is running with the same token. "
+                "Please ensure only one bot instance is running."
+            )
+        elif isinstance(context.error, NetworkError):
+            logger.warning("Network error occurred, bot will retry automatically.")
     
-    # Start polling
-    application.run_polling(drop_pending_updates=True)
+    application.add_error_handler(error_handler)
+    
+    logger.info("✅ Bot handlers registered")
+    logger.info("🚀 Bot is running...")
+    
+    # Start polling with proper error handling
+    try:
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    except Conflict as e:
+        logger.error(
+            f"❌ Bot conflict error: {e}\n"
+            "Another instance of this bot is already running.\n"
+            "Please stop the other instance before starting a new one."
+        )
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Bot startup error: {e}")
+        sys.exit(1)
+
+
+async def post_init_callback(application: Application) -> None:
+    """Post initialization callback to delete any existing webhook.
+    
+    This prevents 'Conflict: terminated by other getUpdates request' errors
+    when switching from webhook mode to polling mode, or when another
+    instance was running previously.
+    """
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook deleted successfully, starting polling mode")
+    except Exception as e:
+        logger.warning(f"Could not delete webhook: {e}")
 
 
 if __name__ == '__main__':

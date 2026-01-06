@@ -13,13 +13,21 @@ import sys
 import threading
 
 
-def run_django():
-    """Run Django server"""
+def run_django(use_reloader=True):
+    """Run Django server
+    
+    Args:
+        use_reloader: Whether to use Django's autoreloader. Must be False when
+                      running in a non-main thread.
+    """
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
     from django.core.management import execute_from_command_line
     
     port = int(os.getenv('PORT', 8000))
-    execute_from_command_line([sys.argv[0], 'runserver', f'0.0.0.0:{port}'])
+    cmd = [sys.argv[0], 'runserver', f'0.0.0.0:{port}']
+    if not use_reloader:
+        cmd.append('--noreload')
+    execute_from_command_line(cmd)
 
 
 def run_bot():
@@ -51,7 +59,8 @@ def main():
         run_bot()
     else:
         # Run both in separate threads
-        django_thread = threading.Thread(target=run_django, daemon=True)
+        # Disable autoreload when running Django in a thread (signal handlers only work in main thread)
+        django_thread = threading.Thread(target=run_django, args=(False,), daemon=True)
         django_thread.start()
         
         # Run bot in main thread

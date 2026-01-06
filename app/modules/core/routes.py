@@ -5421,18 +5421,83 @@ async def cmd_start(update: Update, context):
             reply_markup=reply_markup
         )
     else:
-        # Get custom private start message from configuration
-        def _get_private_start_msg():
+        # Get custom private start message and check for expired memberships
+        def _get_private_start_msg_and_check_expiration():
             with global_flask_app.app_context():
                 # Try to get configuration from the most recently updated group (bot-level setting)
-                # This ensures the latest edited msg_private_start is used
-                # or use DEFAULT_SYSTEM as fallback
                 group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.updated_at.desc()).first()
                 conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
-                return conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
+                private_msg = conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
+                
+                # Check if this user has any expired memberships in groups
+                now = get_beijing_now()
+                expired_memberships = GroupUser.query.options(
+                    joinedload(GroupUser.group)
+                ).filter(
+                    GroupUser.tg_id == user_id,
+                    GroupUser.expiration_date.isnot(None),
+                    GroupUser.expiration_date < now,
+                    GroupUser.is_banned == False
+                ).all()
+                
+                # Collect expired memberships to process
+                users_to_ban = []
+                for group_user in expired_memberships:
+                    if group_user.group and group_user.group.is_active:
+                        users_to_ban.append((group_user, group_user.group))
+                
+                # Mark users as banned in database
+                if users_to_ban:
+                    for group_user, grp in users_to_ban:
+                        group_user.is_banned = True
+                    db.session.commit()
+                    print(f"✅ [/start] Marked {len(users_to_ban)} expired memberships as banned for user {user_id}", flush=True)
+                
+                return private_msg, users_to_ban
         
-        msg = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg)
-        await update.message.reply_html(msg)
+        private_msg, users_to_ban = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg_and_check_expiration)
+        
+        # Mute expired users in their groups
+        if users_to_ban:
+            async def mute_expired_user(group_user, grp):
+                """Mute an expired user in a group"""
+                try:
+                    await context.bot.restrict_chat_member(
+                        chat_id=grp.chat_id,
+                        user_id=group_user.tg_id,
+                        permissions=ChatPermissions(
+                            can_send_messages=False,
+                            can_send_media_messages=False,
+                            can_send_polls=False,
+                            can_send_other_messages=False,
+                            can_add_web_page_previews=False,
+                            can_change_info=False,
+                            can_invite_users=False,
+                            can_pin_messages=False
+                        )
+                    )
+                    print(f"⛔️ [/start] Muted expired user {group_user.tg_id} in group {grp.title}", flush=True)
+                except Exception as e:
+                    print(f"❌ [/start] Error muting user {group_user.tg_id} in group {grp.chat_id}: {e}", flush=True)
+            
+            # Use semaphore to limit concurrent operations
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
+            
+            async def mute_with_limit(group_user, grp):
+                async with semaphore:
+                    await mute_expired_user(group_user, grp)
+            
+            # Mute users in all their expired groups concurrently
+            await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
+            
+            # Notify the user about expired memberships
+            expired_groups = [grp.title for _, grp in users_to_ban]
+            notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(expired_groups) + "\n\n请联系管理员续费。"
+            # Sanitize the notification message before sending
+            sanitized_notification = sanitize_html_for_telegram(notification_msg)
+            await update.message.reply_html(sanitized_notification)
+        
+        await update.message.reply_html(private_msg)
 
 
 async def on_my_chat_member(update: Update, context):

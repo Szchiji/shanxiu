@@ -44,6 +44,10 @@
         margin: 0 0.25rem;
     }
     
+    .stat-badge-success {
+        background: rgba(43, 185, 48, 0.4);
+    }
+    
     /* Atlantis-style stat cards */
     .stats-grid {
         display: grid;
@@ -76,6 +80,20 @@
         margin: 0 auto 12px;
         font-size: 1.1rem;
     }
+    
+    /* Icon background utility classes */
+    .icon-primary-bg { background: rgba(29, 122, 243, 0.15); }
+    .icon-warning-bg { background: rgba(255, 173, 70, 0.15); }
+    .icon-danger-bg { background: rgba(242, 89, 97, 0.15); }
+    .icon-info-bg { background: rgba(72, 171, 247, 0.15); }
+    .icon-success-bg { background: rgba(43, 185, 48, 0.15); }
+    
+    /* Icon color utility classes */
+    .icon-primary { color: var(--primary-color); }
+    .icon-warning { color: #ffad46; }
+    .icon-danger { color: #f25961; }
+    .icon-info { color: #48abf7; }
+    .icon-success { color: #2bb930; }
     
     .mini-stat-card h3 {
         font-size: 1.5rem;
@@ -135,7 +153,7 @@
             <div class="stat-badge">
                 <i class="fa-solid fa-users me-2"></i>{{ stats.users }}
             </div>
-            <div class="stat-badge" style="background: rgba(43, 185, 48, 0.4);">
+            <div class="stat-badge stat-badge-success">
                 <i class="fa-solid fa-circle text-success me-1" style="font-size: 8px;"></i>{{ stats.online }}
             </div>
         </div>
@@ -145,29 +163,29 @@
 <!-- Statistics Cards -->
 <div class="stats-grid mb-4">
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(29, 122, 243, 0.15);">
-            <i class="fa-solid fa-calendar-check" style="color: var(--primary-color);"></i>
+        <div class="icon icon-primary-bg">
+            <i class="fa-solid fa-calendar-check icon-primary"></i>
         </div>
         <h3>{{ stats.today_checkins }}</h3>
         <p>今日打卡</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(255, 173, 70, 0.15);">
-            <i class="fa-solid fa-clock" style="color: #ffad46;"></i>
+        <div class="icon icon-warning-bg">
+            <i class="fa-solid fa-clock icon-warning"></i>
         </div>
         <h3>{{ stats.expired }}</h3>
         <p>过期用户</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(242, 89, 97, 0.15);">
-            <i class="fa-solid fa-ban" style="color: #f25961;"></i>
+        <div class="icon icon-danger-bg">
+            <i class="fa-solid fa-ban icon-danger"></i>
         </div>
         <h3>{{ stats.banned }}</h3>
         <p>禁言用户</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(72, 171, 247, 0.15);">
-            <i class="fa-solid fa-reply" style="color: #48abf7;"></i>
+        <div class="icon icon-info-bg">
+            <i class="fa-solid fa-reply icon-info"></i>
         </div>
         <h3>{{ stats.auto_replies }}</h3>
         <p>自动回复</p>
@@ -177,22 +195,22 @@
 <!-- Module Status Cards -->
 <div class="stats-grid mb-4">
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(43, 185, 48, 0.15);">
-            <i class="fa-solid fa-clock" style="color: #2bb930;"></i>
+        <div class="icon icon-success-bg">
+            <i class="fa-solid fa-clock icon-success"></i>
         </div>
         <h3>{{ stats.scheduled_msgs }}</h3>
         <p>定时消息</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(29, 122, 243, 0.15);">
-            <i class="fa-solid fa-rocket" style="color: var(--primary-color);"></i>
+        <div class="icon icon-primary-bg">
+            <i class="fa-solid fa-rocket icon-primary"></i>
         </div>
         <h3>{{ stats.start_msgs }}</h3>
         <p>/start 消息</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: rgba(29, 122, 243, 0.15);">
-            <i class="fa-solid fa-users" style="color: var(--primary-color);"></i>
+        <div class="icon icon-primary-bg">
+            <i class="fa-solid fa-users icon-primary"></i>
         </div>
         <h3>{{ stats.users }}</h3>
         <p>总用户数</p>

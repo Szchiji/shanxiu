@@ -31,8 +31,8 @@ def run_django(use_reloader=True):
 
 
 def is_bot_configured():
-    """Check if Telegram bot token is configured"""
-    return bool(os.getenv('TELEGRAM_BOT_TOKEN', ''))
+    """Check if Telegram bot token is configured and not empty"""
+    return bool(os.getenv('TELEGRAM_BOT_TOKEN'))
 
 
 def run_bot():

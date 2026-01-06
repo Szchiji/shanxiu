@@ -388,6 +388,7 @@
                     <option value="msg_checkin_success">✅ 打卡成功消息</option>
                     <option value="msg_not_registered">⚠️ 未认证提示</option>
                     <option value="msg_repeat_checkin">🔄 重复打卡提示</option>
+                    <option value="msg_private_start">💬 私聊/start消息</option>
                 </select>
             </div>
             <div class="card-body p-0">
@@ -554,7 +555,8 @@
         msg_repeat_checkin: `{{ conf.msg_repeat_checkin|safe }}`,
         msg_query_header: `{{ conf.msg_query_header|safe }}`,
         msg_filter_header: `{{ conf.msg_filter_header|safe }}`,
-        msg_expired_ban: `{{ conf.msg_expired_ban|safe }}`
+        msg_expired_ban: `{{ conf.msg_expired_ban|safe }}`,
+        msg_private_start: `{{ conf.msg_private_start|safe }}`
     };
     
     const currentGroupId = {{ group.id }};

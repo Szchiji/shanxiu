@@ -5539,7 +5539,17 @@ async def cmd_start(update: Update, context):
             reply_markup=reply_markup
         )
     else:
-        await update.message.reply_html(f"👋 你好！我是打卡机器人。\n你的 ID 是：<code>{user_id}</code>")
+        # Get custom private start message from configuration
+        def _get_private_start_msg():
+            with global_flask_app.app_context():
+                # Try to get configuration from the first active group (bot-level setting)
+                # or use DEFAULT_SYSTEM as fallback
+                group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.id).first()
+                conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
+                return conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
+        
+        msg = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg)
+        await update.message.reply_html(msg)
 
 
 async def on_my_chat_member(update: Update, context):

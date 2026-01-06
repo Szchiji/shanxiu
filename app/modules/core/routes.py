@@ -5546,7 +5546,7 @@ async def cmd_start(update: Update, context):
                 # or use DEFAULT_SYSTEM as fallback
                 group = BotGroup.query.filter_by(is_active=True).first()
                 conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
-                return conf.get('msg_private_start', '👋 你好！我是打卡机器人。')
+                return conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
         
         msg = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg)
         await update.message.reply_html(msg)

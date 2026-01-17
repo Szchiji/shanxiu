@@ -7,7 +7,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim)
 from app.services import sanitize_html_for_telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
@@ -2926,7 +2926,7 @@ async def check_scheduled_messages(context):
                     text=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup,
-                    disable_web_page_preview=True
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
                 )
             
             # 更新发送时间和消息ID
@@ -5921,7 +5921,7 @@ async def on_message(update: Update, context):
                                 elif content:
                                     await msg.reply_html(
                                         content,
-                                        disable_web_page_preview=True
+                                        link_preview_options=LinkPreviewOptions(is_disabled=True)
                                     )
                                 
                                 # Notify about deduction
@@ -5993,7 +5993,7 @@ async def on_message(update: Update, context):
                                 sent_reply = await msg.reply_html(
                                     content,
                                     reply_markup=reply_markup,
-                                    disable_web_page_preview=True
+                                    link_preview_options=LinkPreviewOptions(is_disabled=True)
                                 )
                             
                             # 自动删除回复
@@ -6068,7 +6068,7 @@ async def on_message(update: Update, context):
                 
                 if users or (not kw and not users):
                     if not text_resp: text_resp = "😢 暂无数据"
-                    sent = await msg.reply_html(text_resp, reply_markup=markup, disable_web_page_preview=True)
+                    sent = await msg.reply_html(text_resp, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
                     del_time = safe_int(conf.get('query_del_time'), 60)
                     if del_time > 0:
                         context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=sent)
@@ -6203,7 +6203,7 @@ async def pagination_callback(update: Update, context):
 
         text, markup, _ = await do_query_page(chat.id, gid, conf, fields, kw, page)
         if text:
-            await query.edit_message_text(text=text, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
+            await query.edit_message_text(text=text, parse_mode='HTML', reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception as e: 
         print(f"Page Error: {e}")
     await query.answer()

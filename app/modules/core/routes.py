@@ -760,6 +760,14 @@ def api_save_settings():
 
 @core_bp.route('/api/save_user', methods=['POST'])
 def api_save_user():
+    """
+    Save or update user information, including renewal (adding days to expiration).
+    
+    When a user is renewed (add_days > 0):
+    1. Updates expiration_date by adding days
+    2. Clears is_banned flag if user was expired or banned
+    3. Unmutes user in Telegram by restoring all permissions
+    """
     if not session.get('logged_in'): return jsonify({'status':'error'})
     d = request.json
     gid = d['group_id']
@@ -792,20 +800,31 @@ def api_save_user():
         if add > 0 and was_expired_or_banned and will_be_valid_after_renewal:
             u.is_banned = False
             print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态，旧到期时间: {old_expiration}，新到期时间: {u.expiration_date}", flush=True)
-            try: 
-                group = BotGroup.query.get(gid)
-                if group and group.chat_id:
-                    asyncio.run_coroutine_threadsafe(
-                        global_ptb_app.bot.restrict_chat_member(
-                            chat_id=group.chat_id,
-                            user_id=u.tg_id,
-                            permissions=ChatPermissions.all_permissions()
-                        ),
-                        global_bot_loop
-                    ).result(timeout=5)
-                    print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
-            except Exception as e:
-                print(f"❌ [api_save_user] 解除禁言失败，用户 {u.tg_id}: {e}", flush=True)
+            
+            # Check if bot is available before attempting to unmute
+            if not global_ptb_app or not global_bot_loop:
+                print(f"⚠️ [api_save_user] 机器人未初始化，无法解除用户 {u.tg_id} 的禁言（仅更新数据库）", flush=True)
+            else:
+                try: 
+                    group = BotGroup.query.get(gid)
+                    if not group:
+                        print(f"⚠️ [api_save_user] 群组 {gid} 不存在，无法解除禁言", flush=True)
+                    elif not group.chat_id:
+                        print(f"⚠️ [api_save_user] 群组 {gid} 的 chat_id 为空，无法解除禁言", flush=True)
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            global_ptb_app.bot.restrict_chat_member(
+                                chat_id=group.chat_id,
+                                user_id=u.tg_id,
+                                permissions=ChatPermissions.all_permissions()
+                            ),
+                            global_bot_loop
+                        ).result(timeout=5)
+                        print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
+                except Exception as e:
+                    print(f"❌ [api_save_user] 解除禁言失败，群组ID={gid}, 用户ID={u.tg_id}: {e}", flush=True)
+                    import traceback
+                    print(f"❌ [api_save_user] 错误详情:\n{traceback.format_exc()}", flush=True)
 
     db.session.commit()
     return jsonify({'status':'ok'})
@@ -2849,7 +2868,13 @@ def logout():
 
 async def check_expired_users(context):
     """
-    Periodic job to check for expired users and mute them in groups
+    Periodic job to check for expired users and mute them in groups.
+    
+    This function runs every hour to:
+    1. Find users whose expiration_date has passed
+    2. Mark them as banned in the database
+    3. Restrict their chat permissions in Telegram
+    4. Send them a private notification about expiration
     """
     print(f"🕐 [check_expired_users] 任务开始执行，当前时间: {get_beijing_now()}", flush=True)
     

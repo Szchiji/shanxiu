@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    }
+    
+    .settings-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-switch .form-check-input {
+        width: 3em;
+        height: 1.5em;
+        cursor: pointer;
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #667eea;
+        border-color: #667eea;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-cog me-2"></i>其他设置</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">自动删除系统消息、取消频道置顶等其他功能</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存设置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-trash-can me-2 text-danger"></i>自动删除消息
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">自动删除系统消息，保持群组整洁</p>
+                
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="auto_delete_join_msg" 
+                           {{ 'checked' if settings and settings.auto_delete_join_msg }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-user-plus me-2 text-success"></i>自动删除进群消息
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="auto_delete_leave_msg" 
+                           {{ 'checked' if settings and settings.auto_delete_leave_msg }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-user-minus me-2 text-warning"></i>自动删除退群消息
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="auto_delete_promote_msg" 
+                           {{ 'checked' if settings and settings.auto_delete_promote_msg }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-bullhorn me-2 text-info"></i>自动删除互推消息
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="auto_delete_pin_msg" 
+                           {{ 'checked' if settings and settings.auto_delete_pin_msg }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-thumbtack me-2 text-primary"></i>自动删除置顶提示消息
+                    </label>
+                </div>
+                
+                <hr class="my-4">
+                
+                <h6 class="fw-bold mb-3">频道消息设置</h6>
+                
+                <div class="form-check form-switch mb-0 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="cancel_channel_pin" 
+                           {{ 'checked' if settings and settings.cancel_channel_pin }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-unlink me-2 text-danger"></i>取消频道消息置顶
+                    </label>
+                    <div class="form-text mt-2">自动取消来自关联频道的消息置顶</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const groupId = {{ group.id }};
+    
+    function saveSettings() {
+        const data = {
+            group_id: groupId,
+            auto_delete_join_msg: document.getElementById('auto_delete_join_msg').checked,
+            auto_delete_leave_msg: document.getElementById('auto_delete_leave_msg').checked,
+            auto_delete_promote_msg: document.getElementById('auto_delete_promote_msg').checked,
+            auto_delete_pin_msg: document.getElementById('auto_delete_pin_msg').checked,
+            cancel_channel_pin: document.getElementById('cancel_channel_pin').checked
+        };
+        
+        showLoading('保存设置中...');
+        
+        fetch('/core/api/save_other_settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(res => res.json()).then(result => {
+            hideLoading();
+            if (result.status === 'ok') {
+                showToast('设置已保存', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast('保存失败: ' + (result.msg || '未知错误'), 'error');
+            }
+        }).catch(e => {
+            hideLoading();
+            showToast('网络错误，请重试', 'error');
+            console.error('保存设置失败:', e);
+        });
+    }
+</script>
+{% endblock %}

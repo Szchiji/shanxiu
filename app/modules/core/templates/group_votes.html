@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(67, 233, 123, 0.3);
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-square-poll-vertical me-2"></i>群投票管理</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">创建群内投票和问卷，支持单选和多选</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>创建投票
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="alert alert-info">
+            <i class="fa-solid fa-lightbulb me-2"></i>
+            <strong>使用方法：</strong>在群内使用命令 /vote 标题|选项1|选项2|选项3 创建投票
+        </div>
+
+        {% if votes %}
+            {% for v in votes %}
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h5>{{ v.title }}</h5>
+                    <p class="text-muted">{{ v.description }}</p>
+                    <div class="d-flex gap-2">
+                        <span class="badge bg-{{ 'success' if v.status == 'active' else 'secondary' }}">
+                            {{ {'pending': '待开始', 'active': '进行中', 'ended': '已结束'}[v.status] }}
+                        </span>
+                        <span class="badge bg-info">{{ v.vote_type == 'single' and '单选' or '多选' }}</span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-secondary">
+                <i class="fa-solid fa-info-circle me-2"></i>暂无投票记录
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

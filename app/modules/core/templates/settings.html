@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .btn-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+    .btn-row .form-control { flex: 1; min-width: 150px; }
+    #editor { 
+        white-space: pre-wrap; 
+        overflow-wrap: break-word;
+        min-height: 200px;
+        max-height: 400px;
+        overflow-y: auto;
+        line-height: 1.8;
+        font-size: 0.8rem;
+        font-family: 'Courier New', Consolas, monospace;
+        tab-size: 2;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+    
+    @media (min-width: 768px) {
+        #editor {
+            font-size: 0.9rem;
+        }
+    }
+    
+    #editor a {
+        color: #a855f7;
+        text-decoration: underline;
+    }
+    .section-title { 
+        font-size: 0.75rem; 
+        font-weight: 700; 
+        color: var(--text-muted); 
+        text-transform: uppercase; 
+        margin-bottom: 0.5rem; 
+    }
+    
+    @media (min-width: 768px) {
+        .section-title {
+            font-size: 0.8rem;
+        }
+    }
+    
+    .settings-header {
+        background: var(--info-gradient);
+        color: white;
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 25px rgba(6, 182, 212, 0.4);
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header {
+            padding: 1.25rem 1.5rem;
+            border-radius: 14px;
+            margin-bottom: 1.5rem;
+        }
+    }
+    
+    .settings-header h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header h4 {
+            font-size: 1.25rem;
+        }
+    }
+    
+    .settings-header p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .settings-header p {
+            font-size: 0.9rem;
+        }
+    }
+    
+    .config-card {
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .config-card {
+            border-radius: 14px;
+        }
+    }
+    
+    .config-card:hover {
+        border-color: rgba(124, 58, 237, 0.5);
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.2);
+        transform: translateY(-2px);
+    }
+    
+    .config-section {
+        background: var(--bg-secondary);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border-color);
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .config-section {
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+    }
+    
+    .config-section:hover {
+        border-color: rgba(6, 182, 212, 0.5);
+        box-shadow: 0 5px 15px rgba(6, 182, 212, 0.15);
+    }
+    
+    .editor-toolbar {
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+        padding: 0.75rem;
+        border-radius: 10px 10px 0 0;
+    }
+    
+    @media (min-width: 768px) {
+        .editor-toolbar {
+            padding: 1rem;
+        }
+    }
+    
+    .editor-content {
+        border-radius: 0 0 10px 10px;
+        min-height: 250px;
+        padding: 1rem;
+        background: var(--bg-secondary);
+    }
+    
+    @media (min-width: 768px) {
+        .editor-content {
+            padding: 1.25rem;
+        }
+    }
+    
+    .form-switch .form-check-input {
+        width: 2.5em;
+        height: 1.25em;
+        cursor: pointer;
+    }
+    
+    @media (min-width: 768px) {
+        .form-switch .form-check-input {
+            width: 3em;
+            height: 1.5em;
+        }
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #7c3aed;
+        border-color: #7c3aed;
+    }
+    
+    .template-selector {
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        padding: 0.5rem 0.75rem;
+        font-weight: 600;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .template-selector {
+            border-radius: 10px;
+            padding: 0.6rem 1rem;
+            font-size: 0.85rem;
+        }
+    }
+    
+    .btn-toolbar-action {
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        color: var(--text-secondary);
+        padding: 0.4rem 0.6rem;
+        border-radius: 6px;
+        transition: all 0.3s ease;
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .btn-toolbar-action {
+            padding: 0.5rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+    }
+    
+    .btn-toolbar-action:hover {
+        background: var(--primary-gradient);
+        color: white;
+        transform: scale(1.05);
+        border-color: transparent;
+    }
+    
+    .badge-variable {
+        cursor: pointer;
+        transition: all 0.3s ease;
+        padding: 0.4rem 0.75rem;
+        font-weight: 600;
+        font-size: 0.75rem;
+    }
+    
+    @media (min-width: 768px) {
+        .badge-variable {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
+        }
+    }
+    
+    .badge-variable:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    
+    .card-header {
+        background: var(--bg-card) !important;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .config-section label {
+        color: var(--text-secondary);
+    }
+    
+    .config-section .form-text {
+        color: var(--text-muted);
+    }
+</style>
+
+<div class="settings-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-sliders me-2"></i>功能配置</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置打卡、查询、自动回复等核心功能参数</p>
+        </div>
+        <button class="btn btn-light fw-bold px-3 py-2" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存配置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <!-- 左侧：参数配置 -->
+    <div class="col-lg-4 mb-4">
+        <div class="config-card card h-100">
+            <div class="card-header bg-white fw-bold py-3 border-0">
+                <i class="fa-solid fa-gear me-2" style="color: #4facfe;"></i>交互参数
+            </div>
+            <div class="card-body">
+                
+                <!-- 1. 打卡模块 -->
+                <div class="config-section">
+                    <div class="section-title text-primary"><i class="fa-solid fa-check-circle me-1"></i> 打卡设置</div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="checkin_open" {{ 'checked' if conf.checkin_open }}>
+                        <label class="fw-bold">开启打卡功能</label>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="small text-muted fw-bold">触发指令 (逗号分隔)</label>
+                        <input id="checkin_cmd" class="form-control" value="{{ conf.checkin_cmd }}" placeholder="打卡, 上班">
+                    </div>
+                    
+                    <div class="mb-0">
+                        <label class="small text-muted fw-bold">回复自动删除 (秒)</label>
+                        <input type="number" id="checkin_del_time" class="form-control" value="{{ conf.checkin_del_time }}">
+                        <div class="form-text" style="font-size: 11px;">"打卡成功"提示多久消失。</div>
+                    </div>
+                </div>
+                
+                <!-- 2. 查询模块 -->
+                <div class="config-section">
+                    <div class="section-title text-info"><i class="fa-solid fa-search me-1"></i> 查询设置</div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="query_open" {{ 'checked' if conf.query_open }}>
+                        <label class="fw-bold">开启普通查询</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="small text-muted fw-bold">普通查询指令</label>
+                        <input id="query_cmd" class="form-control" value="{{ conf.query_cmd }}" placeholder="查询">
+                    </div>
+
+                    <hr class="my-3 text-muted">
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="query_filter_open" {{ 'checked' if conf.query_filter_open }}>
+                        <label class="fw-bold">开启关键词筛选</label>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-text small text-muted">支持 "指令+关键词" 或 "直接搜关键词"</div>
+                    </div>
+
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="small text-muted fw-bold">每页行数</label>
+                            <input type="number" id="page_size" class="form-control" value="{{ conf.page_size }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="small text-muted fw-bold text-danger">列表删除(秒)</label>
+                            <input type="number" id="query_del_time" class="form-control" value="{{ conf.query_del_time }}">
+                        </div>
+                    </div>
+                    <div class="form-text" style="font-size: 11px;">查询结果列表多久消失。</div>
+                </div>
+
+                <!-- 3. 模块开关 -->
+                <div class="config-section">
+                    <div class="section-title text-warning"><i class="fa-solid fa-toggle-on me-1"></i> 模块开关</div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="auto_reply_open" {{ 'checked' if conf.get('auto_reply_open', True) }}>
+                        <label class="fw-bold">自动回复模块</label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="scheduled_msg_open" {{ 'checked' if conf.get('scheduled_msg_open', True) }}>
+                        <label class="fw-bold">定时消息模块</label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="start_msg_open" {{ 'checked' if conf.get('start_msg_open', True) }}>
+                        <label class="fw-bold">/start 消息模块</label>
+                    </div>
+                </div>
+
+                <!-- 4. 其他设置 -->
+                <div class="config-section">
+                    <div class="section-title"><i class="fa-solid fa-cog me-1"></i> 其他</div>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <label class="small text-muted fw-bold">自动点赞 (强制)</label>
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" id="auto_like" {{ 'checked' if conf.auto_like }}>
+                        </div>
+                    </div>
+                    <input id="like_emoji" class="form-control mb-3" value="{{ conf.like_emoji }}" placeholder="❤️">
+                    
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.auto_mute_expired }}>
+                        <label class="small text-danger fw-bold">过期自动禁言</label>
+                    </div>
+                    
+                    <label class="small text-muted fw-bold text-success">推送频道 ID</label>
+                    <input id="push_channel_id" class="form-control" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧：文案与按钮 -->
+    <div class="col-lg-8 mb-4">
+        <!-- 文案编辑器 -->
+        <div class="config-card card mb-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
+                <span class="fw-bold"><i class="fa-solid fa-pen-to-square me-2" style="color: #4facfe;"></i>文案与模板</span>
+                <select class="template-selector form-select w-auto" id="msgSelector" onchange="loadMsg()">
+                    <option value="template">👤 列表单行模板</option>
+                    <option value="msg_query_header">📝 普通查询抬头</option>
+                    <option value="msg_filter_header">🔍 筛选查询抬头</option>
+                    <option value="msg_expired_ban">⛔️ 过期禁言提示</option>
+                    <option value="push_template">📢 频道推送模板</option>
+                    <option value="msg_checkin_success">✅ 打卡成功消息</option>
+                    <option value="msg_not_registered">⚠️ 未认证提示</option>
+                    <option value="msg_repeat_checkin">🔄 重复打卡提示</option>
+                    <option value="msg_private_start">💬 私聊/start消息</option>
+                </select>
+            </div>
+            <div class="card-body p-0">
+                <!-- 工具栏 -->
+                <div class="editor-toolbar d-flex flex-wrap gap-2 align-items-center">
+                    <div class="btn-group rounded shadow-sm">
+                        <button class="btn-toolbar-action" onclick="cmd('bold')" title="加粗"><i class="fa-solid fa-bold"></i></button>
+                        <button class="btn-toolbar-action" onclick="cmd('italic')" title="斜体"><i class="fa-solid fa-italic"></i></button>
+                        <button class="btn-toolbar-action" onclick="cmd('underline')" title="下划线"><i class="fa-solid fa-underline"></i></button>
+                        <button class="btn-toolbar-action" onclick="cmd('strikethrough')" title="删除线"><i class="fa-solid fa-strikethrough"></i></button>
+                    </div>
+                    <div class="btn-group rounded shadow-sm">
+                         <button class="btn-toolbar-action" onclick="cmd('insertUnorderedList')" title="列表"><i class="fa-solid fa-list-ul"></i></button>
+                         <button class="btn-toolbar-action" onclick="link()" title="添加链接"><i class="fa-solid fa-link"></i></button>
+                         <button class="btn-toolbar-action" onclick="cmd('unlink')" title="断开链接"><i class="fa-solid fa-unlink"></i></button>
+                         <button class="btn-toolbar-action" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
+                    </div>
+                    <div class="vr mx-1"></div>
+                    <span class="badge-variable badge bg-light text-dark border" onmousedown="insert('{onlineEmoji}', event)">🟢表情</span>
+                    <span class="badge-variable badge bg-info text-white border" onmousedown="insert('{序号}', event)">#️⃣序号</span>
+                    {% for f in fields %}
+                    <span class="badge-variable badge bg-primary text-white border" onmousedown="insert('{'+'{{ f.label }}'+'}', event)">{{ f.label }}</span>
+                    {% endfor %}
+                    <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
+                </div>
+                
+                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
+                
+                <div class="p-3 border-top bg-light text-end">
+                    <button class="btn btn-secondary" onclick="saveTmp()">
+                        <i class="fa-solid fa-bookmark me-2"></i>暂存当前文案
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 自定义按钮 -->
+        <div class="config-card card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
+                <span class="fw-bold"><i class="fa-solid fa-square-plus me-2" style="color: #4facfe;"></i>自定义按钮 (列表底部)</span>
+                <button class="btn btn-outline-primary" onclick="addBtn()">
+                    <i class="fa-solid fa-plus me-2"></i>添加按钮
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="btnContainer" class="row g-2"></div>
+                <textarea id="custom_buttons" class="form-control d-none">{{ conf.custom_buttons }}</textarea>
+            </div>
+        </div>
+
+        <!-- 群管理机器人命令 -->
+        <div class="config-card card">
+            <div class="card-header bg-white py-3 border-0">
+                <span class="fw-bold"><i class="fa-solid fa-robot me-2" style="color: #667eea;"></i>群管理机器人命令</span>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info mb-3">
+                    <i class="fa-solid fa-info-circle me-2"></i>
+                    <strong>注意：</strong>以下命令仅限群组管理员使用，需要回复目标用户的消息。
+                </div>
+                
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-user-slash me-2"></i>/kick</h6>
+                                <p class="small mb-1"><strong>功能：</strong>踢出群成员（可重新加入）</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /kick</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #fa709a15 0%, #fee14015 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-ban me-2"></i>/ban</h6>
+                                <p class="small mb-1"><strong>功能：</strong>永久封禁群成员</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /ban</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #4facfe15 0%, #00f2fe15 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-check-circle me-2"></i>/unban</h6>
+                                <p class="small mb-1"><strong>功能：</strong>解除用户封禁</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /unban</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-comment-slash me-2"></i>/mute [分钟]</h6>
+                                <p class="small mb-1"><strong>功能：</strong>禁言用户指定时间（默认60分钟）</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /mute 30</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #a8edea15 0%, #fed6e315 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-volume-up me-2"></i>/unmute</h6>
+                                <p class="small mb-1"><strong>功能：</strong>解除用户禁言</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /unmute</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #ffecd215 0%, #fcb69f15 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-thumbtack me-2"></i>/pin</h6>
+                                <p class="small mb-1"><strong>功能：</strong>置顶消息</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复消息后发送 /pin</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #ff9a9e15 0%, #fecfef15 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-times me-2"></i>/unpin</h6>
+                                <p class="small mb-1"><strong>功能：</strong>取消置顶（不回复消息则取消所有置顶）</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复消息后发送 /unpin 或直接 /unpin</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #ffeaa715 0%, #ffcf7115 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-exclamation-triangle me-2"></i>/warn [原因]</h6>
+                                <p class="small mb-1"><strong>功能：</strong>警告用户</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /warn 违反群规</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card border-0" style="background: linear-gradient(135deg, #43e97b15 0%, #38f9d715 100%);">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-2"><i class="fa-solid fa-id-card me-2"></i>/userinfo</h6>
+                                <p class="small mb-1"><strong>功能：</strong>查看用户详细信息（支持转发消息）</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复或转发用户消息后发送 /userinfo</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let msgs = {
+        template: `{{ conf.template|safe }}`,
+        push_template: `{{ conf.push_template|safe }}`,
+        msg_checkin_success: `{{ conf.msg_checkin_success|safe }}`,
+        msg_not_registered: `{{ conf.msg_not_registered|safe }}`,
+        msg_repeat_checkin: `{{ conf.msg_repeat_checkin|safe }}`,
+        msg_query_header: `{{ conf.msg_query_header|safe }}`,
+        msg_filter_header: `{{ conf.msg_filter_header|safe }}`,
+        msg_expired_ban: `{{ conf.msg_expired_ban|safe }}`,
+        msg_private_start: `{{ conf.msg_private_start|safe }}`
+    };
+    
+    const currentGroupId = {{ group.id }};
+    let btnData = [];
+    try { btnData = JSON.parse(document.getElementById('custom_buttons').value || '[]'); } catch(e){}
+
+    document.addEventListener('DOMContentLoaded', () => { loadMsg(); renderBtns(); });
+
+    function renderBtns() {
+        const con = document.getElementById('btnContainer');
+        con.innerHTML = '';
+        btnData.forEach((b, i) => {
+            con.innerHTML += `
+                <div class="col-md-6">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" placeholder="按钮文字" value="${b.text}" onchange="updateBtn(${i}, 'text', this.value)">
+                        <input type="text" class="form-control" placeholder="跳转链接" value="${b.url}" onchange="updateBtn(${i}, 'url', this.value)">
+                        <button class="btn btn-outline-danger" onclick="delBtn(${i})">×</button>
+                    </div>
+                </div>
+            `;
+        });
+        if(btnData.length === 0) con.innerHTML = '<div class="text-muted small text-center w-100 my-2">暂无按钮，点击上方添加</div>';
+    }
+    
+    function addBtn() { btnData.push({text:'', url:''}); renderBtns(); }
+    function delBtn(i) { btnData.splice(i, 1); renderBtns(); }
+    function updateBtn(i, key, val) { btnData[i][key] = val; }
+
+    // Convert stored template (with \n) to contenteditable HTML format
+    function templateToHtml(text) {
+        if (!text) return '';
+        // Split by newlines and wrap each line in a div
+        // First line is rendered as-is, subsequent lines are in divs
+        const lines = text.split('\n');
+        if (lines.length === 1) return text;
+        return lines[0] + lines.slice(1).map(line => '<div>' + (line || '<br>') + '</div>').join('');
+    }
+    
+    // Convert contenteditable HTML to template format (with \n)
+    function htmlToTemplate(html) {
+        if (!html) return '';
+        // Replace <div> tags with newlines
+        let text = html.replace(/<div><br><\/div>/gi, '\n');
+        text = text.replace(/<div>/gi, '\n');
+        text = text.replace(/<\/div>/gi, '');
+        // Replace <br> tags with newlines
+        text = text.replace(/<br\s*\/?>/gi, '\n');
+        // Clean up multiple consecutive newlines (but keep at least one)
+        text = text.replace(/\n\n+/g, '\n\n');
+        return text;
+    }
+
+    function loadMsg() { 
+        if(!msgs.msg_filter_header) msgs.msg_filter_header = "🔍 <b>筛选结果：</b>\n";
+        const content = msgs[document.getElementById('msgSelector').value] || '';
+        document.getElementById('editor').innerHTML = templateToHtml(content); 
+    }
+    
+    function saveTmp() { 
+        let content = document.getElementById('editor').innerHTML;
+        // Convert contenteditable HTML format back to template format with newlines
+        content = htmlToTemplate(content);
+        msgs[document.getElementById('msgSelector').value] = content;
+        const btn = document.querySelector('.btn-secondary');
+        btn.innerHTML = '已暂存'; setTimeout(() => btn.innerHTML = '暂存', 500);
+    }
+    
+    function cmd(c,v){ 
+        const editor = document.getElementById('editor');
+        editor.focus();
+        document.execCommand(c, false, v);
+    }
+    
+    function insert(text, e) {
+        e.preventDefault();
+        const editor = document.getElementById('editor');
+        editor.focus();
+        document.execCommand('insertText', false, text);
+    }
+    
+    function link(){ 
+        const editor = document.getElementById('editor');
+        editor.focus();
+        const selection = window.getSelection();
+        const selected = selection.toString();
+        let u = prompt('URL:'); 
+        if(u) {
+            document.execCommand('createLink', false, u);
+        }
+    }
+    
+    function saveSettings() {
+        saveTmp(); 
+        const d = {
+            group_id: currentGroupId,
+            config: {
+                ...msgs,
+                checkin_open: document.getElementById('checkin_open').checked,
+                checkin_cmd: document.getElementById('checkin_cmd').value,
+                checkin_del_time: document.getElementById('checkin_del_time').value, // 打卡删除
+                
+                query_open: document.getElementById('query_open').checked,
+                query_cmd: document.getElementById('query_cmd').value,
+                query_filter_open: document.getElementById('query_filter_open').checked,
+                query_del_time: document.getElementById('query_del_time').value, // 查询删除
+                
+                page_size: document.getElementById('page_size').value,
+                
+                auto_like: document.getElementById('auto_like').checked,
+                like_emoji: document.getElementById('like_emoji').value,
+                auto_mute_expired: document.getElementById('auto_mute_expired').checked,
+                
+                auto_reply_open: document.getElementById('auto_reply_open').checked,
+                scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,
+                start_msg_open: document.getElementById('start_msg_open').checked,
+
+                push_channel_id: document.getElementById('push_channel_id').value,
+                custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 
+                online_emoji: "{{ conf.online_emoji }}", 
+                offline_emoji: "{{ conf.offline_emoji }}"
+            }
+        };
+        fetch('/core/api/save_settings', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)
+        }).then(()=>showToast('配置已保存', 'success'));
+    }
+</script>
+{% endblock %}

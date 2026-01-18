@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+    }
+    
+    .settings-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-switch .form-check-input {
+        width: 3em;
+        height: 1.5em;
+        cursor: pointer;
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #4facfe;
+        border-color: #4facfe;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-clock me-2"></i>定时开关群</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">设置群组定时开启或关闭，自动管理群聊时间</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存设置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-cog me-2 text-primary"></i>定时设置
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" id="enabled" 
+                           {{ 'checked' if settings and settings.enabled }}>
+                    <label class="fw-bold">启用定时开关群</label>
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">开群时间</label>
+                        <input type="time" class="form-control" id="open_time" 
+                               value="{{ settings.open_time.strftime('%H:%M') if settings and settings.open_time else '' }}">
+                        <div class="form-text">群组将在此时间自动开放</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">关群时间</label>
+                        <input type="time" class="form-control" id="close_time" 
+                               value="{{ settings.close_time.strftime('%H:%M') if settings and settings.close_time else '' }}">
+                        <div class="form-text">群组将在此时间自动关闭</div>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="form-label fw-bold">时区</label>
+                    <select class="form-select" id="timezone">
+                        <option value="Asia/Shanghai" {{ 'selected' if not settings or settings.timezone == 'Asia/Shanghai' }}>北京时间 (UTC+8)</option>
+                        <option value="Asia/Hong_Kong" {{ 'selected' if settings and settings.timezone == 'Asia/Hong_Kong' }}>香港时间 (UTC+8)</option>
+                        <option value="Asia/Tokyo" {{ 'selected' if settings and settings.timezone == 'Asia/Tokyo' }}>东京时间 (UTC+9)</option>
+                        <option value="America/New_York" {{ 'selected' if settings and settings.timezone == 'America/New_York' }}>纽约时间 (UTC-5)</option>
+                    </select>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">关群提示消息</label>
+                    <textarea class="form-control" id="close_message" rows="3" 
+                              placeholder="群组已关闭，请在开放时间再来">{{ settings.close_message if settings and settings.close_message else '' }}</textarea>
+                </div>
+                
+                <div class="mb-0">
+                    <label class="form-label fw-bold">开群提示消息</label>
+                    <textarea class="form-control" id="open_message" rows="3" 
+                              placeholder="群组已开放，欢迎交流">{{ settings.open_message if settings and settings.open_message else '' }}</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const groupId = {{ group.id }};
+    
+    function saveSettings() {
+        const data = {
+            group_id: groupId,
+            enabled: document.getElementById('enabled').checked,
+            open_time: document.getElementById('open_time').value,
+            close_time: document.getElementById('close_time').value,
+            timezone: document.getElementById('timezone').value,
+            close_message: document.getElementById('close_message').value,
+            open_message: document.getElementById('open_message').value
+        };
+        
+        fetch('/core/api/save_timed_group_control', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(res => res.json()).then(result => {
+            if (result.status === 'ok') {
+                showToast('设置已保存', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast('保存失败: ' + (result.msg || '未知错误'));
+            }
+        }).catch(e => {
+            showToast('网络错误，请重试', 'error');
+            console.error('操作失败:', e);
+        });
+    }
+</script>
+{% endblock %}

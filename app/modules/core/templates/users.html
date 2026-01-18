@@ -1,0 +1,659 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
+    }
+    
+    @media (min-width: 768px) {
+        .page-header {
+            padding: 1.25rem 1.5rem;
+            border-radius: 14px;
+            margin-bottom: 1.5rem;
+        }
+    }
+    
+    .page-header h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header h4 {
+            font-size: 1.25rem;
+        }
+    }
+    
+    .page-header p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header p {
+            font-size: 0.9rem;
+        }
+    }
+    
+    .search-box {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .search-box {
+            margin-bottom: 1.5rem;
+        }
+    }
+    
+    .table-container {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    @media (min-width: 768px) {
+        .table-container {
+            border-radius: 14px;
+        }
+    }
+    
+    /* Mobile-friendly table */
+    .table {
+        font-size: 0.85rem;
+        color: var(--text-primary);
+        margin-bottom: 0;
+    }
+    
+    @media (min-width: 768px) {
+        .table {
+            font-size: 0.9rem;
+        }
+    }
+    
+    .table th, .table td {
+        padding: 0.5rem 0.75rem;
+        vertical-align: middle;
+        border-color: var(--border-color);
+    }
+    
+    @media (min-width: 768px) {
+        .table th, .table td {
+            padding: 0.75rem 1rem;
+        }
+    }
+    
+    /* Hide some columns on mobile */
+    @media (max-width: 767px) {
+        .hide-mobile {
+            display: none !important;
+        }
+    }
+    
+    .action-btn {
+        transition: all 0.3s ease;
+        border-radius: 6px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .action-btn {
+            border-radius: 8px;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+        }
+    }
+    
+    .action-btn:hover {
+        transform: scale(1.05);
+    }
+    
+    .modal-content {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+    }
+    
+    @media (min-width: 768px) {
+        .modal-content {
+            border-radius: 16px;
+        }
+    }
+    
+    .modal-header {
+        background: var(--primary-gradient);
+        color: white;
+        border-radius: 14px 14px 0 0;
+        padding: 1rem 1.25rem;
+        border-bottom: none;
+    }
+    
+    @media (min-width: 768px) {
+        .modal-header {
+            border-radius: 16px 16px 0 0;
+            padding: 1.25rem 1.5rem;
+        }
+    }
+    
+    .modal-header .btn-close {
+        filter: brightness(0) invert(1);
+    }
+    
+    .modal-body {
+        background: var(--bg-card);
+        color: var(--text-secondary);
+    }
+    
+    .modal-footer {
+        background: var(--bg-card);
+        border-top: 1px solid var(--border-color);
+    }
+
+    .badge-status {
+        padding: 0.3rem 0.6rem;
+        font-weight: 600;
+        border-radius: 15px;
+        font-size: 0.75rem;
+    }
+    
+    @media (min-width: 768px) {
+        .badge-status {
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+    }
+
+    /* Mobile-specific button adjustments */
+    .btn-add-new {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        .btn-add-new {
+            padding: 0.5rem 1.5rem;
+            font-size: 1rem;
+        }
+    }
+
+    /* Search input */
+    .search-input {
+        min-width: 150px;
+    }
+
+    /* Form labels */
+    .form-label {
+        font-size: 0.85rem;
+        margin-bottom: 0.3rem;
+    }
+    
+    @media (min-width: 768px) {
+        .form-label {
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+        }
+    }
+
+    /* Modal body padding */
+    .modal-body {
+        padding: 1rem !important;
+    }
+    
+    @media (min-width: 768px) {
+        .modal-body {
+            padding: 1.5rem !important;
+        }
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-users me-2"></i>认证用户管理</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">管理群组已认证的用户，支持导入导出和批量操作</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-success btn-sm" onclick="exportUsers()" title="导出配置">
+                <i class="fa-solid fa-download me-1"></i>导出
+            </button>
+            <button class="btn btn-info btn-sm" onclick="openBulkImport()" title="导入配置">
+                <i class="fa-solid fa-upload me-1"></i>导入
+            </button>
+            <button class="btn btn-light fw-bold btn-add-new" onclick="openAddUser()">
+                <i class="fa-solid fa-plus me-1 me-md-2"></i>添加用户
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="mb-3">
+    <div class="search-box">
+        <div class="d-flex align-items-center flex-wrap gap-2">
+            <i class="fa-solid fa-search text-muted ms-2"></i>
+            <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索用户...">
+            <button class="btn btn-primary btn-sm" onclick="searchUsers()">
+                <i class="fa-solid fa-search me-1"></i>搜索
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="clearSearch()">
+                <i class="fa-solid fa-times me-1"></i>清除
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">TG ID</th>
+                    {% for f in fields %}
+                    <th>{{ f.label }}</th>
+                    {% endfor %}
+                    <th>状态</th>
+                    <th>过期时间</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody id="userTable">
+                {% for user in users %}
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-bold">{{ user.tg_id }}</td>
+                    {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
+                    <td>
+                        {% if user.is_banned %}
+                        <span class="badge-status badge bg-danger">封禁</span>
+                        {% elif user.expiration_date %}
+                        <span class="badge-status badge bg-success">正常</span>
+                        {% else %}
+                        <span class="badge-status badge bg-secondary">永久</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user.expiration_date }}</td>
+                    <td class="text-end pe-3 pe-md-4">
+                        <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
+                            <i class="fa-solid fa-bell"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' onclick="openEdit(this)" title="编辑">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }})" title="删除">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Pagination Controls -->
+{% from 'pagination.html' import pagination %}
+{{ pagination(current_page, total_pages, per_page, total_users) }}
+
+<script>
+    async function searchUsers() {
+        const query = document.getElementById("searchInput").value.trim();
+        if (!query) return alert("请输入搜索关键字");
+        const res = await fetch("/core/api/search_users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ keyword: query }),
+        });
+        const data = await res.json();
+        if (data.status === "ok") {
+            const table = document.getElementById("userTable");
+            table.innerHTML = data.users.map(user => `
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-bold">${user.tg_id}</td>
+                    ${data.fields.map(field => `
+                        <td>${user.profile[field.key] || ""}</td>
+                    `).join('')}
+                    <td>
+                        ${(user.is_banned ? '<span class="badge-status badge bg-danger">封禁</span>'
+                            : (user.expiration_date ? '<span class="badge-status badge bg-success">正常</span>'
+                            : '<span class="badge-status badge bg-secondary">永久</span>'))}
+                    </td>
+                    <td>${user.expiration_date || ""}</td>
+                    <td class="text-end pe-3 pe-md-4">
+                        <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser(${user.id})" title="推送"><i class="fa-solid fa-bell"></i></button>
+                        <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>
+                        <button class="action-btn btn btn-sm btn-danger" onclick="delUser(${user.id})" title="删除"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+        } else {
+            alert(data.msg || "搜索失败");
+        }
+    }
+
+    function clearSearch() {
+        document.getElementById('searchInput').value = '';
+        location.reload();
+    }
+
+    // Enter key for search
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') searchUsers();
+        });
+    });
+</script>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">添加用户</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <form id="addUserForm">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">TG ID <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="tg_id" required placeholder="输入 Telegram 用户 ID">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">添加天数</label>
+                        <input type="number" class="form-control" name="add_days" value="30" placeholder="设置有效天数">
+                    </div>
+                    {% for field in fields %}
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{{ field.label }}</label>
+                        {% if field.type == 'select' %}
+                        <select class="form-control profile-input" name="{{ field.key }}">
+                            <option value="">请选择</option>
+                            {% for opt in field.options %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                        {% else %}
+                        <input type="text" class="form-control profile-input" name="{{ field.key }}" placeholder="输入{{ field.label }}">
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </form>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary px-4" onclick="submitAddUser()">
+                    <i class="fa-solid fa-check me-2"></i>确定
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Open Add User Modal
+    function openAddUser() {
+        // Reset form
+        document.getElementById('addUserForm').reset();
+        
+        // Set title to "添加用户"
+        document.querySelector('#addUserModal .modal-title').textContent = '添加用户';
+        
+        // Make tg_id editable
+        const tgIdInput = document.querySelector('input[name="tg_id"]');
+        tgIdInput.readOnly = false;
+        
+        // Set add_days to default value (30)
+        document.querySelector('input[name="add_days"]').value = '30';
+        
+        const modal = new bootstrap.Modal(document.getElementById('addUserModal'));
+        modal.show();
+    }
+    
+    // Open Edit User Modal
+    function openEdit(btn) {
+        // Parse profile data from button's data attribute
+        let profile = {};
+        try {
+            profile = JSON.parse(btn.dataset.profile);
+        } catch (e) {
+            console.error('Failed to parse profile data:', e);
+        }
+        
+        // Reset form first
+        document.getElementById('addUserForm').reset();
+        
+        // Set title to "编辑用户"
+        document.querySelector('#addUserModal .modal-title').textContent = '编辑用户';
+        
+        // Set tg_id and make it read-only
+        const tgIdInput = document.querySelector('input[name="tg_id"]');
+        tgIdInput.value = btn.dataset.tgid;
+        tgIdInput.readOnly = true;
+        
+        // Set add_days to 0 (don't extend expiration by default)
+        document.querySelector('input[name="add_days"]').value = '0';
+        
+        // Populate profile fields
+        document.querySelectorAll('.profile-input').forEach(input => {
+            const fieldName = input.name;
+            if (fieldName in profile) {
+                input.value = profile[fieldName];
+            }
+        });
+        
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('addUserModal'));
+        modal.show();
+    }
+    
+    // Delete User
+    async function delUser(id) {
+        if (!confirm('确定要删除该用户吗？')) return;
+        
+        try {
+            const res = await fetch("/core/api/delete_user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: id }),
+            });
+            
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            
+            const data = await res.json();
+            if (data.status === 'ok') {
+                location.reload();
+            } else {
+                alert(data.msg || '删除失败');
+            }
+        } catch (error) {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        }
+    }
+
+    // Submit Add User Form
+    async function submitAddUser() {
+        const form = document.getElementById('addUserForm');
+        const formData = new FormData(form);
+        const data = {
+            group_id: {{ group.id|tojson }},
+            tg_id: formData.get('tg_id'),
+            add_days: formData.get('add_days'),
+            profile: {}
+        };
+        
+        // Collect profile data from profile-input fields
+        document.querySelectorAll('.profile-input').forEach(input => {
+            data.profile[input.name] = input.value;
+        });
+
+        try {
+            const res = await fetch("/core/api/save_user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data), 
+            });
+            
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            
+            const resData = await res.json();
+            if (resData.status === 'ok') {
+                location.reload();
+            } else {
+                alert(resData.msg || '保存失败');
+            }
+        } catch (error) {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        }
+    }
+
+    // Push User
+    function pushUser(id) {
+        if (!confirm('确定要推送用户信息吗？')) return;
+        fetch("/core/api/push_user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: id }),
+        })
+        .then(res => {
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return res.json();
+        })
+        .then(data => {
+            if (data.status === 'ok') alert('推送成功');
+            else alert(data.msg || '推送失败');
+        })
+        .catch(error => {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        });
+    }
+
+    // Open Bulk Import Modal
+    function openBulkImport() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.xlsx';
+        input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            try {
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    const arrayBuffer = event.target.result;
+                    const bytes = new Uint8Array(arrayBuffer);
+                    let binary = '';
+                    for (let i = 0; i < bytes.byteLength; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
+                    const xlsx_base64 = btoa(binary);
+                    
+                    // Prompt for add_days
+                    const addDays = prompt('请输入有效天数 (0-3650):', '30');
+                    if (addDays === null) return;
+                    
+                    const add_days = parseInt(addDays);
+                    if (isNaN(add_days) || add_days < 0 || add_days > 3650) {
+                        alert('有效天数必须在 0-3650 之间');
+                        return;
+                    }
+                    
+                    if (!confirm(`确认导入用户？有效期设置为 ${add_days} 天`)) {
+                        return;
+                    }
+                    
+                    await submitXLSXImport(xlsx_base64, add_days);
+                };
+                reader.readAsArrayBuffer(file);
+            } catch (e) {
+                console.error('Import error:', e);
+                alert('导入失败：文件格式错误');
+            }
+        };
+        input.click();
+    }
+
+    // Submit XLSX Import
+    async function submitXLSXImport(xlsx_base64, add_days) {
+        try {
+            const res = await fetch("/core/api/bulk_import_users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    group_id: {{ group.id|tojson }},
+                    xlsx_content: xlsx_base64,
+                    add_days: add_days
+                }),
+            });
+            
+            if (!res.ok) {
+                throw new Error('Network response was not ok');
+            }
+            
+            const data = await res.json();
+            if (data.status === 'ok') {
+                alert(`成功导入 ${data.success_count} 个用户${data.skipped_count > 0 ? '，跳过 ' + data.skipped_count + ' 个已存在的用户' : ''}`);
+                location.reload();
+            } else {
+                alert(data.msg || '导入失败');
+            }
+        } catch (error) {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        }
+    }
+
+    // Export Users to XLSX
+    function exportUsers() {
+        // Get all users from current page or fetch all
+        fetch("/core/api/export_users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ group_id: {{ group.id|tojson }} }),
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                // Create download link for XLSX
+                const binaryString = atob(data.xlsx_content);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', data.filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } else {
+                alert(data.msg || '导出失败');
+            }
+        })
+        .catch(error => {
+            alert('网络错误或请求失败，请稍后重试');
+            console.error('Error:', error);
+        });
+    }
+
+</script>
+
+{% endblock %}

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+    }
+    
+    .changes-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    .change-item {
+        border-bottom: 1px solid #eee;
+        padding: 0.75rem 1rem;
+    }
+    
+    .change-item:last-child {
+        border-bottom: none;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-user-edit me-2"></i>用户改名监控</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">监控并记录群成员的用户名变更历史</p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="changes-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list-ul me-2 text-primary"></i>最近100条改名记录
+            </div>
+            <div class="card-body p-0">
+                {% if changes %}
+                    {% for change in changes %}
+                    <div class="change-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <span class="fw-bold">用户ID: {{ change.user_id }}</span>
+                                <span class="mx-2">|</span>
+                                <span class="text-muted">{{ change.old_name or '(无名称)' }}</span>
+                                <i class="fa-solid fa-arrow-right mx-2"></i>
+                                <span class="text-primary">{{ change.new_name or '(无名称)' }}</span>
+                            </div>
+                            <small class="text-muted">{{ change.changed_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无改名记录</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

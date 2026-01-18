@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(240, 147, 251, 0.3);
+    }
+    
+    .logs-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    .log-item {
+        border-bottom: 1px solid #eee;
+        padding: 0.75rem 1rem;
+    }
+    
+    .log-item:last-child {
+        border-bottom: none;
+    }
+    
+    .points-positive {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .points-negative {
+        color: #dc3545;
+        font-weight: bold;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-history me-2"></i>积分日志</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看用户积分变动的详细历史记录</p>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="logs-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list-ul me-2 text-primary"></i>最近100条记录
+            </div>
+            <div class="card-body p-0">
+                {% if logs %}
+                    {% for log in logs %}
+                    <div class="log-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="fw-bold">用户ID: {{ log.user_id }}</span>
+                                <span class="mx-2">|</span>
+                                <span class="{{ 'points-positive' if log.points_change > 0 else 'points-negative' }}">
+                                    {{ '+' if log.points_change > 0 else '' }}{{ log.points_change }}
+                                </span>
+                                <span class="mx-2">|</span>
+                                <span class="text-muted">{{ log.reason or '无说明' }}</span>
+                                <span class="mx-2">|</span>
+                                <small class="text-muted">余额: {{ log.balance_after }}</small>
+                            </div>
+                            <small class="text-muted">{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无积分记录</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

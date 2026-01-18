@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    }
+    
+    .settings-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .settings-card:hover {
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+    }
+    
+    .form-switch .form-check-input {
+        width: 3em;
+        height: 1.5em;
+        cursor: pointer;
+    }
+    
+    .form-switch .form-check-input:checked {
+        background-color: #667eea;
+        border-color: #667eea;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-rss me-2"></i>强制订阅频道</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">要求用户订阅指定频道后才能在群内发言</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+            <i class="fa-solid fa-save me-2"></i>保存设置
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-broadcast-tower me-2 text-primary"></i>频道订阅设置
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="enabled" 
+                           {{ 'checked' if settings and settings.enabled }}>
+                    <label class="fw-bold">启用强制订阅</label>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">频道ID</label>
+                    <input type="text" class="form-control" id="channel_id" 
+                           value="{{ settings.channel_id if settings and settings.channel_id else '' }}" 
+                           placeholder="例如: -1001234567890">
+                    <small class="text-muted">频道的数字ID，可以通过机器人获取</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">频道用户名</label>
+                    <input type="text" class="form-control" id="channel_username" 
+                           value="{{ settings.channel_username if settings and settings.channel_username else '' }}" 
+                           placeholder="例如: @mychannel">
+                    <small class="text-muted">频道的公开用户名（可选）</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">检查间隔（秒）</label>
+                    <input type="number" class="form-control" id="check_interval" 
+                           value="{{ settings.check_interval if settings else 3600 }}" 
+                           placeholder="默认: 3600">
+                    <small class="text-muted">多久检查一次用户是否仍在频道中</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">取消订阅时的操作</label>
+                    <select class="form-control" id="unsubscribe_action">
+                        <option value="kick" {{ 'selected' if settings and settings.unsubscribe_action == 'kick' }}>踢出群组</option>
+                        <option value="ban" {{ 'selected' if settings and settings.unsubscribe_action == 'ban' }}>封禁用户</option>
+                        <option value="mute" {{ 'selected' if settings and settings.unsubscribe_action == 'mute' }}>禁言用户</option>
+                    </select>
+                </div>
+                
+                <div class="mb-0">
+                    <label class="form-label">验证提示消息</label>
+                    <textarea class="form-control" id="verification_message" rows="3" 
+                              placeholder="请订阅我们的频道以继续使用本群">{{ settings.verification_message if settings and settings.verification_message else '' }}</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function saveSettings() {
+    const data = {
+        group_id: {{ group.id }},
+        enabled: document.getElementById('enabled').checked,
+        channel_id: document.getElementById('channel_id').value,
+        channel_username: document.getElementById('channel_username').value,
+        check_interval: parseInt(document.getElementById('check_interval').value) || 3600,
+        unsubscribe_action: document.getElementById('unsubscribe_action').value,
+        verification_message: document.getElementById('verification_message').value
+    };
+    
+    fetch('/core/api/save_forced_channel_subscription', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast('保存成功！', 'success');
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 20px rgba(240, 147, 251, 0.3);
+    }
+    
+    .replies-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        margin-bottom: 1.5rem;
+    }
+    
+    .reply-item {
+        border-bottom: 1px solid #eee;
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    
+    .reply-item:last-child {
+        border-bottom: none;
+    }
+    
+    .reply-item:hover {
+        background-color: #f8f9fa;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-comments-dollar me-2"></i>积分自动回复</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">需要消耗积分才能查看的付费内容</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="showAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>添加回复
+        </button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="replies-card card">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>回复列表
+            </div>
+            <div class="card-body p-0">
+                {% if replies %}
+                    {% for reply in replies %}
+                    <div class="reply-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">关键词: {{ reply.trigger_keyword }}</h6>
+                                <small class="text-muted">消耗积分: {{ reply.points_cost }} | 类型: {{ reply.media_type }}</small>
+                                <span class="badge {{ 'bg-success' if reply.is_active else 'bg-secondary' }} ms-2">
+                                    {{ '启用' if reply.is_active else '禁用' }}
+                                </span>
+                            </div>
+                            <div>
+                                <button class="btn btn-sm btn-primary" onclick='editReply({{ reply.id }}, {{ reply|tojson }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteReply({{ reply.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无积分自动回复</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="replyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-comments-dollar me-2"></i><span id="modalTitle">添加回复</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="reply_id">
+                <div class="mb-3">
+                    <label class="form-label">触发关键词</label>
+                    <input type="text" class="form-control" id="trigger_keyword" placeholder="例如：兑换">
+                    <small class="form-text text-muted">可以填写多个关键词，用英文逗号分隔，例如：兑换,领取,获取</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">消耗积分</label>
+                    <input type="number" class="form-control" id="points_cost" value="0" min="0">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">媒体类型</label>
+                    <select class="form-control" id="media_type">
+                        <option value="text">文本</option>
+                        <option value="image">图片</option>
+                        <option value="video">视频</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">媒体URL（图片/视频）</label>
+                    <input type="text" class="form-control" id="media_url" placeholder="留空表示仅文本">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">回复内容</label>
+                    <textarea class="form-control" id="content" rows="4" placeholder="输入回复内容"></textarea>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label">启用回复</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveReply()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let replyModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    replyModal = new bootstrap.Modal(document.getElementById('replyModal'));
+});
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '添加回复';
+    document.getElementById('reply_id').value = '';
+    document.getElementById('trigger_keyword').value = '';
+    document.getElementById('points_cost').value = '0';
+    document.getElementById('media_type').value = 'text';
+    document.getElementById('media_url').value = '';
+    document.getElementById('content').value = '';
+    document.getElementById('is_active').checked = true;
+    replyModal.show();
+}
+
+function editReply(id, reply) {
+    document.getElementById('modalTitle').textContent = '编辑回复';
+    document.getElementById('reply_id').value = id;
+    document.getElementById('trigger_keyword').value = reply.trigger_keyword || '';
+    document.getElementById('points_cost').value = reply.points_cost || 0;
+    document.getElementById('media_type').value = reply.media_type || 'text';
+    document.getElementById('media_url').value = reply.media_url || '';
+    document.getElementById('content').value = reply.content || '';
+    document.getElementById('is_active').checked = reply.is_active;
+    replyModal.show();
+}
+
+function saveReply() {
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('reply_id').value || null,
+        trigger_keyword: document.getElementById('trigger_keyword').value,
+        points_cost: parseInt(document.getElementById('points_cost').value) || 0,
+        media_type: document.getElementById('media_type').value,
+        media_url: document.getElementById('media_url').value,
+        content: document.getElementById('content').value,
+        is_active: document.getElementById('is_active').checked
+    };
+    
+    fetch('/core/api/save_points_auto_reply', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast('保存成功！', 'success');
+                setTimeout(() => location.reload(), 1000);
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+
+function deleteReply(id) {
+    if (!confirm('确定要删除这条回复吗？')) return;
+    
+    fetch('/core/api/delete_points_auto_reply', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast('删除成功！', 'success');
+                setTimeout(() => location.reload(), 1000);
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 1rem 1.25rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .page-header {
+            padding: 1.5rem 2rem;
+            border-radius: 15px;
+            margin-bottom: 2rem;
+        }
+    }
+    
+    .page-header h4 {
+        font-size: 1.1rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header h4 {
+            font-size: 1.5rem;
+        }
+    }
+    
+    .page-header p {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        .page-header p {
+            font-size: 1rem;
+        }
+    }
+    
+    .card {
+        border-radius: 12px;
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .card {
+            border-radius: 15px;
+        }
+    }
+    
+    .card:hover {
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
+        transform: translateY(-2px);
+    }
+    
+    .card-header {
+        font-size: 0.9rem;
+        padding: 0.75rem 1rem !important;
+    }
+    
+    @media (min-width: 768px) {
+        .card-header {
+            font-size: 1rem;
+            padding: 1rem 1.25rem !important;
+        }
+    }
+    
+    .btn {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+    
+    @media (min-width: 768px) {
+        .btn {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
+    }
+    
+    .btn:hover {
+        transform: scale(1.02);
+    }
+    
+    .form-control {
+        font-size: 0.85rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+    }
+    
+    @media (min-width: 768px) {
+        .form-control {
+            font-size: 0.9rem;
+            padding: 0.6rem 1rem;
+            border-radius: 10px;
+        }
+    }
+    
+    .form-control-sm {
+        font-size: 0.8rem;
+        padding: 0.4rem 0.6rem;
+    }
+    
+    @media (min-width: 768px) {
+        .form-control-sm {
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+        }
+    }
+    
+    .form-check-input {
+        width: 2.5em;
+        height: 1.25em;
+        cursor: pointer;
+    }
+    
+    @media (min-width: 768px) {
+        .form-check-input {
+            width: 3em;
+            height: 1.5em;
+        }
+    }
+    
+    label {
+        font-size: 0.8rem;
+    }
+    
+    @media (min-width: 768px) {
+        label {
+            font-size: 0.85rem;
+        }
+    }
+    
+    .modal-content {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+    }
+    
+    @media (min-width: 768px) {
+        .modal-content {
+            border-radius: 20px;
+        }
+    }
+    
+    .modal-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border-radius: 15px 15px 0 0;
+        padding: 1rem 1.25rem;
+    }
+    
+    @media (min-width: 768px) {
+        .modal-header {
+            border-radius: 20px 20px 0 0;
+            padding: 1.5rem;
+        }
+    }
+    
+    .modal-header .btn-close {
+        filter: brightness(0) invert(1);
+    }
+    
+    #editor {
+        font-size: 0.85rem;
+    }
+    
+    @media (min-width: 768px) {
+        #editor {
+            font-size: 0.9rem;
+        }
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-cog me-2"></i>系统设置</h4>
+            <p class="mb-0 opacity-75 d-none d-md-block">配置全局打卡、查询功能及消息模板</p>
+        </div>
+    </div>
+</div>
+
+<!-- 主设置区域 -->
+<div class="row">
+    <!-- 打卡配置 -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100 shadow-sm border-0">
+            <div class="card-header bg-white fw-bold text-primary py-3">打卡配置</div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3 p-2 bg-light rounded">
+                    <input class="form-check-input ms-0 me-2" type="checkbox" id="checkin_open" {{ 'checked' if sys.checkin_open }}>
+                    <label class="fw-bold">开启打卡功能</label>
+                </div>
+                <div class="mb-3">
+                    <label class="small text-muted">打卡指令</label>
+                    <input id="checkin_cmd" class="form-control" value="{{ sys.checkin_cmd }}">
+                </div>
+                
+                <label class="small text-muted fw-bold mb-2">提示消息文案</label>
+                <div class="d-grid gap-2 mb-3">
+                    <button class="btn btn-light border text-start" onclick="openEditor('msg_checkin_success','打卡成功消息')">
+                        ✅ 打卡成功消息 <i class="fa-solid fa-pen float-end mt-1 text-muted"></i>
+                    </button>
+                    <button class="btn btn-light border text-start" onclick="openEditor('msg_not_registered','未认证提示')">
+                        ⚠️ 未认证提示 <i class="fa-solid fa-pen float-end mt-1 text-muted"></i>
+                    </button>
+                    <button class="btn btn-light border text-start" onclick="openEditor('msg_repeat_checkin','重复打卡提示')">
+                        🔄 重复打卡提示 <i class="fa-solid fa-pen float-end mt-1 text-muted"></i>
+                    </button>
+                </div>
+                <div class="row g-2 align-items-center mt-4">
+                    <div class="col-8"><label class="small text-muted">指令自动删除时间(秒)</label></div>
+                    <div class="col-4"><input type="number" id="checkin_del_time" class="form-control form-control-sm" value="{{ sys.checkin_del_time }}"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 查询配置 -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100 shadow-sm border-0">
+            <div class="card-header bg-white fw-bold text-success py-3">查询配置</div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3 p-2 bg-light rounded">
+                    <input class="form-check-input ms-0 me-2" type="checkbox" id="query_open" {{ 'checked' if sys.query_open }}>
+                    <label class="fw-bold">开启查询功能</label>
+                </div>
+                <div class="mb-3">
+                    <label class="small text-muted">查询指令</label>
+                    <input id="query_cmd" class="form-control" value="{{ sys.query_cmd }}">
+                </div>
+
+                <label class="small text-muted fw-bold mb-2">显示模板</label>
+                <div class="d-grid gap-2 mb-3">
+                    <button class="btn btn-light border text-start" onclick="openEditor('msg_query_header','列表抬头内容')">
+                        📝 列表抬头内容 <i class="fa-solid fa-pen float-end mt-1 text-muted"></i>
+                    </button>
+                    <button class="btn btn-light border text-start" onclick="openEditor('template','单用户展示模板')">
+                        👤 单用户展示模板 <i class="fa-solid fa-pen float-end mt-1 text-muted"></i>
+                    </button>
+                </div>
+                
+                <div class="row g-2 mb-2">
+                    <div class="col-6"><label class="small text-muted">在线表情</label><input id="online_emoji" class="form-control text-center" value="{{ sys.online_emoji }}"></div>
+                    <div class="col-6"><label class="small text-muted">离线表情</label><input id="offline_emoji" class="form-control text-center" value="{{ sys.offline_emoji }}"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mb-5 pb-4">
+    <button class="btn btn-primary w-100 fw-bold shadow" onclick="saveAll()">
+        <i class="fa-solid fa-save me-2"></i>保存所有设置
+    </button>
+</div>
+
+<!-- 仿截图风格的编辑器 Modal -->
+<div class="modal fade" id="editorModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title fw-bold">编辑文本</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <!-- 变量区 (仿截图风格) -->
+                <div class="p-3 border-bottom bg-light">
+                    <div class="d-flex flex-wrap gap-3" style="font-size: 14px;">
+                        <span class="text-muted fw-bold">插入变量:</span>
+                        <span class="cursor-pointer text-dark hover-blue" onclick="insert('{onlineEmoji}')">在线表情</span>
+                        {% for f in fields %}
+                        <span class="cursor-pointer text-dark hover-blue" onclick="insert('{'+'{{ f.label }}'+'}')">{{ f.label }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <!-- 工具栏 -->
+                <div class="px-3 py-2 border-bottom d-flex gap-2">
+                    <button class="btn btn-sm btn-light" onclick="cmd('bold')"><i class="fa-solid fa-bold"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="cmd('italic')"><i class="fa-solid fa-italic"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="cmd('underline')"><i class="fa-solid fa-underline"></i></button>
+                    <div class="vr"></div>
+                    <button class="btn btn-sm btn-light" onclick="link()"><i class="fa-solid fa-link"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="cmd('removeFormat')"><i class="fa-solid fa-eraser"></i></button>
+                </div>
+                <!-- 编辑区 -->
+                <div id="richEditor" class="p-3" contenteditable="true" style="min-height: 200px; outline: none; font-size: 15px; line-height: 1.6;"></div>
+            </div>
+            <div class="modal-footer py-2">
+                <button class="btn btn-primary px-4" onclick="saveEd()">确定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 隐藏域 -->
+<div style="display:none">
+    <textarea id="v_msg_checkin_success">{{ sys.msg_checkin_success }}</textarea>
+    <textarea id="v_msg_not_registered">{{ sys.msg_not_registered }}</textarea>
+    <textarea id="v_msg_repeat_checkin">{{ sys.msg_repeat_checkin }}</textarea>
+    <textarea id="v_msg_query_header">{{ sys.msg_query_header }}</textarea>
+    <textarea id="v_template">{{ sys.template }}</textarea>
+</div>
+
+<script>
+    let cur='', modal=null;
+    document.addEventListener('DOMContentLoaded', ()=> modal = new bootstrap.Modal(document.getElementById('editorModal')));
+    
+    function openEditor(k,t){ 
+        cur=k; 
+        document.querySelector('.modal-title').innerText=t; 
+        document.getElementById('richEditor').innerHTML=document.getElementById('v_'+k).value; 
+        modal.show(); 
+    }
+    
+    function saveEd(){ document.getElementById('v_'+cur).value=document.getElementById('richEditor').innerHTML; modal.hide(); }
+    function cmd(c,v=null){ document.getElementById('richEditor').focus(); document.execCommand(c,false,v); }
+    function insert(t){ cmd('insertText', t); } // 直接插入变量名
+    function link(){ let u=prompt('链接:'); if(u) cmd('createLink',u); }
+    
+    function saveAll(){
+        const d = {
+            checkin_open: document.getElementById('checkin_open').checked, 
+            checkin_cmd: document.getElementById('checkin_cmd').value,
+            checkin_del_time: document.getElementById('checkin_del_time').value,
+            
+            query_open: document.getElementById('query_open').checked, 
+            query_cmd: document.getElementById('query_cmd').value,
+            
+            msg_checkin_success: document.getElementById('v_msg_checkin_success').value, 
+            msg_not_registered: document.getElementById('v_msg_not_registered').value,
+            msg_repeat_checkin: document.getElementById('v_msg_repeat_checkin').value, 
+            msg_query_header: document.getElementById('v_msg_query_header').value, 
+            template: document.getElementById('v_template').value,
+            
+            online_emoji: document.getElementById('online_emoji').value, 
+            offline_emoji: document.getElementById('offline_emoji').value,
+            auto_like: true, like_emoji: "❤️", // 默认开启
+            push_channel_id: "{{ sys.push_channel_id }}" 
+        };
+        fetch('/core/api/save_system', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})
+        .then(()=>showToast('保存成功', 'success'));
+    }
+</script>
+<style>
+    .hover-blue:hover { color: #0d6efd !important; text-decoration: underline; }
+    @media (max-width: 768px) { .fixed-bottom { left: 0 !important; } }
+</style>
+{% endblock %}

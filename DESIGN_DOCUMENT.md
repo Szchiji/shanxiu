@@ -2,8 +2,8 @@
 
 ## 文档版本
 - **版本**: 1.0
-- **创建日期**: 2026-01-18
-- **最后更新**: 2026-01-18
+- **创建日期**: 2024-01-18
+- **最后更新**: 2024-01-18
 - **作者**: 系统架构团队
 
 ---
@@ -884,8 +884,10 @@ def fix_database_schema(app):
         ]
         for stmt in alter_statements:
             try:
-                db.engine.execute(text(stmt))
+                db.session.execute(text(stmt))
+                db.session.commit()
             except:
+                db.session.rollback()
                 pass  # 列已存在
 ```
 

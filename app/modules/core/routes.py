@@ -793,7 +793,7 @@ def api_save_user():
     new_expiration = None
     update_expiration = False
     
-    if expiration_date_str is not None and not expiration_date_str.strip():
+    if expiration_date_str == '':
         # Empty string explicitly provided - clear expiration (永久有效)
         new_expiration = None
         update_expiration = True
@@ -835,7 +835,7 @@ def api_save_user():
         # Unmute if: 1) expiration being set/updated, 2) was expired OR banned before, 3) new expiration is in future (or None for permanent)
         was_expired = old_expiration and old_expiration < now
         was_banned = old_banned_status
-        will_be_valid_after_update = (new_expiration is None) or (new_expiration and new_expiration > now)
+        will_be_valid_after_update = (new_expiration is None) or (new_expiration > now)
         
         print(f"   - 是否过期: {was_expired}, 是否禁言: {was_banned}, 更新后有效: {will_be_valid_after_update}", flush=True)
         

@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback, threading
 from datetime import datetime, timedelta
 import pytz
 from openpyxl import Workbook, load_workbook
@@ -24,6 +24,7 @@ global_ptb_app = None
 global_bot_loop = None
 global_flask_app = None  # 🆕 新增：持有 Flask App 实例
 auth_status_check_timestamps = {}  # Track last check time per session_token for rate limiting
+auth_status_check_lock = threading.Lock()  # Thread-safe access to timestamps
 
 # Constants
 EXPIRATION_CHECK_INTERVAL = 3600  # Check expired users every hour (in seconds)
@@ -2989,46 +2990,50 @@ def api_check_auth_status():
         if not session_token:
             return jsonify({'status': 'error', 'msg': 'Missing session_token'})
         
-        # Rate limiting: Check if request is too frequent
+        # Rate limiting: Check if request is too frequent (thread-safe)
         current_time = get_beijing_now()
-        last_check_time = auth_status_check_timestamps.get(session_token)
         
-        if last_check_time:
-            time_since_last_check = (current_time - last_check_time).total_seconds()
-            if time_since_last_check < AUTH_STATUS_CHECK_MIN_INTERVAL:
-                # Request too frequent, return rate limit error
-                print(f"⚠️ [check_auth_status] 请求过于频繁，session_token={session_token[:8]}..., "
-                      f"距离上次请求仅 {time_since_last_check:.1f} 秒", flush=True)
-                return jsonify({
-                    'status': 'rate_limited',
-                    'msg': f'请求过于频繁，请在 {AUTH_STATUS_CHECK_MIN_INTERVAL} 秒后重试',
-                    'retry_after': AUTH_STATUS_CHECK_MIN_INTERVAL
-                }), 429
-        
-        # Update last check timestamp
-        auth_status_check_timestamps[session_token] = current_time
+        with auth_status_check_lock:
+            last_check_time = auth_status_check_timestamps.get(session_token)
+            
+            if last_check_time:
+                time_since_last_check = (current_time - last_check_time).total_seconds()
+                if time_since_last_check < AUTH_STATUS_CHECK_MIN_INTERVAL:
+                    # Request too frequent, return rate limit error
+                    print(f"⚠️ [check_auth_status] 请求过于频繁，距离上次请求仅 {time_since_last_check:.1f} 秒", flush=True)
+                    return jsonify({
+                        'status': 'rate_limited',
+                        'msg': f'请求过于频繁，请在 {AUTH_STATUS_CHECK_MIN_INTERVAL} 秒后重试',
+                        'retry_after': AUTH_STATUS_CHECK_MIN_INTERVAL
+                    }), 429
+            
+            # Update last check timestamp
+            auth_status_check_timestamps[session_token] = current_time
         
         auth_session = AuthSession.query.filter_by(session_token=session_token).first()
         
         if not auth_session:
             # Clean up timestamp for invalid session
-            auth_status_check_timestamps.pop(session_token, None)
+            with auth_status_check_lock:
+                auth_status_check_timestamps.pop(session_token, None)
             return jsonify({'status': 'error', 'msg': 'Invalid session'})
         
         # Check if expired
         if get_beijing_now() > auth_session.expires_at:
             # Clean up timestamp for expired session
-            auth_status_check_timestamps.pop(session_token, None)
+            with auth_status_check_lock:
+                auth_status_check_timestamps.pop(session_token, None)
             return jsonify({'status': 'expired'})
         
         # Check if verified
         if auth_session.is_verified:
             # Clean up timestamp for verified session
-            auth_status_check_timestamps.pop(session_token, None)
+            with auth_status_check_lock:
+                auth_status_check_timestamps.pop(session_token, None)
             # Set session as logged in with persistent cookie
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
-            print(f"✅ [check_auth_status] 认证成功，session_token={session_token[:8]}...", flush=True)
+            print(f"✅ [check_auth_status] 认证成功", flush=True)
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -6177,7 +6182,7 @@ async def cmd_start(update: Update, context):
             
             # Only notify about groups where muting was successful
             successfully_muted_groups = [grp.title for (group_user, grp), result in zip(users_to_ban, results) 
-                                         if result is True]
+                                         if result]
             
             if successfully_muted_groups:
                 notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(successfully_muted_groups) + "\n\n请联系管理员续费。"

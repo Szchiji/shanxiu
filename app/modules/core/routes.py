@@ -100,6 +100,52 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
         print(f"Error checking admin status: {e}")
         return False
 
+async def check_bot_restrict_permissions(bot, chat_id, group_title=None):
+    """
+    检查机器人是否有限制成员的权限
+    
+    Args:
+        bot: Telegram bot instance
+        chat_id: Group chat ID
+        group_title: Optional group title for logging
+        
+    Returns:
+        tuple: (has_permission: bool, status_message: str)
+    """
+    group_info = f"群组 {group_title} (ID: {chat_id})" if group_title else f"群组 (ID: {chat_id})"
+    
+    try:
+        administrators = await bot.get_chat_administrators(chat_id)
+        bot_admin = None
+        
+        for admin in administrators:
+            if admin.user.id == bot.id:
+                bot_admin = admin
+                break
+        
+        if not bot_admin:
+            msg = f"⚠️ 机器人不是 {group_info} 的管理员"
+            print(msg, flush=True)
+            return False, msg
+        
+        if bot_admin.status == 'creator':
+            print(f"✅ 机器人是 {group_info} 的创建者，拥有所有权限", flush=True)
+            return True, "Bot is group creator"
+        
+        if not bot_admin.can_restrict_members:
+            msg = f"⚠️ 机器人在 {group_info} 中缺少 'can_restrict_members' 权限"
+            print(msg, flush=True)
+            return False, msg
+        
+        print(f"✅ 机器人在 {group_info} 中拥有禁言权限", flush=True)
+        return True, "Bot has restrict permissions"
+        
+    except Exception as e:
+        msg = f"❌ 检查机器人权限失败，{group_info}: {e}"
+        print(msg, flush=True)
+        print(f"❌ 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+        return False, msg
+
 # --- Webhook ---
 @core_bp.route('/webhook', methods=['POST'])
 def webhook():
@@ -840,28 +886,38 @@ def api_save_user():
         print(f"   - 是否过期: {was_expired}, 是否禁言: {was_banned}, 更新后有效: {will_be_valid_after_update}", flush=True)
         
         if (was_expired or was_banned) and will_be_valid_after_update:
-            # Update expiration date and clear banned flag
+            # Update expiration date first (always update regardless of unmute success)
             u.expiration_date = new_expiration
-            u.is_banned = False
+            db.session.commit()
+            print(f"✅ [api_save_user] 已更新用户 {u.tg_id} 的到期时间为 {new_expiration}", flush=True)
             
+            # Now attempt to clear banned flag and unmute in Telegram
             # Check if bot is available before attempting to unmute
             if not global_ptb_app or not global_bot_loop:
-                print(f"⚠️ [api_save_user] 机器人未初始化，无法解除用户 {u.tg_id} 的禁言（仅更新数据库）", flush=True)
-                # Commit database changes only since bot is not available
-                db.session.commit()
-                return jsonify({'status':'warning','msg':'已更新数据库，但机器人未就绪，无法立即解除禁言'})
+                print(f"⚠️ [api_save_user] 机器人未初始化，无法解除用户 {u.tg_id} 的禁言（已更新到期时间）", flush=True)
+                return jsonify({'status':'warning','msg':'已更新到期时间，但机器人未就绪，无法立即解除禁言'})
             else:
                 try: 
                     group = BotGroup.query.get(gid)
                     if not group:
-                        print(f"⚠️ [api_save_user] 群组 {gid} 不存在，无法解除禁言", flush=True)
-                        db.session.commit()
-                        return jsonify({'status':'warning','msg':'已更新数据库，但群组不存在'})
+                        print(f"⚠️ [api_save_user] 群组 {gid} 不存在，无法解除禁言（已更新到期时间）", flush=True)
+                        return jsonify({'status':'warning','msg':'已更新到期时间，但群组不存在'})
                     elif not group.chat_id:
-                        print(f"⚠️ [api_save_user] 群组 {gid} 的 chat_id 为空，无法解除禁言", flush=True)
-                        db.session.commit()
-                        return jsonify({'status':'warning','msg':'已更新数据库，但群组 chat_id 为空'})
+                        print(f"⚠️ [api_save_user] 群组 {gid} 的 chat_id 为空，无法解除禁言（已更新到期时间）", flush=True)
+                        return jsonify({'status':'warning','msg':'已更新到期时间，但群组 chat_id 为空'})
                     else:
+                        # Check bot permissions before attempting to unmute
+                        print(f"🔍 [api_save_user] 检查机器人权限，群组: {group.title}, chat_id: {group.chat_id}", flush=True)
+                        permission_future = asyncio.run_coroutine_threadsafe(
+                            check_bot_restrict_permissions(global_ptb_app.bot, group.chat_id, group.title),
+                            global_bot_loop
+                        )
+                        has_permission, permission_msg = permission_future.result(timeout=10)
+                        
+                        if not has_permission:
+                            print(f"❌ [api_save_user] {permission_msg}（已更新到期时间）", flush=True)
+                            return jsonify({'status':'error','msg':f'已更新到期时间，但{permission_msg}，请先授予机器人管理员权限并启用 "限制成员" 权限'})
+                        
                         # Try to unmute user in Telegram
                         print(f"🔓 [api_save_user] 尝试在 Telegram 解除禁言，群组: {group.chat_id}, 用户: {u.tg_id}", flush=True)
                         future = asyncio.run_coroutine_threadsafe(
@@ -875,7 +931,8 @@ def api_save_user():
                         # Wait for result with timeout
                         result = future.result(timeout=10)
                         
-                        # Telegram API call succeeded, commit database changes
+                        # Telegram API call succeeded, clear banned flag in database
+                        u.is_banned = False
                         db.session.commit()
                         print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
                         print(f"   - Telegram API 响应: {result}", flush=True)
@@ -902,21 +959,19 @@ def api_save_user():
                         return jsonify({'status':'ok','msg':'续费成功，已解除禁言'})
                 except asyncio.TimeoutError:
                     print(f"❌ [api_save_user] 解除禁言超时（10秒），群组ID={gid}, 用户ID={u.tg_id}", flush=True)
-                    # Rollback both expiration_date and is_banned on timeout
-                    u.expiration_date = old_expiration
-                    u.is_banned = old_banned_status
-                    db.session.commit()
-                    print(f"⚠️ [api_save_user] 由于超时，已回滚到期时间和禁言状态", flush=True)
-                    return jsonify({'status':'error','msg':'解除禁言操作超时，请稍后重试'})
+                    # Don't rollback expiration_date - only keep banned status
+                    # The expiration has already been updated and committed
+                    print(f"⚠️ [api_save_user] 到期时间已更新为 {new_expiration}，但解除禁言失败", flush=True)
+                    print(f"⚠️ [api_save_user] 用户保持禁言状态，请手动在 Telegram 中解除或检查机器人权限", flush=True)
+                    return jsonify({'status':'error','msg':'到期时间已更新，但解除禁言操作超时。请检查机器人权限或稍后重试。'})
                 except Exception as e:
                     print(f"❌ [api_save_user] 解除禁言失败，群组ID={gid}, 用户ID={u.tg_id}: {e}", flush=True)
                     print(f"❌ [api_save_user] 错误详情:\n{traceback.format_exc()}", flush=True)
-                    # Rollback both expiration_date and is_banned on failure
-                    u.expiration_date = old_expiration
-                    u.is_banned = old_banned_status
-                    db.session.commit()
-                    print(f"⚠️ [api_save_user] 由于解除禁言失败，已回滚到期时间和禁言状态", flush=True)
-                    return jsonify({'status':'error','msg':f'解除禁言失败: {str(e)}'})
+                    # Don't rollback expiration_date - only keep banned status
+                    # The expiration has already been updated and committed
+                    print(f"⚠️ [api_save_user] 到期时间已更新为 {new_expiration}，但解除禁言失败", flush=True)
+                    print(f"⚠️ [api_save_user] 用户保持禁言状态，请手动在 Telegram 中解除或检查机器人权限", flush=True)
+                    return jsonify({'status':'error','msg':f'到期时间已更新，但解除禁言失败: {str(e)}。请检查机器人是否有管理员权限。'})
         else:
             # Just updating expiration time without unmuting (user was not expired/banned)
             u.expiration_date = new_expiration
@@ -3059,25 +3114,64 @@ async def check_expired_users(context):
     if not users_to_ban:
         return
     
-    # Verify bot permissions for each unique group
+    # Verify bot permissions for each unique group before attempting bans
     groups_to_check = {group.chat_id: group for _, group, _ in users_to_ban}
+    groups_with_permission = {}
+    groups_without_permission = set()
     
     for chat_id, group in groups_to_check.items():
         try:
-            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-            if bot_member.status not in ['administrator', 'creator']:
-                print(f"⚠️ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中不是管理员，状态: {bot_member.status}", flush=True)
-            elif bot_member.status == 'administrator' and not bot_member.can_restrict_members:
-                print(f"⚠️ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中缺少 can_restrict_members 权限", flush=True)
+            has_permission, permission_msg = await check_bot_restrict_permissions(
+                context.bot, chat_id, group.title
+            )
+            if has_permission:
+                groups_with_permission[chat_id] = group
             else:
-                print(f"✅ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中拥有禁言权限", flush=True)
+                groups_without_permission.add(chat_id)
+                print(f"⚠️ [check_expired_users] 跳过群组 {group.title} (ID: {chat_id}) 的所有用户: {permission_msg}", flush=True)
         except Exception as e:
+            groups_without_permission.add(chat_id)
             print(f"❌ [check_expired_users] 检查机器人权限失败，群组 {group.title} (ID: {chat_id}): {e}", flush=True)
+    
+    # Filter users_to_ban to only include groups with proper permissions
+    if groups_without_permission:
+        original_count = len(users_to_ban)
+        # Save users that will be skipped for rollback
+        skipped_users = [(user, group, msg) for user, group, msg in users_to_ban 
+                        if group.chat_id in groups_without_permission]
+        # Filter to only users in groups with permission
+        users_to_ban = [(user, group, msg) for user, group, msg in users_to_ban 
+                        if group.chat_id not in groups_without_permission]
+        skipped_by_permission = original_count - len(users_to_ban)
+        if skipped_by_permission > 0:
+            print(f"⚠️ [check_expired_users] 由于权限问题跳过了 {skipped_by_permission} 个用户", flush=True)
+            
+            # Rollback is_banned for users in groups without permission
+            def _rollback_no_permission():
+                with global_flask_app.app_context():
+                    try:
+                        for user, group, _ in skipped_users:
+                            user.is_banned = False
+                            print(f"   ↩️ 回滚用户 {user.tg_id} 的禁言状态（群组无权限）", flush=True)
+                        db.session.commit()
+                    except Exception as e:
+                        print(f"❌ [check_expired_users] 回滚失败: {e}", flush=True)
+                        db.session.rollback()
+            
+            await asyncio.get_running_loop().run_in_executor(None, _rollback_no_permission)
+    
+    if not users_to_ban:
+        print(f"⚠️ [check_expired_users] 所有用户均已因权限问题被跳过", flush=True)
+        return
     
     # Now perform all async Telegram operations with rate limiting
     async def ban_user_async(user, group, ban_msg):
         """Mute an expired user and send notification"""
         try:
+            print(f"🔨 [check_expired_users] 开始禁言用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id})", flush=True)
+            print(f"   - 用户到期时间: {user.expiration_date}", flush=True)
+            print(f"   - 当前时间: {get_beijing_now()}", flush=True)
+            
             # Mute the user in the group with comprehensive restrictions
             await context.bot.restrict_chat_member(
                 chat_id=group.chat_id,
@@ -3112,9 +3206,12 @@ async def check_expired_users(context):
             return {'success': True, 'user_id': user.tg_id, 'user': user}
                 
         except Exception as e:
-            print(f"❌ [check_expired_users] 禁言失败，用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id}): {e}", flush=True)
-            print(f"❌ [check_expired_users] 错误详情:\n{traceback.format_exc()}", flush=True)
-            return {'success': False, 'user_id': user.tg_id, 'user': user, 'error': str(e)}
+            error_type = type(e).__name__
+            print(f"❌ [check_expired_users] 禁言失败 ({error_type})，用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id})", flush=True)
+            print(f"   - 错误信息: {e}", flush=True)
+            print(f"   - 用户到期时间: {user.expiration_date}", flush=True)
+            print(f"❌ [check_expired_users] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+            return {'success': False, 'user_id': user.tg_id, 'user': user, 'error': str(e), 'error_type': error_type}
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -4772,10 +4869,11 @@ async def run_bot(app_instance):
             # 🔧 修复：在 Webhook 模式下手动启动 job_queue
             if app.job_queue:
                 try:
-                    app.job_queue.start()
-                    print("✅ Job queue 已启动", flush=True)
+                    await app.job_queue.start()
+                    print("✅ Job queue 已正确启动（使用 await）", flush=True)
                 except Exception as jq_error:
                     print(f"❌ Job queue 启动失败: {jq_error}", flush=True)
+                    print(f"❌ 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
                     raise
             print(f"✅ Bot 初始化完成 (Webhook 模式)，Webhook URL: {webhook_url}", flush=True)
         except Exception as e:

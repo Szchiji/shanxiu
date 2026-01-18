@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
 from datetime import datetime, timedelta
 import pytz
 from openpyxl import Workbook, load_workbook
@@ -786,10 +786,10 @@ def api_save_user():
         
         # Check if user needs to be unmuted after renewal
         # Unmute if: 1) adding days, 2) was expired OR banned before renewal, 3) new expiration is in future
-        was_expired = (old_expiration and old_expiration < now) or u.is_banned
-        will_be_valid = u.expiration_date and u.expiration_date > now
+        was_expired_or_banned = (old_expiration and old_expiration < now) or u.is_banned
+        will_be_valid_after_renewal = u.expiration_date and u.expiration_date > now
         
-        if add > 0 and was_expired and will_be_valid:
+        if add > 0 and was_expired_or_banned and will_be_valid_after_renewal:
             u.is_banned = False
             print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态，旧到期时间: {old_expiration}，新到期时间: {u.expiration_date}", flush=True)
             try: 
@@ -2924,7 +2924,6 @@ async def check_expired_users(context):
                 return users_to_ban
                             
             except Exception as e:
-                import traceback
                 print(f"❌ [check_expired_users] 数据库操作错误: {e}", flush=True)
                 print(f"❌ [check_expired_users] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
                 db.session.rollback()
@@ -2987,7 +2986,6 @@ async def check_expired_users(context):
                 print(f"⚠️ [check_expired_users] 发送私聊通知失败，用户 {user.tg_id}: {e}", flush=True)
                 
         except Exception as e:
-            import traceback
             print(f"❌ [check_expired_users] 禁言失败，用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id}): {e}", flush=True)
             print(f"❌ [check_expired_users] 错误详情:\n{traceback.format_exc()}", flush=True)
     

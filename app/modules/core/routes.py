@@ -23,6 +23,7 @@ core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templ
 global_ptb_app = None
 global_bot_loop = None
 global_flask_app = None  # 🆕 新增：持有 Flask App 实例
+auth_status_check_timestamps = {}  # Track last check time per session_token for rate limiting
 
 # Constants
 EXPIRATION_CHECK_INTERVAL = 3600  # Check expired users every hour (in seconds)
@@ -31,6 +32,7 @@ MAX_CONCURRENT_BANS = 5  # Maximum concurrent ban operations to avoid rate limit
 EXPIRED_USERS_BATCH_SIZE = 100  # Process expired users in batches to avoid memory issues
 AUTH_SESSION_EXPIRY_MINUTES = 5  # Authentication session expiry time
 SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # Check scheduled messages every minute (in seconds)
+AUTH_STATUS_CHECK_MIN_INTERVAL = 5  # Minimum seconds between check_auth_status requests (rate limiting)
 
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -2987,20 +2989,46 @@ def api_check_auth_status():
         if not session_token:
             return jsonify({'status': 'error', 'msg': 'Missing session_token'})
         
+        # Rate limiting: Check if request is too frequent
+        current_time = get_beijing_now()
+        last_check_time = auth_status_check_timestamps.get(session_token)
+        
+        if last_check_time:
+            time_since_last_check = (current_time - last_check_time).total_seconds()
+            if time_since_last_check < AUTH_STATUS_CHECK_MIN_INTERVAL:
+                # Request too frequent, return rate limit error
+                print(f"⚠️ [check_auth_status] 请求过于频繁，session_token={session_token[:8]}..., "
+                      f"距离上次请求仅 {time_since_last_check:.1f} 秒", flush=True)
+                return jsonify({
+                    'status': 'rate_limited',
+                    'msg': f'请求过于频繁，请在 {AUTH_STATUS_CHECK_MIN_INTERVAL} 秒后重试',
+                    'retry_after': AUTH_STATUS_CHECK_MIN_INTERVAL
+                }), 429
+        
+        # Update last check timestamp
+        auth_status_check_timestamps[session_token] = current_time
+        
         auth_session = AuthSession.query.filter_by(session_token=session_token).first()
         
         if not auth_session:
+            # Clean up timestamp for invalid session
+            auth_status_check_timestamps.pop(session_token, None)
             return jsonify({'status': 'error', 'msg': 'Invalid session'})
         
         # Check if expired
         if get_beijing_now() > auth_session.expires_at:
+            # Clean up timestamp for expired session
+            auth_status_check_timestamps.pop(session_token, None)
             return jsonify({'status': 'expired'})
         
         # Check if verified
         if auth_session.is_verified:
+            # Clean up timestamp for verified session
+            auth_status_check_timestamps.pop(session_token, None)
             # Set session as logged in with persistent cookie
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
+            print(f"✅ [check_auth_status] 认证成功，session_token={session_token[:8]}...", flush=True)
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -6103,6 +6131,19 @@ async def cmd_start(update: Update, context):
             async def mute_expired_user(group_user, grp):
                 """Mute an expired user in a group"""
                 try:
+                    # Check bot permissions before attempting to mute
+                    print(f"🔍 [/start] 检查机器人权限，群组: {grp.title}, chat_id: {grp.chat_id}", flush=True)
+                    has_permission, permission_msg = await check_bot_restrict_permissions(
+                        context.bot, 
+                        grp.chat_id, 
+                        grp.title
+                    )
+                    
+                    if not has_permission:
+                        print(f"❌ [/start] {permission_msg}，跳过禁言用户 {group_user.tg_id}", flush=True)
+                        return False
+                    
+                    # Permission check passed, proceed with mute
                     await context.bot.restrict_chat_member(
                         chat_id=grp.chat_id,
                         user_id=group_user.tg_id,
@@ -6118,25 +6159,31 @@ async def cmd_start(update: Update, context):
                         )
                     )
                     print(f"⛔️ [/start] 成功禁言用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id})", flush=True)
+                    return True
                 except Exception as e:
                     print(f"❌ [/start] 禁言失败，用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id}): {e}", flush=True)
+                    print(f"❌ [/start] 错误详情:\n{traceback.format_exc()}", flush=True)
+                    return False
             
             # Use semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
             
             async def mute_with_limit(group_user, grp):
                 async with semaphore:
-                    await mute_expired_user(group_user, grp)
+                    return await mute_expired_user(group_user, grp)
             
             # Mute users in all their expired groups concurrently
-            await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
+            results = await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
             
-            # Notify the user about expired memberships
-            expired_groups = [grp.title for _, grp in users_to_ban]
-            notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(expired_groups) + "\n\n请联系管理员续费。"
-            # Sanitize the notification message before sending
-            sanitized_notification = sanitize_html_for_telegram(notification_msg)
-            await update.message.reply_html(sanitized_notification)
+            # Only notify about groups where muting was successful
+            successfully_muted_groups = [grp.title for (group_user, grp), result in zip(users_to_ban, results) 
+                                         if result is True]
+            
+            if successfully_muted_groups:
+                notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(successfully_muted_groups) + "\n\n请联系管理员续费。"
+                # Sanitize the notification message before sending
+                sanitized_notification = sanitize_html_for_telegram(notification_msg)
+                await update.message.reply_html(sanitized_notification)
         
         await update.message.reply_html(private_msg)
 
@@ -6253,21 +6300,34 @@ async def on_message(update: Update, context):
                     # Mute user in Telegram if not already banned
                     if not expiration_check.get('was_already_banned'):
                         try:
-                            await context.bot.restrict_chat_member(
-                                chat_id=chat.id,
-                                user_id=user.id,
-                                permissions=ChatPermissions(
-                                    can_send_messages=False,
-                                    can_send_media_messages=False,
-                                    can_send_polls=False,
-                                    can_send_other_messages=False,
-                                    can_add_web_page_previews=False,
-                                    can_change_info=False,
-                                    can_invite_users=False,
-                                    can_pin_messages=False
-                                )
+                            # Check bot permissions before attempting to mute
+                            grp = expiration_check.get('group')
+                            print(f"🔍 [on_message] 检查机器人权限，群组: {grp.title}, chat_id: {chat.id}", flush=True)
+                            has_permission, permission_msg = await check_bot_restrict_permissions(
+                                context.bot, 
+                                chat.id, 
+                                grp.title if grp else None
                             )
-                            print(f"⛔️ [on_message] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
+                            
+                            if not has_permission:
+                                print(f"❌ [on_message] {permission_msg}，无法禁言用户 {user.id}", flush=True)
+                            else:
+                                # Permission check passed, proceed with mute
+                                await context.bot.restrict_chat_member(
+                                    chat_id=chat.id,
+                                    user_id=user.id,
+                                    permissions=ChatPermissions(
+                                        can_send_messages=False,
+                                        can_send_media_messages=False,
+                                        can_send_polls=False,
+                                        can_send_other_messages=False,
+                                        can_add_web_page_previews=False,
+                                        can_change_info=False,
+                                        can_invite_users=False,
+                                        can_pin_messages=False
+                                    )
+                                )
+                                print(f"⛔️ [on_message] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
                         except Exception as e:
                             print(f"❌ [on_message] 禁言失败，用户 {user.id} 在群组 {chat.id}: {e}", flush=True)
                             print(f"❌ [on_message] 错误详情:\n{traceback.format_exc()}", flush=True)
@@ -6507,24 +6567,36 @@ async def on_message(update: Update, context):
                             db_user.is_banned = True
                             db.session.commit()
                             try:
-                                # Mute with comprehensive restrictions
-                                await context.bot.restrict_chat_member(
-                                    chat_id=chat.id,
-                                    user_id=user.id,
-                                    permissions=ChatPermissions(
-                                        can_send_messages=False,
-                                        can_send_media_messages=False,
-                                        can_send_polls=False,
-                                        can_send_other_messages=False,
-                                        can_add_web_page_previews=False,
-                                        can_change_info=False,
-                                        can_invite_users=False,
-                                        can_pin_messages=False
-                                    )
+                                # Check bot permissions before attempting to mute
+                                print(f"🔍 [checkin] 检查机器人权限，群组: {group.title}, chat_id: {chat.id}", flush=True)
+                                has_permission, permission_msg = await check_bot_restrict_permissions(
+                                    context.bot, 
+                                    chat.id, 
+                                    group.title
                                 )
-                                print(f"⛔️ [checkin] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
+                                
+                                if not has_permission:
+                                    print(f"❌ [checkin] {permission_msg}，无法禁言用户 {user.id}", flush=True)
+                                else:
+                                    # Permission check passed, proceed with mute
+                                    await context.bot.restrict_chat_member(
+                                        chat_id=chat.id,
+                                        user_id=user.id,
+                                        permissions=ChatPermissions(
+                                            can_send_messages=False,
+                                            can_send_media_messages=False,
+                                            can_send_polls=False,
+                                            can_send_other_messages=False,
+                                            can_add_web_page_previews=False,
+                                            can_change_info=False,
+                                            can_invite_users=False,
+                                            can_pin_messages=False
+                                        )
+                                    )
+                                    print(f"⛔️ [checkin] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
                             except Exception as e:
                                 print(f"❌ [checkin] 禁言失败，用户 {user.id} 在群组 {chat.id}: {e}", flush=True)
+                                print(f"❌ [checkin] 错误详情:\n{traceback.format_exc()}", flush=True)
                         
                         # 🆕 Send ephemeral message in group (visible only to that user)
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))

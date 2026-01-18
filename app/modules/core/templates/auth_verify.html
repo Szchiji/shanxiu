@@ -279,8 +279,8 @@
         // Start countdown timer
         countdownInterval = setInterval(updateCountdown, 1000);
         
-        // Check verification status every 2 seconds
-        checkInterval = setInterval(checkVerificationStatus, 2000);
+        // Check verification status every 5 seconds (reduced from 2 seconds to minimize server load)
+        checkInterval = setInterval(checkVerificationStatus, 5000);
         
         // Initial check
         checkVerificationStatus();

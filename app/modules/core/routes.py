@@ -2840,13 +2840,18 @@ async def check_expired_users(context):
     """
     Periodic job to check for expired users and mute them in groups
     """
+    print(f"🕐 [check_expired_users] 任务开始执行，当前时间: {get_beijing_now()}", flush=True)
+    
     if not global_flask_app:
+        print("❌ [check_expired_users] global_flask_app 为空，跳过执行", flush=True)
         return
     
     def _sync_check():
         with global_flask_app.app_context():
             try:
                 now = get_beijing_now()
+                print(f"📊 [check_expired_users] 开始查询过期用户，当前时间: {now}", flush=True)
+                
                 # Find expired users with a limit to avoid memory issues
                 # Process in batches for large datasets
                 expired_users = GroupUser.query.options(
@@ -2858,7 +2863,9 @@ async def check_expired_users(context):
                 ).limit(EXPIRED_USERS_BATCH_SIZE).all()
                 
                 if expired_users:
-                    print(f"🔍 Found {len(expired_users)} expired users to ban (batch limit: {EXPIRED_USERS_BATCH_SIZE})", flush=True)
+                    print(f"🔍 [check_expired_users] 找到 {len(expired_users)} 个过期用户需要禁言 (批次限制: {EXPIRED_USERS_BATCH_SIZE})", flush=True)
+                else:
+                    print(f"✅ [check_expired_users] 未找到需要禁言的过期用户", flush=True)
                 
                 # Collect users to ban and prepare async operations
                 # Also retrieve configurations here to avoid repeated context creation
@@ -4553,6 +4560,10 @@ async def run_bot(app_instance):
         webhook_url = f"https://{domain}/core/webhook"
         try:
             await app.bot.set_webhook(url=webhook_url)
+            # 🔧 修复：在 Webhook 模式下手动启动 job_queue
+            if app.job_queue:
+                app.job_queue.start()
+                print("✅ Job queue 已启动", flush=True)
             print(f"✅ Bot 初始化完成 (Webhook 模式)，Webhook URL: {webhook_url}", flush=True)
         except Exception as e:
             print(f"❌ Webhook 设置失败: {e}", flush=True)

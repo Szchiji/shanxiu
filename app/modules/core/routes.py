@@ -4562,8 +4562,12 @@ async def run_bot(app_instance):
             await app.bot.set_webhook(url=webhook_url)
             # 🔧 修复：在 Webhook 模式下手动启动 job_queue
             if app.job_queue:
-                app.job_queue.start()
-                print("✅ Job queue 已启动", flush=True)
+                try:
+                    app.job_queue.start()
+                    print("✅ Job queue 已启动", flush=True)
+                except Exception as jq_error:
+                    print(f"❌ Job queue 启动失败: {jq_error}", flush=True)
+                    raise
             print(f"✅ Bot 初始化完成 (Webhook 模式)，Webhook URL: {webhook_url}", flush=True)
         except Exception as e:
             print(f"❌ Webhook 设置失败: {e}", flush=True)

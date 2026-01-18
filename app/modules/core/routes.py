@@ -6313,6 +6313,8 @@ async def on_message(update: Update, context):
             # 🆕 **CRITICAL FIX**: Check user expiration BEFORE any other processing
             # This ensures expired users cannot send ANY messages, not just check-in
             # Real-time message interception for expired users
+            # Note: This performs a database query for each message. For high-volume groups,
+            # consider implementing caching with Redis or similar if performance becomes an issue.
             def _check_user_expiration():
                 with global_flask_app.app_context():
                     try:

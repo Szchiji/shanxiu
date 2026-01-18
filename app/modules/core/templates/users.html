@@ -445,10 +445,12 @@
         tgIdInput.value = btn.dataset.tgid;
         tgIdInput.readOnly = true;
         
-        // Set current expiration date if available
+        // Set current expiration date if available, otherwise clear it
         const expirationInput = document.getElementById('expiration_date_input');
         if (btn.dataset.expiration) {
             expirationInput.value = btn.dataset.expiration;
+        } else {
+            expirationInput.value = '';
         }
         
         // Populate profile fields

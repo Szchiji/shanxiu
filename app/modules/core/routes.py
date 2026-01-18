@@ -793,7 +793,12 @@ def api_save_user():
     new_expiration = None
     update_expiration = False
     
-    if expiration_date_str:
+    if expiration_date_str is not None and not expiration_date_str.strip():
+        # Empty string explicitly provided - clear expiration (永久有效)
+        new_expiration = None
+        update_expiration = True
+        print(f"📝 [api_save_user] 用户 {u.tg_id} 设置为永久有效", flush=True)
+    elif expiration_date_str:
         # New mode: direct date specified
         try:
             # Parse the date string (format: YYYY-MM-DD)
@@ -815,11 +820,6 @@ def api_save_user():
         new_expiration = base + timedelta(days=add)
         update_expiration = True
         print(f"📝 [api_save_user] 用户 {u.tg_id} 续费 {add} 天", flush=True)
-    elif expiration_date_str == '':
-        # Empty string explicitly provided - clear expiration (永久有效)
-        new_expiration = None
-        update_expiration = True
-        print(f"📝 [api_save_user] 用户 {u.tg_id} 设置为永久有效", flush=True)
     
     if update_expiration:
         now = get_beijing_now()

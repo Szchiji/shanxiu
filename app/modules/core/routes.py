@@ -118,34 +118,50 @@ async def check_bot_restrict_permissions(bot, chat_id, group_title=None):
         
     Raises:
         Exception: If unable to retrieve chat administrators (e.g., bot kicked from group)
+    
+    Enhanced with detailed logging for troubleshooting permission issues.
     """
-    group_info = f"群组 {group_title} (ID: {chat_id})" if group_title else f"群组 (ID: {chat_id})"
+    group_info = f"群组 '{group_title}' (ID: {chat_id})" if group_title else f"群组 (ID: {chat_id})"
     
     try:
+        print(f"🔍 [权限检查] 开始检查 {group_info}", flush=True)
         administrators = await bot.get_chat_administrators(chat_id)
+        print(f"   找到 {len(administrators)} 个管理员", flush=True)
+        
         bot_admin = next((admin for admin in administrators if admin.user.id == bot.id), None)
         
         if not bot_admin:
             msg = f"⚠️ 机器人不是 {group_info} 的管理员"
             print(msg, flush=True)
+            print(f"   解决方案: 请将机器人设置为群组管理员", flush=True)
             return False, msg
         
         if bot_admin.status == 'creator':
             print(f"✅ 机器人是 {group_info} 的创建者，拥有所有权限", flush=True)
             return True, "Bot is group creator"
         
+        # Check specific permission
         if not bot_admin.can_restrict_members:
-            msg = f"⚠️ 机器人在 {group_info} 中缺少 'can_restrict_members' 权限"
+            msg = f"⚠️ 机器人在 {group_info} 中缺少 'can_restrict_members' (限制成员) 权限"
             print(msg, flush=True)
+            print(f"   解决方案: 请在群组管理员设置中启用 '限制成员' 权限", flush=True)
+            print(f"   当前权限状态:", flush=True)
+            print(f"   - can_restrict_members: {bot_admin.can_restrict_members}", flush=True)
+            print(f"   - can_delete_messages: {bot_admin.can_delete_messages if hasattr(bot_admin, 'can_delete_messages') else 'N/A'}", flush=True)
             return False, msg
         
         print(f"✅ 机器人在 {group_info} 中拥有禁言权限", flush=True)
         return True, "Bot has restrict permissions"
         
     except Exception as e:
-        msg = f"❌ 检查机器人权限失败，{group_info}: {e}"
+        error_type = type(e).__name__
+        msg = f"❌ 检查机器人权限失败 - {group_info}: {error_type} - {e}"
         print(msg, flush=True)
         print(f"❌ 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+        print(f"   可能原因:", flush=True)
+        print(f"   1. 机器人已被移出群组", flush=True)
+        print(f"   2. 群组ID错误或群组已被删除", flush=True)
+        print(f"   3. 网络连接问题", flush=True)
         return False, msg
 
 # --- Webhook ---
@@ -3074,8 +3090,16 @@ async def check_expired_users(context):
     2. Mark them as banned in the database
     3. Restrict their chat permissions in Telegram
     4. Send them a private notification about expiration
+    
+    Enhanced logging and permission checks ensure:
+    - Bot permissions are verified before any restriction attempts
+    - Detailed logs for troubleshooting permission issues
+    - Statistics on success/failure rates
+    - Proper rollback on failures to maintain database consistency
     """
-    print(f"🕐 [check_expired_users] 任务开始执行，当前时间: {get_beijing_now()}", flush=True)
+    start_time = get_beijing_now()
+    print(f"🕐 [check_expired_users] ========== 任务开始执行 ==========", flush=True)
+    print(f"🕐 [check_expired_users] 执行时间: {start_time}", flush=True)
     
     if not global_flask_app:
         print("❌ [check_expired_users] global_flask_app 为空，跳过执行", flush=True)
@@ -3302,7 +3326,20 @@ async def check_expired_users(context):
         
         await asyncio.get_running_loop().run_in_executor(None, _rollback_failed)
     
-    print(f"📊 [check_expired_users] 任务完成 - 成功: {len(successful_bans)}, 失败: {len(failed_bans)}", flush=True)
+    # Final statistics report
+    end_time = get_beijing_now()
+    duration = (end_time - start_time).total_seconds()
+    print(f"📊 [check_expired_users] ========== 任务执行完成 ==========", flush=True)
+    print(f"📊 [check_expired_users] 执行时长: {duration:.2f} 秒", flush=True)
+    print(f"📊 [check_expired_users] 成功禁言: {len(successful_bans)} 个用户", flush=True)
+    print(f"📊 [check_expired_users] 失败操作: {len(failed_bans)} 个用户", flush=True)
+    if successful_bans:
+        print(f"✅ [check_expired_users] 成功禁言的用户 ID: {successful_bans}", flush=True)
+    if failed_bans:
+        print(f"❌ [check_expired_users] 失败的用户 ID 及原因:", flush=True)
+        for fail_info in failed_bans:
+            print(f"   - 用户 {fail_info['user_id']}: {fail_info['error_type']} - {fail_info['error']}", flush=True)
+    print(f"📊 [check_expired_users] ==========================================", flush=True)
 
 async def check_scheduled_messages(context):
     """
@@ -6113,6 +6150,7 @@ async def cmd_start(update: Update, context):
                 
                 # Check if this user has any expired memberships in groups
                 now = get_beijing_now()
+                print(f"🔍 [/start] 检查用户 {user_id} 的过期群组成员身份", flush=True)
                 expired_memberships = GroupUser.query.options(
                     joinedload(GroupUser.group)
                 ).filter(
@@ -6121,6 +6159,14 @@ async def cmd_start(update: Update, context):
                     GroupUser.expiration_date < now,
                     GroupUser.is_banned == False
                 ).all()
+                
+                if expired_memberships:
+                    print(f"⚠️ [/start] 找到 {len(expired_memberships)} 个过期的群组成员身份", flush=True)
+                    for membership in expired_memberships:
+                        grp = membership.group
+                        print(f"   - 群组: {grp.title if grp else 'N/A'}, 到期时间: {membership.expiration_date}", flush=True)
+                else:
+                    print(f"✅ [/start] 用户 {user_id} 没有过期的群组成员身份", flush=True)
                 
                 # Collect expired memberships to process
                 users_to_ban = []
@@ -6149,7 +6195,7 @@ async def cmd_start(update: Update, context):
                 """Mute an expired user in a group"""
                 try:
                     # Check bot permissions before attempting to mute
-                    print(f"🔍 [/start] 检查机器人权限，群组: {grp.title}, chat_id: {grp.chat_id}", flush=True)
+                    print(f"🔍 [/start] 检查机器人权限 - 群组: {grp.title}, chat_id: {grp.chat_id}", flush=True)
                     has_permission, permission_msg = await check_bot_restrict_permissions(
                         context.bot, 
                         grp.chat_id, 
@@ -6157,10 +6203,13 @@ async def cmd_start(update: Update, context):
                     )
                     
                     if not has_permission:
-                        print(f"❌ [/start] {permission_msg}，跳过禁言用户 {group_user.tg_id}", flush=True)
+                        print(f"❌ [/start] {permission_msg}", flush=True)
+                        print(f"❌ [/start] 跳过禁言用户 {group_user.tg_id} - 权限不足", flush=True)
+                        print(f"   请在群组 '{grp.title}' 中检查机器人管理员权限", flush=True)
                         return False
                     
                     # Permission check passed, proceed with mute
+                    print(f"🔨 [/start] 开始禁言过期用户 - 用户ID: {group_user.tg_id}, 群组: {grp.title}", flush=True)
                     await context.bot.restrict_chat_member(
                         chat_id=grp.chat_id,
                         user_id=group_user.tg_id,
@@ -6178,8 +6227,10 @@ async def cmd_start(update: Update, context):
                     print(f"⛔️ [/start] 成功禁言用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id})", flush=True)
                     return True
                 except Exception as e:
-                    print(f"❌ [/start] 禁言失败，用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id}): {e}", flush=True)
-                    print(f"❌ [/start] 错误详情:\n{traceback.format_exc()}", flush=True)
+                    error_type = type(e).__name__
+                    print(f"❌ [/start] 禁言失败 ({error_type}) - 用户 {group_user.tg_id}, 群组 {grp.title} (ID: {grp.chat_id})", flush=True)
+                    print(f"   错误详情: {e}", flush=True)
+                    print(f"❌ [/start] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
                     return False
             
             # Use semaphore to limit concurrent operations
@@ -6261,8 +6312,7 @@ async def on_message(update: Update, context):
             
             # 🆕 **CRITICAL FIX**: Check user expiration BEFORE any other processing
             # This ensures expired users cannot send ANY messages, not just check-in
-            # TODO: Consider caching user expiration status or using async database operations
-            # to avoid performance bottlenecks under high message volume
+            # Real-time message interception for expired users
             def _check_user_expiration():
                 with global_flask_app.app_context():
                     try:
@@ -6279,6 +6329,11 @@ async def on_message(update: Update, context):
                             now = get_beijing_now()
                             if now > db_user.expiration_date:
                                 # User is expired
+                                print(f"🚫 [on_message] 检测到过期用户发送消息 - 用户ID: {user.id}, 群组: {group.title}", flush=True)
+                                print(f"   - 到期时间: {db_user.expiration_date}", flush=True)
+                                print(f"   - 当前时间: {now}", flush=True)
+                                print(f"   - 当前禁言状态: {db_user.is_banned}", flush=True)
+                                
                                 conf = get_group_conf(group)
                                 ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
                                 
@@ -6287,7 +6342,9 @@ async def on_message(update: Update, context):
                                 if not was_already_banned:
                                     db_user.is_banned = True
                                     db.session.commit()
-                                    print(f"⛔️ [on_message] 用户 {user.id} 已过期 (到期时间: {db_user.expiration_date})，标记为禁言状态", flush=True)
+                                    print(f"⛔️ [on_message] 用户 {user.id} 已过期，标记为禁言状态", flush=True)
+                                else:
+                                    print(f"⚠️ [on_message] 用户 {user.id} 已是禁言状态，但仍能发送消息", flush=True)
                                 
                                 return {
                                     'expired': True,
@@ -6306,20 +6363,22 @@ async def on_message(update: Update, context):
             
             if expiration_check and expiration_check.get('expired'):
                 # User is expired, mute and notify
+                print(f"🚨 [on_message] 拦截过期用户消息 - 用户ID: {user.id}, 用户名: @{user.username if user.username else 'N/A'}", flush=True)
                 try:
                     # Try to delete the user's message
                     try:
                         await msg.delete()
-                        print(f"🗑️ [on_message] 删除过期用户 {user.id} 的消息", flush=True)
+                        print(f"🗑️ [on_message] 成功删除过期用户 {user.id} 的消息", flush=True)
                     except Exception as e:
                         print(f"⚠️ [on_message] 无法删除消息: {e}", flush=True)
+                        print(f"   提示: 请确保机器人有删除消息的权限", flush=True)
                     
                     # Mute user in Telegram if not already banned
                     if not expiration_check.get('was_already_banned'):
                         try:
                             # Check bot permissions before attempting to mute
                             grp = expiration_check.get('group')
-                            print(f"🔍 [on_message] 检查机器人权限，群组: {grp.title}, chat_id: {chat.id}", flush=True)
+                            print(f"🔍 [on_message] 检查机器人权限 - 群组: {grp.title}, chat_id: {chat.id}", flush=True)
                             has_permission, permission_msg = await check_bot_restrict_permissions(
                                 context.bot, 
                                 chat.id, 
@@ -6327,9 +6386,14 @@ async def on_message(update: Update, context):
                             )
                             
                             if not has_permission:
-                                print(f"❌ [on_message] {permission_msg}，无法禁言用户 {user.id}", flush=True)
+                                print(f"❌ [on_message] 权限不足 - {permission_msg}", flush=True)
+                                print(f"❌ [on_message] 无法禁言用户 {user.id}，请检查以下内容:", flush=True)
+                                print(f"   1. 机器人是否在群组 '{grp.title}' 中被设置为管理员", flush=True)
+                                print(f"   2. 管理员权限中是否启用了 '限制成员' (Ban users) 权限", flush=True)
+                                print(f"   3. 如果是频道，请确保机器人有足够的权限", flush=True)
                             else:
                                 # Permission check passed, proceed with mute
+                                print(f"✅ [on_message] 权限检查通过，开始禁言用户 {user.id}", flush=True)
                                 await context.bot.restrict_chat_member(
                                     chat_id=chat.id,
                                     user_id=user.id,
@@ -6346,8 +6410,12 @@ async def on_message(update: Update, context):
                                 )
                                 print(f"⛔️ [on_message] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
                         except Exception as e:
-                            print(f"❌ [on_message] 禁言失败，用户 {user.id} 在群组 {chat.id}: {e}", flush=True)
-                            print(f"❌ [on_message] 错误详情:\n{traceback.format_exc()}", flush=True)
+                            error_type = type(e).__name__
+                            print(f"❌ [on_message] 禁言失败 ({error_type}) - 用户 {user.id}, 群组 {chat.id}", flush=True)
+                            print(f"   错误详情: {e}", flush=True)
+                            print(f"❌ [on_message] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+                    else:
+                        print(f"ℹ️ [on_message] 用户 {user.id} 已经处于禁言状态，跳过禁言操作", flush=True)
                     
                     # Send temporary notification
                     try:
@@ -6358,13 +6426,13 @@ async def on_message(update: Update, context):
                             text=sanitized_msg,
                             parse_mode='HTML'
                         )
+                        print(f"📧 [on_message] 已向群组发送过期通知（30秒后自动删除）", flush=True)
                         # Auto-delete after 30 seconds
                         context.job_queue.run_once(
                             lambda c: c.job.data.delete(),
                             30,
                             data=warning_msg
                         )
-                        print(f"📧 [on_message] 已向群组发送过期通知（30秒后删除）", flush=True)
                     except Exception as e:
                         print(f"⚠️ [on_message] 发送过期通知失败: {e}", flush=True)
                     
@@ -6580,12 +6648,14 @@ async def on_message(update: Update, context):
                 else:
                      # Check if user is expired and should be banned
                     if db_user.expiration_date and get_beijing_now() > db_user.expiration_date:
+                        print(f"⚠️ [checkin] 过期用户尝试打卡 - 用户ID: {user.id}, 到期时间: {db_user.expiration_date}", flush=True)
                         if not db_user.is_banned:
                             db_user.is_banned = True
                             db.session.commit()
+                            print(f"⛔️ [checkin] 标记用户 {user.id} 为禁言状态", flush=True)
                             try:
                                 # Check bot permissions before attempting to mute
-                                print(f"🔍 [checkin] 检查机器人权限，群组: {group.title}, chat_id: {chat.id}", flush=True)
+                                print(f"🔍 [checkin] 检查机器人权限 - 群组: {group.title}, chat_id: {chat.id}", flush=True)
                                 has_permission, permission_msg = await check_bot_restrict_permissions(
                                     context.bot, 
                                     chat.id, 
@@ -6593,9 +6663,11 @@ async def on_message(update: Update, context):
                                 )
                                 
                                 if not has_permission:
-                                    print(f"❌ [checkin] {permission_msg}，无法禁言用户 {user.id}", flush=True)
+                                    print(f"❌ [checkin] 权限不足 - {permission_msg}", flush=True)
+                                    print(f"❌ [checkin] 无法禁言用户 {user.id}，请检查机器人管理员权限", flush=True)
                                 else:
                                     # Permission check passed, proceed with mute
+                                    print(f"🔨 [checkin] 开始禁言过期用户 {user.id}", flush=True)
                                     await context.bot.restrict_chat_member(
                                         chat_id=chat.id,
                                         user_id=user.id,
@@ -6612,8 +6684,12 @@ async def on_message(update: Update, context):
                                     )
                                     print(f"⛔️ [checkin] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
                             except Exception as e:
-                                print(f"❌ [checkin] 禁言失败，用户 {user.id} 在群组 {chat.id}: {e}", flush=True)
-                                print(f"❌ [checkin] 错误详情:\n{traceback.format_exc()}", flush=True)
+                                error_type = type(e).__name__
+                                print(f"❌ [checkin] 禁言失败 ({error_type}) - 用户 {user.id}, 群组 {chat.id}", flush=True)
+                                print(f"   错误详情: {e}", flush=True)
+                                print(f"❌ [checkin] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+                        else:
+                            print(f"ℹ️ [checkin] 用户 {user.id} 已经处于禁言状态", flush=True)
                         
                         # 🆕 Send ephemeral message in group (visible only to that user)
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))

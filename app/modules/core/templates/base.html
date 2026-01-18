@@ -686,6 +686,112 @@
             background: rgba(124, 58, 237, 0.2);
             color: var(--text-primary);
         }
+        
+        /* Mobile-specific enhancements */
+        @media (max-width: 767.98px) {
+            /* Make forms more touch-friendly */
+            .form-control, .form-select {
+                font-size: 16px !important; /* Prevents zoom on iOS */
+                padding: 0.75rem;
+            }
+            
+            /* Larger buttons for touch */
+            .btn {
+                padding: 0.65rem 1.5rem;
+                font-size: 0.9rem;
+            }
+            
+            /* Better spacing for cards */
+            .card {
+                margin-bottom: 1rem;
+            }
+            
+            .card-body {
+                padding: 1rem;
+            }
+            
+            /* Stack buttons vertically on mobile */
+            .btn-group {
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            .btn-group .btn {
+                width: 100%;
+            }
+            
+            /* Hide some table columns on mobile */
+            .hide-mobile {
+                display: none !important;
+            }
+            
+            /* Make tables scrollable */
+            .table-responsive {
+                border-radius: 8px;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            /* Smaller page headers on mobile */
+            .page-header h4 {
+                font-size: 1.1rem;
+            }
+            
+            .page-header p {
+                font-size: 0.75rem !important;
+            }
+            
+            .page-header .btn {
+                font-size: 0.75rem;
+                padding: 0.4rem 1rem;
+            }
+            
+            /* Better modal sizing on mobile */
+            .modal-dialog {
+                margin: 0.5rem;
+            }
+            
+            /* Flex wrap for page headers */
+            .page-header .d-flex {
+                flex-wrap: wrap !important;
+                gap: 0.5rem;
+            }
+            
+            /* Better badge sizing */
+            .badge {
+                font-size: 0.65rem;
+                padding: 0.3rem 0.6rem;
+            }
+            
+            /* Improve dropdown menu touch targets */
+            .dropdown-item {
+                padding: 0.75rem 1rem;
+                font-size: 0.9rem;
+            }
+            
+            /* Better spacing in navigation */
+            .sidebar .nav-link {
+                padding: 12px 16px;
+            }
+            
+            /* Adjust alert sizes */
+            .alert {
+                font-size: 0.85rem;
+                padding: 0.75rem;
+            }
+        }
+        
+        /* Tablet optimizations */
+        @media (min-width: 768px) and (max-width: 991.98px) {
+            .page-header h4 {
+                font-size: 1.3rem;
+            }
+            
+            .btn {
+                font-size: 0.85rem;
+            }
+        }
     </style>
 </head>
 <body>

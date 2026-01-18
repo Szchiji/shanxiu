@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
 from datetime import datetime, timedelta
 import pytz
 from openpyxl import Workbook, load_workbook
@@ -779,22 +779,33 @@ def api_save_user():
         return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
     
     if add != 0:
-        base = u.expiration_date or get_beijing_now()
+        now = get_beijing_now()
+        old_expiration = u.expiration_date
+        base = u.expiration_date or now
         u.expiration_date = base + timedelta(days=add)
-        if add > 0 and u.is_banned:
+        
+        # Check if user needs to be unmuted after renewal
+        # Unmute if: 1) adding days, 2) was expired OR banned before renewal, 3) new expiration is in future
+        was_expired_or_banned = (old_expiration and old_expiration < now) or u.is_banned
+        will_be_valid_after_renewal = u.expiration_date and u.expiration_date > now
+        
+        if add > 0 and was_expired_or_banned and will_be_valid_after_renewal:
             u.is_banned = False
+            print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态，旧到期时间: {old_expiration}，新到期时间: {u.expiration_date}", flush=True)
             try: 
                 group = BotGroup.query.get(gid)
-                asyncio.run_coroutine_threadsafe(
-                    global_ptb_app.bot.restrict_chat_member(
-                        chat_id=group.chat_id,
-                        user_id=u.tg_id,
-                        permissions=ChatPermissions.all_permissions()
-                    ),
-                    global_bot_loop
-                ).result(timeout=5)
+                if group and group.chat_id:
+                    asyncio.run_coroutine_threadsafe(
+                        global_ptb_app.bot.restrict_chat_member(
+                            chat_id=group.chat_id,
+                            user_id=u.tg_id,
+                            permissions=ChatPermissions.all_permissions()
+                        ),
+                        global_bot_loop
+                    ).result(timeout=5)
+                    print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
             except Exception as e:
-                print(f"Failed to unban user: {e}")
+                print(f"❌ [api_save_user] 解除禁言失败，用户 {u.tg_id}: {e}", flush=True)
 
     db.session.commit()
     return jsonify({'status':'ok'})
@@ -2846,6 +2857,10 @@ async def check_expired_users(context):
         print("❌ [check_expired_users] global_flask_app 为空，跳过执行", flush=True)
         return
     
+    if not context or not context.bot:
+        print("❌ [check_expired_users] context 或 bot 为空，跳过执行", flush=True)
+        return
+    
     def _sync_check():
         with global_flask_app.app_context():
             try:
@@ -2864,23 +2879,34 @@ async def check_expired_users(context):
                 
                 if expired_users:
                     print(f"🔍 [check_expired_users] 找到 {len(expired_users)} 个过期用户需要禁言 (批次限制: {EXPIRED_USERS_BATCH_SIZE})", flush=True)
+                    # Log details of each expired user
+                    for user in expired_users:
+                        print(f"  👤 用户 ID: {user.tg_id}, 群组: {user.group.title if user.group else 'N/A'}, 到期时间: {user.expiration_date}", flush=True)
                 else:
                     print(f"✅ [check_expired_users] 未找到需要禁言的过期用户", flush=True)
                 
                 # Collect users to ban and prepare async operations
                 # Also retrieve configurations here to avoid repeated context creation
                 users_to_ban = []
+                skipped_count = 0
                 for user in expired_users:
                     if user.group and user.group.is_active:
                         # Verify chat_id and user_id exist and are non-empty
                         if not user.group.chat_id or not user.tg_id:
                             print(f"⚠️ [check_expired_users] 跳过用户 {user.id}: chat_id={user.group.chat_id}, tg_id={user.tg_id} 无效", flush=True)
+                            skipped_count += 1
                             continue
                         
                         # Get configuration in sync context
                         conf = get_group_conf(user.group)
                         ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
                         users_to_ban.append((user, user.group, ban_msg))
+                    else:
+                        print(f"⚠️ [check_expired_users] 跳过用户 {user.id}: 群组不存在或未激活", flush=True)
+                        skipped_count += 1
+                
+                if skipped_count > 0:
+                    print(f"⚠️ [check_expired_users] 跳过了 {skipped_count} 个无效用户", flush=True)
                 
                 if not users_to_ban:
                     return None
@@ -2888,6 +2914,7 @@ async def check_expired_users(context):
                 # Mark users as banned in database first
                 for user, group, _ in users_to_ban:
                     user.is_banned = True
+                    print(f"💾 [check_expired_users] 标记用户 {user.tg_id} 为禁言状态", flush=True)
                 
                 # Commit all changes at once
                 db.session.commit()
@@ -2898,6 +2925,7 @@ async def check_expired_users(context):
                             
             except Exception as e:
                 print(f"❌ [check_expired_users] 数据库操作错误: {e}", flush=True)
+                print(f"❌ [check_expired_users] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
                 db.session.rollback()
                 return None
     
@@ -2959,6 +2987,7 @@ async def check_expired_users(context):
                 
         except Exception as e:
             print(f"❌ [check_expired_users] 禁言失败，用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id}): {e}", flush=True)
+            print(f"❌ [check_expired_users] 错误详情:\n{traceback.format_exc()}", flush=True)
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)

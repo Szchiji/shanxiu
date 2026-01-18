@@ -34,6 +34,7 @@ EXPIRED_USERS_BATCH_SIZE = 100  # Process expired users in batches to avoid memo
 AUTH_SESSION_EXPIRY_MINUTES = 5  # Authentication session expiry time
 SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # Check scheduled messages every minute (in seconds)
 AUTH_STATUS_CHECK_MIN_INTERVAL = 5  # Minimum seconds between check_auth_status requests (rate limiting)
+AUTH_STATUS_CHECK_CLEANUP_INTERVAL = 600  # Cleanup old rate limit timestamps every 10 minutes (in seconds)
 
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -2994,6 +2995,18 @@ def api_check_auth_status():
         current_time = get_beijing_now()
         
         with auth_status_check_lock:
+            # Periodic cleanup: Remove timestamps older than the cleanup interval
+            # This prevents unbounded memory growth
+            old_tokens = [
+                token for token, timestamp in auth_status_check_timestamps.items()
+                if (current_time - timestamp).total_seconds() > AUTH_STATUS_CHECK_CLEANUP_INTERVAL
+            ]
+            for token in old_tokens:
+                auth_status_check_timestamps.pop(token, None)
+            
+            if old_tokens:
+                print(f"🧹 [check_auth_status] 清理了 {len(old_tokens)} 个过期的速率限制记录", flush=True)
+            
             last_check_time = auth_status_check_timestamps.get(session_token)
             
             if last_check_time:
@@ -6180,9 +6193,9 @@ async def cmd_start(update: Update, context):
             # Mute users in all their expired groups concurrently
             results = await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
             
-            # Only notify about groups where muting was successful
+            # Only notify about groups where muting was successful (result is explicitly True)
             successfully_muted_groups = [grp.title for (group_user, grp), result in zip(users_to_ban, results) 
-                                         if result]
+                                         if result is True]
             
             if successfully_muted_groups:
                 notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(successfully_muted_groups) + "\n\n请联系管理员续费。"

@@ -823,7 +823,6 @@ def api_save_user():
                         print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
                 except Exception as e:
                     print(f"❌ [api_save_user] 解除禁言失败，群组ID={gid}, 用户ID={u.tg_id}: {e}", flush=True)
-                    import traceback
                     print(f"❌ [api_save_user] 错误详情:\n{traceback.format_exc()}", flush=True)
 
     db.session.commit()

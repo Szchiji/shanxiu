@@ -2872,6 +2872,11 @@ async def check_expired_users(context):
                 users_to_ban = []
                 for user in expired_users:
                     if user.group and user.group.is_active:
+                        # Verify chat_id and user_id exist and are non-empty
+                        if not user.group.chat_id or not user.tg_id:
+                            print(f"⚠️ [check_expired_users] 跳过用户 {user.id}: chat_id={user.group.chat_id}, tg_id={user.tg_id} 无效", flush=True)
+                            continue
+                        
                         # Get configuration in sync context
                         conf = get_group_conf(user.group)
                         ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
@@ -2886,13 +2891,13 @@ async def check_expired_users(context):
                 
                 # Commit all changes at once
                 db.session.commit()
-                print(f"✅ Marked {len(users_to_ban)} users as banned in database", flush=True)
+                print(f"✅ [check_expired_users] 在数据库中标记了 {len(users_to_ban)} 个用户为禁言状态", flush=True)
                 
                 # Return the list for async processing
                 return users_to_ban
                             
             except Exception as e:
-                print(f"Error in check_expired_users sync part: {e}")
+                print(f"❌ [check_expired_users] 数据库操作错误: {e}", flush=True)
                 db.session.rollback()
                 return None
     
@@ -2901,6 +2906,21 @@ async def check_expired_users(context):
     
     if not users_to_ban:
         return
+    
+    # Verify bot permissions for each unique group
+    groups_to_check = {group.chat_id: group for _, group, _ in users_to_ban}
+    
+    for chat_id, group in groups_to_check.items():
+        try:
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                print(f"⚠️ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中不是管理员，状态: {bot_member.status}", flush=True)
+            elif bot_member.status == 'administrator' and not bot_member.can_restrict_members:
+                print(f"⚠️ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中缺少 can_restrict_members 权限", flush=True)
+            else:
+                print(f"✅ [check_expired_users] 机器人在群组 {group.title} (ID: {chat_id}) 中拥有禁言权限", flush=True)
+        except Exception as e:
+            print(f"❌ [check_expired_users] 检查机器人权限失败，群组 {group.title} (ID: {chat_id}): {e}", flush=True)
     
     # Now perform all async Telegram operations with rate limiting
     async def ban_user_async(user, group, ban_msg):
@@ -2921,7 +2941,7 @@ async def check_expired_users(context):
                     can_pin_messages=False
                 )
             )
-            print(f"⛔️ Muted expired user {user.tg_id} in group {group.title}", flush=True)
+            print(f"⛔️ [check_expired_users] 成功禁言用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id})", flush=True)
             
             # Try to send notification to user privately
             try:
@@ -2932,12 +2952,13 @@ async def check_expired_users(context):
                     text=sanitized_msg,
                     parse_mode='HTML'
                 )
+                print(f"📧 [check_expired_users] 已向用户 {user.tg_id} 发送私聊通知", flush=True)
             except Exception as e:
                 # If private message fails, we don't send to group to avoid spam
-                print(f"Failed to send ban notification to user {user.tg_id}: {e}")
+                print(f"⚠️ [check_expired_users] 发送私聊通知失败，用户 {user.tg_id}: {e}", flush=True)
                 
         except Exception as e:
-            print(f"Error muting user {user.tg_id}: {e}")
+            print(f"❌ [check_expired_users] 禁言失败，用户 {user.tg_id} 在群组 {group.title} (ID: {group.chat_id}): {e}", flush=True)
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -5770,6 +5791,10 @@ async def cmd_start(update: Update, context):
                 users_to_ban = []
                 for group_user in expired_memberships:
                     if group_user.group and group_user.group.is_active:
+                        # Verify chat_id and user_id exist and are non-empty
+                        if not group_user.group.chat_id or not group_user.tg_id:
+                            print(f"⚠️ [/start] 跳过用户 {group_user.id}: chat_id={group_user.group.chat_id}, tg_id={group_user.tg_id} 无效", flush=True)
+                            continue
                         users_to_ban.append((group_user, group_user.group))
                 
                 # Mark users as banned in database
@@ -5777,7 +5802,7 @@ async def cmd_start(update: Update, context):
                     for group_user, grp in users_to_ban:
                         group_user.is_banned = True
                     db.session.commit()
-                    print(f"✅ [/start] Marked {len(users_to_ban)} expired memberships as banned for user {user_id}", flush=True)
+                    print(f"✅ [/start] 在数据库中标记了 {len(users_to_ban)} 个过期用户为禁言状态，用户ID: {user_id}", flush=True)
                 
                 return private_msg, users_to_ban
         
@@ -5802,9 +5827,9 @@ async def cmd_start(update: Update, context):
                             can_pin_messages=False
                         )
                     )
-                    print(f"⛔️ [/start] Muted expired user {group_user.tg_id} in group {grp.title}", flush=True)
+                    print(f"⛔️ [/start] 成功禁言用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id})", flush=True)
                 except Exception as e:
-                    print(f"❌ [/start] Error muting user {group_user.tg_id} in group {grp.chat_id}: {e}", flush=True)
+                    print(f"❌ [/start] 禁言失败，用户 {group_user.tg_id} 在群组 {grp.title} (ID: {grp.chat_id}): {e}", flush=True)
             
             # Use semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -6105,9 +6130,9 @@ async def on_message(update: Update, context):
                                         can_pin_messages=False
                                     )
                                 )
-                                print(f"⛔️ Muted expired user {user.id} in group {chat.id}")
+                                print(f"⛔️ [checkin] 成功禁言过期用户 {user.id} 在群组 {chat.id}", flush=True)
                             except Exception as e:
-                                print(f"Failed to mute user {user.id}: {e}")
+                                print(f"❌ [checkin] 禁言失败，用户 {user.id} 在群组 {chat.id}: {e}", flush=True)
                         
                         # 🆕 Send ephemeral message in group (visible only to that user)
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))

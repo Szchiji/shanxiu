@@ -27,7 +27,7 @@
 </style>
 
 <div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-chart-line me-2"></i>消息统计</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看群组消息数量统计和活跃用户排行</p>
@@ -35,6 +35,9 @@
         <div class="text-end">
             <small>统计时间段</small>
             <div>{{ start_date.strftime('%Y-%m-%d') }} 至 {{ end_date.strftime('%Y-%m-%d') }}</div>
+            <a href="/core/api/export_message_statistics/{{ current_group.id }}" class="btn btn-light btn-sm mt-2">
+                <i class="fa-solid fa-download me-1"></i>导出数据
+            </a>
         </div>
     </div>
 </div>

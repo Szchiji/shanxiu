@@ -283,7 +283,7 @@
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
                             <i class="fa-solid fa-bell"></i>
                         </button>
-                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' onclick="openEdit(this)" title="编辑">
+                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%d') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
                             <i class="fa-solid fa-pen"></i>
                         </button>
                         <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }})" title="删除">
@@ -313,7 +313,12 @@
         const data = await res.json();
         if (data.status === "ok") {
             const table = document.getElementById("userTable");
-            table.innerHTML = data.users.map(user => `
+            table.innerHTML = data.users.map(user => {
+                // Format expiration date for display and data attribute
+                const expirationDisplay = user.expiration_date || "";
+                const expirationDate = user.expiration_date ? user.expiration_date.split(' ')[0] : "";
+                
+                return `
                 <tr>
                     <td class="ps-3 ps-md-4 fw-bold">${user.tg_id}</td>
                     ${data.fields.map(field => `
@@ -324,14 +329,14 @@
                             : (user.expiration_date ? '<span class="badge-status badge bg-success">正常</span>'
                             : '<span class="badge-status badge bg-secondary">永久</span>'))}
                     </td>
-                    <td>${user.expiration_date || ""}</td>
+                    <td>${expirationDisplay}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser(${user.id})" title="推送"><i class="fa-solid fa-bell"></i></button>
-                        <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>
+                        <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' data-expiration="${expirationDate}" onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>
                         <button class="action-btn btn btn-sm btn-danger" onclick="delUser(${user.id})" title="删除"><i class="fa-solid fa-trash"></i></button>
                     </td>
                 </tr>
-            `).join('');
+            `}).join('');
         } else {
             alert(data.msg || "搜索失败");
         }
@@ -365,8 +370,9 @@
                         <input type="text" class="form-control" name="tg_id" required placeholder="输入 Telegram 用户 ID">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-bold">添加天数</label>
-                        <input type="number" class="form-control" name="add_days" value="30" placeholder="设置有效天数">
+                        <label class="form-label fw-bold">认证到期时间</label>
+                        <input type="date" class="form-control" id="expiration_date_input" name="expiration_date" placeholder="选择到期日期">
+                        <small class="form-text text-muted">留空表示永久有效</small>
                     </div>
                     {% for field in fields %}
                     <div class="mb-3">
@@ -408,8 +414,11 @@
         const tgIdInput = document.querySelector('input[name="tg_id"]');
         tgIdInput.readOnly = false;
         
-        // Set add_days to default value (30)
-        document.querySelector('input[name="add_days"]').value = '30';
+        // Set default expiration date to 30 days from now
+        const expirationInput = document.getElementById('expiration_date_input');
+        const defaultDate = new Date();
+        defaultDate.setDate(defaultDate.getDate() + 30);
+        expirationInput.value = defaultDate.toISOString().split('T')[0];
         
         const modal = new bootstrap.Modal(document.getElementById('addUserModal'));
         modal.show();
@@ -436,8 +445,11 @@
         tgIdInput.value = btn.dataset.tgid;
         tgIdInput.readOnly = true;
         
-        // Set add_days to 0 (don't extend expiration by default)
-        document.querySelector('input[name="add_days"]').value = '0';
+        // Set current expiration date if available
+        const expirationInput = document.getElementById('expiration_date_input');
+        if (btn.dataset.expiration) {
+            expirationInput.value = btn.dataset.expiration;
+        }
         
         // Populate profile fields
         document.querySelectorAll('.profile-input').forEach(input => {
@@ -486,7 +498,7 @@
         const data = {
             group_id: {{ group.id|tojson }},
             tg_id: formData.get('tg_id'),
-            add_days: formData.get('add_days'),
+            expiration_date: formData.get('expiration_date') || null,
             profile: {}
         };
         
@@ -507,7 +519,7 @@
             }
             
             const resData = await res.json();
-            if (resData.status === 'ok') {
+            if (resData.status === 'ok' || resData.status === 'warning') {
                 location.reload();
             } else {
                 alert(resData.msg || '保存失败');

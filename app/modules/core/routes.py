@@ -761,10 +761,14 @@ def api_save_settings():
 @core_bp.route('/api/save_user', methods=['POST'])
 def api_save_user():
     """
-    Save or update user information, including renewal (adding days to expiration).
+    Save or update user information, including renewal.
     
-    When a user is renewed (add_days > 0):
-    1. Updates expiration_date by adding days
+    Supports two modes:
+    1. Legacy mode: add_days parameter (for backward compatibility)
+    2. New mode: expiration_date parameter (YYYY-MM-DD format or null)
+    
+    When a user's expiration is updated to a future date:
+    1. Updates expiration_date
     2. Clears is_banned flag if user was expired or banned
     3. Unmutes user in Telegram by restoring all permissions
     """
@@ -780,34 +784,62 @@ def api_save_user():
         db.session.add(u)
     
     u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
-    add = safe_int(d.get('add_days'))
     
-    # Validate add_days parameter (reasonable bounds: -3650 to 3650 days / 10 years)
-    if add < -3650 or add > 3650:
-        return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
+    # Support both new expiration_date parameter and legacy add_days parameter
+    expiration_date_str = d.get('expiration_date')
+    add = safe_int(d.get('add_days', 0))
     
-    if add != 0:
+    # Determine the new expiration date
+    new_expiration = None
+    update_expiration = False
+    
+    if expiration_date_str:
+        # New mode: direct date specified
+        try:
+            # Parse the date string (format: YYYY-MM-DD)
+            new_expiration = datetime.strptime(expiration_date_str, '%Y-%m-%d')
+            # Set time to end of day (23:59:59) for consistency
+            new_expiration = new_expiration.replace(hour=23, minute=59, second=59)
+            update_expiration = True
+            print(f"📝 [api_save_user] 用户 {u.tg_id} 设置到期日期为 {new_expiration}", flush=True)
+        except ValueError as e:
+            return jsonify({'status':'error','msg':f'日期格式无效: {expiration_date_str}'})
+    elif add != 0:
+        # Legacy mode: add days to current expiration
+        # Validate add_days parameter (reasonable bounds: -3650 to 3650 days / 10 years)
+        if add < -3650 or add > 3650:
+            return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
+        
+        now = get_beijing_now()
+        base = u.expiration_date or now
+        new_expiration = base + timedelta(days=add)
+        update_expiration = True
+        print(f"📝 [api_save_user] 用户 {u.tg_id} 续费 {add} 天", flush=True)
+    elif expiration_date_str == '':
+        # Empty string explicitly provided - clear expiration (永久有效)
+        new_expiration = None
+        update_expiration = True
+        print(f"📝 [api_save_user] 用户 {u.tg_id} 设置为永久有效", flush=True)
+    
+    if update_expiration:
         now = get_beijing_now()
         old_expiration = u.expiration_date
         old_banned_status = u.is_banned
-        base = u.expiration_date or now
-        new_expiration = base + timedelta(days=add)
         
-        print(f"📝 [api_save_user] 用户 {u.tg_id} 续费 {add} 天", flush=True)
         print(f"   - 旧到期时间: {old_expiration}", flush=True)
         print(f"   - 新到期时间: {new_expiration}", flush=True)
         print(f"   - 当前时间: {now}", flush=True)
         print(f"   - 旧禁言状态: {old_banned_status}", flush=True)
         
         # Check if user needs to be unmuted after renewal
-        # Unmute if: 1) adding days, 2) was expired OR banned before renewal, 3) new expiration is in future
+        # Unmute if: 1) expiration being set/updated, 2) was expired OR banned before, 3) new expiration is in future (or None for permanent)
         was_expired = old_expiration and old_expiration < now
         was_banned = old_banned_status
-        will_be_valid_after_renewal = new_expiration and new_expiration > now
+        will_be_valid_after_update = (new_expiration is None) or (new_expiration and new_expiration > now)
         
-        print(f"   - 是否过期: {was_expired}, 是否禁言: {was_banned}, 续费后有效: {will_be_valid_after_renewal}", flush=True)
+        print(f"   - 是否过期: {was_expired}, 是否禁言: {was_banned}, 更新后有效: {will_be_valid_after_update}", flush=True)
         
-        if add > 0 and (was_expired or was_banned) and will_be_valid_after_renewal:
+        if (was_expired or was_banned) and will_be_valid_after_update:
             # Update expiration date and clear banned flag
             u.expiration_date = new_expiration
             u.is_banned = False
@@ -886,13 +918,13 @@ def api_save_user():
                     print(f"⚠️ [api_save_user] 由于解除禁言失败，已回滚到期时间和禁言状态", flush=True)
                     return jsonify({'status':'error','msg':f'解除禁言失败: {str(e)}'})
         else:
-            # Just updating profile or extending time without unmuting
+            # Just updating expiration time without unmuting (user was not expired/banned)
             u.expiration_date = new_expiration
             db.session.commit()
             print(f"✅ [api_save_user] 用户 {u.tg_id} 信息已更新（无需解除禁言）", flush=True)
             return jsonify({'status':'ok'})
     else:
-        # No days added, just update profile
+        # No expiration update, just update profile
         db.session.commit()
         return jsonify({'status':'ok'})
 

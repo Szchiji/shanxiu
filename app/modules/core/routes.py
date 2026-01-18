@@ -3046,7 +3046,6 @@ def api_check_auth_status():
             # Set session as logged in with persistent cookie
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
-            print(f"✅ [check_auth_status] 认证成功", flush=True)
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -6193,9 +6192,9 @@ async def cmd_start(update: Update, context):
             # Mute users in all their expired groups concurrently
             results = await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
             
-            # Only notify about groups where muting was successful (result is explicitly True)
+            # Only notify about groups where muting was successful (explicitly check for True, not exceptions)
             successfully_muted_groups = [grp.title for (group_user, grp), result in zip(users_to_ban, results) 
-                                         if result is True]
+                                         if isinstance(result, bool) and result]
             
             if successfully_muted_groups:
                 notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(successfully_muted_groups) + "\n\n请联系管理员续费。"

@@ -3341,6 +3341,37 @@ async def check_expired_users(context):
             print(f"   - 用户 {fail_info['user_id']}: {fail_info['error_type']} - {fail_info['error']}", flush=True)
     print(f"📊 [check_expired_users] ==========================================", flush=True)
 
+async def cmd_force_check_expire(update: Update, context):
+    """
+    手动触发过期用户检查命令 /check_expire
+    只有管理员可以使用此命令
+    """
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    try:
+        await update.message.reply_text("🔄 正在检查过期用户...")
+        
+        # Manually trigger the expired users check
+        await check_expired_users(context)
+        
+        await update.message.reply_text("✅ 过期用户检查完成")
+    except Exception as e:
+        print(f"❌ [cmd_force_check_expire] 执行失败: {e}", flush=True)
+        print(f"❌ [cmd_force_check_expire] 堆栈跟踪:\n{traceback.format_exc()}", flush=True)
+        await update.message.reply_text(f"❌ 检查失败: {str(e)}")
+
 async def check_scheduled_messages(context):
     """
     定时检查需要发送的消息
@@ -4932,6 +4963,9 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("vote", cmd_vote))
     app.add_handler(CommandHandler("quiz", cmd_quiz))
     app.add_handler(CommandHandler("redpacket", cmd_redpacket))
+    
+    # 🆕 Admin command to manually trigger expiration check
+    app.add_handler(CommandHandler("check_expire", cmd_force_check_expire))
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)

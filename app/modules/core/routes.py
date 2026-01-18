@@ -2663,14 +2663,16 @@ def api_save_red_packet():
             packet.creator_id = data.get('creator_id', 0)
             packet.status = 'active'
         
-        # Update fields
-        packet.packet_type = data.get('packet_type', 'random')  # random, fixed, lucky
-        packet.total_amount = int(data.get('total_amount', 0))
-        packet.total_count = int(data.get('total_count', 1))
-        packet.claimed_count = 0
+        # Update fields - using correct field names from model
+        packet.packet_type = data.get('packet_type', 'random')  # random, equal
+        total_points = int(data.get('total_points', 0))
+        packet_count = int(data.get('packet_count', 1))
+        
+        packet.total_points = total_points
+        packet.packet_count = packet_count
+        packet.remaining_count = packet_count  # Initialize remaining count
+        packet.remaining_points = total_points  # Initialize remaining points
         packet.message = data.get('message', '')
-        packet.require_subscription = data.get('require_subscription', False)
-        packet.channel_id = data.get('channel_id', '')
         packet.expire_time = datetime.strptime(data['expire_time'], '%Y-%m-%dT%H:%M') if data.get('expire_time') else None
         
         db.session.add(packet)
@@ -2690,8 +2692,8 @@ def api_delete_red_packet():
         if not packet:
             return jsonify({'status': 'error', 'msg': '红包不存在'})
         
-        # Only allow deletion if not claimed yet or expired
-        if packet.status == 'active' and packet.claimed_count > 0:
+        # Only allow deletion if not claimed yet (remaining_count equals packet_count)
+        if packet.status == 'active' and packet.remaining_count < packet.packet_count:
             return jsonify({'status': 'error', 'msg': '红包已被领取，无法删除'})
         
         db.session.delete(packet)
@@ -2721,8 +2723,8 @@ def api_send_red_packet():
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send message to group
-        message_text = f"🧧 *红包来啦！*\n\n💬 {packet.message}\n💰 总金额: {packet.total_amount} 积分\n🎁 数量: {packet.total_count} 个\n\n快来抢吧！"
+        # Send message to group - using correct field names
+        message_text = f"🧧 *红包来啦！*\n\n💬 {packet.message}\n💰 总金额: {packet.total_points} 积分\n🎁 数量: {packet.packet_count} 个\n\n快来抢吧！"
         
         # Note: This would need the bot instance to actually send
         # For now, we'll return success and the bot handler should pick this up

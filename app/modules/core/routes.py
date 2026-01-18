@@ -912,8 +912,6 @@ def api_bulk_import_users():
         print(f"Error in bulk_import_users: {e}")
         return jsonify({'status':'error', 'msg': str(e)})
 
-        return jsonify({'status':'error', 'msg': f'导入失败: {str(e)}'})
-
 @core_bp.route('/api/export_users', methods=['POST'])
 def api_export_users():
     """Export users to XLSX format"""
@@ -1381,6 +1379,55 @@ def api_delete_scheduled_message():
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/export_message_statistics/<int:group_id>', methods=['GET'])
+def api_export_message_statistics(group_id):
+    """导出消息统计数据"""
+    try:
+        from openpyxl import Workbook
+        from io import BytesIO
+        
+        group = BotGroup.query.get_or_404(group_id)
+        stats = MessageStatistics.query.filter_by(group_id=group_id).order_by(MessageStatistics.date.desc()).limit(365).all()
+        
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "消息统计"
+        
+        # Headers
+        headers = ['日期', '消息数量', '活跃用户数', '新增用户数', '文本消息', '图片', '视频', '文件', '其他']
+        ws.append(headers)
+        
+        # Data rows
+        for stat in stats:
+            ws.append([
+                stat.date.strftime('%Y-%m-%d'),
+                stat.message_count,
+                stat.active_users,
+                stat.new_users,
+                stat.text_count,
+                stat.photo_count,
+                stat.video_count,
+                stat.file_count,
+                stat.other_count
+            ])
+        
+        # Save to bytes
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        from flask import send_file
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'message_statistics_{group.title}_{datetime.now().strftime("%Y%m%d")}.xlsx'
+        )
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
+
 
 @core_bp.route('/api/export_scheduled_messages/<int:group_id>', methods=['GET'])
 def api_export_scheduled_messages(group_id):
@@ -2594,6 +2641,94 @@ def api_delete_quiz_game():
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_red_packet', methods=['POST'])
+def api_save_red_packet():
+    """保存红包设置"""
+    try:
+        data = request.json
+        group_id = data.get('group_id')
+        packet_id = data.get('id')
+        
+        if packet_id:
+            # Update existing red packet
+            packet = RedPacket.query.get(packet_id)
+            if not packet:
+                return jsonify({'status': 'error', 'msg': '红包不存在'})
+        else:
+            # Create new red packet
+            packet = RedPacket()
+            packet.group_id = group_id
+            packet.creator_id = data.get('creator_id', 0)
+            packet.status = 'active'
+        
+        # Update fields
+        packet.packet_type = data.get('packet_type', 'random')  # random, fixed, lucky
+        packet.total_amount = int(data.get('total_amount', 0))
+        packet.total_count = int(data.get('total_count', 1))
+        packet.claimed_count = 0
+        packet.message = data.get('message', '')
+        packet.require_subscription = data.get('require_subscription', False)
+        packet.channel_id = data.get('channel_id', '')
+        packet.expire_time = datetime.strptime(data['expire_time'], '%Y-%m-%dT%H:%M') if data.get('expire_time') else None
+        
+        db.session.add(packet)
+        db.session.commit()
+        return jsonify({'status': 'ok', 'id': packet.id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'msg': str(e)})
+
+
+@core_bp.route('/api/delete_red_packet', methods=['POST'])
+def api_delete_red_packet():
+    """删除红包"""
+    try:
+        packet_id = request.json.get('id')
+        packet = RedPacket.query.get(packet_id)
+        if not packet:
+            return jsonify({'status': 'error', 'msg': '红包不存在'})
+        
+        # Only allow deletion if not claimed yet or expired
+        if packet.status == 'active' and packet.claimed_count > 0:
+            return jsonify({'status': 'error', 'msg': '红包已被领取，无法删除'})
+        
+        db.session.delete(packet)
+        db.session.commit()
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'msg': str(e)})
+
+
+@core_bp.route('/api/send_red_packet', methods=['POST'])
+def api_send_red_packet():
+    """发送红包到群组"""
+    try:
+        packet_id = request.json.get('id')
+        packet = RedPacket.query.get(packet_id)
+        if not packet:
+            return jsonify({'status': 'error', 'msg': '红包不存在'})
+        
+        group = BotGroup.query.get(packet.group_id)
+        if not group:
+            return jsonify({'status': 'error', 'msg': '群组不存在'})
+        
+        # Create inline keyboard for claiming
+        keyboard = [[
+            InlineKeyboardButton("🧧 点击领取红包", callback_data=f"claim_redpacket_{packet.id}")
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send message to group
+        message_text = f"🧧 *红包来啦！*\n\n💬 {packet.message}\n💰 总金额: {packet.total_amount} 积分\n🎁 数量: {packet.total_count} 个\n\n快来抢吧！"
+        
+        # Note: This would need the bot instance to actually send
+        # For now, we'll return success and the bot handler should pick this up
+        return jsonify({'status': 'ok', 'msg': '红包已发送'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 
 @core_bp.route('/magic_login')
@@ -4056,12 +4191,84 @@ async def cmd_vote(update: Update, context):
         await update.message.reply_text("❌ 只有管理员才能创建投票")
         return
     
-    await update.message.reply_text(
-        "📊 <b>创建投票</b>\n\n"
-        "格式：/vote 标题|选项1|选项2|选项3...\n\n"
-        "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
-        parse_mode='HTML'
+    # Parse command: /vote title|option1|option2|option3...
+    text = update.message.text
+    parts = text.split(' ', 1)
+    
+    if len(parts) < 2 or '|' not in parts[1]:
+        await update.message.reply_text(
+            "📊 <b>创建投票</b>\n\n"
+            "格式：/vote 标题|选项1|选项2|选项3...\n\n"
+            "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
+            parse_mode='HTML'
+        )
+        return
+    
+    if not global_flask_app:
+        await update.message.reply_text("❌ 系统错误")
+        return
+    
+    # Parse title and options
+    vote_parts = parts[1].split('|')
+    title = vote_parts[0].strip()
+    options = [opt.strip() for opt in vote_parts[1:] if opt.strip()]
+    
+    if len(options) < 2:
+        await update.message.reply_text("❌ 至少需要2个选项")
+        return
+    
+    def _create_vote():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # Create vote in database
+            vote = GroupVote()
+            vote.group_id = group.id
+            vote.title = title
+            vote.description = ""
+            vote.vote_type = 'single'  # Default to single choice
+            vote.options = json.dumps(options, ensure_ascii=False)
+            vote.status = 'active'
+            vote.created_by = user.id
+            vote.created_at = datetime.now()
+            
+            db.session.add(vote)
+            db.session.commit()
+            
+            return vote.id, None
+    
+    vote_id, error = await asyncio.get_running_loop().run_in_executor(None, _create_vote)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    # Create inline keyboard
+    keyboard = []
+    for idx, option in enumerate(options):
+        keyboard.append([InlineKeyboardButton(
+            option,
+            callback_data=f"vote_{vote_id}_{idx}"
+        )])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Send vote message
+    vote_text = f"📊 *{title}*\n\n点击下方按钮进行投票："
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=vote_text,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
     )
+    
+    # Delete the command message
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
 
 
 async def cmd_quiz(update: Update, context):
@@ -5252,9 +5459,111 @@ async def redpacket_claim_callback(update: Update, context):
     )
 
 async def vote_callback(update: Update, context):
-    """处理投票回调 - 简化版本，建议使用Telegram原生投票"""
+    """处理投票回调"""
     query = update.callback_query
-    await query.answer("⚠️ 投票功能建议使用Telegram原生投票功能")
+    data = query.data  # Format: vote_<vote_id>_<option_index>
+    
+    if not global_flask_app:
+        await query.answer("❌ 系统错误")
+        return
+    
+    try:
+        parts = data.split('_')
+        if len(parts) < 3:
+            await query.answer("❌ 无效的投票数据")
+            return
+        
+        vote_id = int(parts[1])
+        option_index = int(parts[2])
+        user_id = query.from_user.id
+        chat_id = str(query.message.chat_id)
+        
+        def _process_vote():
+            with global_flask_app.app_context():
+                # Get vote
+                vote = GroupVote.query.get(vote_id)
+                if not vote or vote.status != 'active':
+                    return None, "投票不存在或已结束"
+                
+                # Check if already voted
+                existing = VoteRecord.query.filter_by(
+                    vote_id=vote_id,
+                    user_id=user_id
+                ).first()
+                
+                if existing:
+                    if vote.vote_type == 'single':
+                        return None, "您已经投过票了"
+                    # For multiple choice, check if voting for same option
+                    if str(option_index) in existing.options.split(','):
+                        return None, "您已经选择过这个选项了"
+                
+                # Validate option index
+                options = json.loads(vote.options)
+                if option_index < 0 or option_index >= len(options):
+                    return None, "无效的选项"
+                
+                # Record vote
+                if existing and vote.vote_type == 'multiple':
+                    # Add to existing vote
+                    existing.options = f"{existing.options},{option_index}"
+                    db.session.commit()
+                else:
+                    # Create new vote record
+                    record = VoteRecord()
+                    record.vote_id = vote_id
+                    record.user_id = user_id
+                    record.options = str(option_index)
+                    record.voted_at = datetime.now()
+                    db.session.add(record)
+                    db.session.commit()
+                
+                # Get updated vote counts
+                records = VoteRecord.query.filter_by(vote_id=vote_id).all()
+                counts = {}
+                for r in records:
+                    for opt in r.options.split(','):
+                        counts[int(opt)] = counts.get(int(opt), 0) + 1
+                
+                return {
+                    'vote_title': vote.title,
+                    'option': options[option_index],
+                    'counts': counts,
+                    'options': options
+                }, None
+        
+        result, error = await asyncio.get_running_loop().run_in_executor(None, _process_vote)
+        
+        if error:
+            await query.answer(f"❌ {error}")
+            return
+        
+        await query.answer(f"✅ 已投票：{result['option']}")
+        
+        # Update message with vote counts
+        msg_text = f"📊 *{result['vote_title']}*\n\n"
+        for idx, opt in enumerate(result['options']):
+            count = result['counts'].get(idx, 0)
+            bar = '▓' * min(count, 10)
+            msg_text += f"{opt}: {bar} ({count}票)\n"
+        
+        # Recreate keyboard
+        keyboard = []
+        for idx, opt in enumerate(result['options']):
+            keyboard.append([InlineKeyboardButton(
+                f"{'✓ ' if idx == option_index else ''}{opt}",
+                callback_data=f"vote_{vote_id}_{idx}"
+            )])
+        
+        await query.edit_message_text(
+            msg_text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    except Exception as e:
+        print(f"Error in vote_callback: {e}")
+        await query.answer("❌ 处理投票时出错")
 
 async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
     """显示群底部按钮

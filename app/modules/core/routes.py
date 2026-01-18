@@ -767,7 +767,6 @@ def api_save_user():
     1. Updates expiration_date by adding days
     2. Clears is_banned flag if user was expired or banned
     3. Unmutes user in Telegram by restoring all permissions
-    4. Clears any expiration reminder flags
     """
     if not session.get('logged_in'): return jsonify({'status':'error'})
     d = request.json
@@ -792,11 +791,11 @@ def api_save_user():
         old_expiration = u.expiration_date
         old_banned_status = u.is_banned
         base = u.expiration_date or now
-        u.expiration_date = base + timedelta(days=add)
+        new_expiration = base + timedelta(days=add)
         
         print(f"📝 [api_save_user] 用户 {u.tg_id} 续费 {add} 天", flush=True)
         print(f"   - 旧到期时间: {old_expiration}", flush=True)
-        print(f"   - 新到期时间: {u.expiration_date}", flush=True)
+        print(f"   - 新到期时间: {new_expiration}", flush=True)
         print(f"   - 当前时间: {now}", flush=True)
         print(f"   - 旧禁言状态: {old_banned_status}", flush=True)
         
@@ -804,29 +803,31 @@ def api_save_user():
         # Unmute if: 1) adding days, 2) was expired OR banned before renewal, 3) new expiration is in future
         was_expired = old_expiration and old_expiration < now
         was_banned = old_banned_status
-        will_be_valid_after_renewal = u.expiration_date and u.expiration_date > now
+        will_be_valid_after_renewal = new_expiration and new_expiration > now
         
         print(f"   - 是否过期: {was_expired}, 是否禁言: {was_banned}, 续费后有效: {will_be_valid_after_renewal}", flush=True)
         
         if add > 0 and (was_expired or was_banned) and will_be_valid_after_renewal:
-            # Clear banned flag in database
+            # Update expiration date and clear banned flag
+            u.expiration_date = new_expiration
             u.is_banned = False
-            # Commit database changes FIRST to ensure state consistency
-            db.session.commit()
-            print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态", flush=True)
             
             # Check if bot is available before attempting to unmute
             if not global_ptb_app or not global_bot_loop:
                 print(f"⚠️ [api_save_user] 机器人未初始化，无法解除用户 {u.tg_id} 的禁言（仅更新数据库）", flush=True)
+                # Commit database changes only since bot is not available
+                db.session.commit()
                 return jsonify({'status':'warning','msg':'已更新数据库，但机器人未就绪，无法立即解除禁言'})
             else:
                 try: 
                     group = BotGroup.query.get(gid)
                     if not group:
                         print(f"⚠️ [api_save_user] 群组 {gid} 不存在，无法解除禁言", flush=True)
+                        db.session.commit()
                         return jsonify({'status':'warning','msg':'已更新数据库，但群组不存在'})
                     elif not group.chat_id:
                         print(f"⚠️ [api_save_user] 群组 {gid} 的 chat_id 为空，无法解除禁言", flush=True)
+                        db.session.commit()
                         return jsonify({'status':'warning','msg':'已更新数据库，但群组 chat_id 为空'})
                     else:
                         # Try to unmute user in Telegram
@@ -841,10 +842,13 @@ def api_save_user():
                         )
                         # Wait for result with timeout
                         result = future.result(timeout=10)
+                        
+                        # Telegram API call succeeded, commit database changes
+                        db.session.commit()
                         print(f"✅ [api_save_user] 成功解除用户 {u.tg_id} 在群组 {group.chat_id} 的禁言", flush=True)
                         print(f"   - Telegram API 响应: {result}", flush=True)
                         
-                        # Send confirmation message to user privately
+                        # Send confirmation message to user privately (non-blocking)
                         try:
                             conf = get_group_conf(group)
                             renewal_msg = conf.get('msg_renewal_success', '✅ <b>续费成功！</b>\n\n您的认证已延期，现在可以正常发言了。')
@@ -858,7 +862,7 @@ def api_save_user():
                                 ),
                                 global_bot_loop
                             )
-                            send_future.result(timeout=5)
+                            send_future.result(timeout=10)
                             print(f"📧 [api_save_user] 已向用户 {u.tg_id} 发送续费成功通知", flush=True)
                         except Exception as notify_error:
                             print(f"⚠️ [api_save_user] 发送续费通知失败: {notify_error}", flush=True)
@@ -866,17 +870,24 @@ def api_save_user():
                         return jsonify({'status':'ok','msg':'续费成功，已解除禁言'})
                 except asyncio.TimeoutError:
                     print(f"❌ [api_save_user] 解除禁言超时（10秒），群组ID={gid}, 用户ID={u.tg_id}", flush=True)
-                    return jsonify({'status':'warning','msg':'已更新数据库，但解除禁言操作超时，请稍后重试'})
+                    # Rollback both expiration_date and is_banned on timeout
+                    u.expiration_date = old_expiration
+                    u.is_banned = old_banned_status
+                    db.session.commit()
+                    print(f"⚠️ [api_save_user] 由于超时，已回滚到期时间和禁言状态", flush=True)
+                    return jsonify({'status':'error','msg':'解除禁言操作超时，请稍后重试'})
                 except Exception as e:
                     print(f"❌ [api_save_user] 解除禁言失败，群组ID={gid}, 用户ID={u.tg_id}: {e}", flush=True)
                     print(f"❌ [api_save_user] 错误详情:\n{traceback.format_exc()}", flush=True)
-                    # Rollback is_banned change if unmute failed
-                    u.is_banned = True
+                    # Rollback both expiration_date and is_banned on failure
+                    u.expiration_date = old_expiration
+                    u.is_banned = old_banned_status
                     db.session.commit()
-                    print(f"⚠️ [api_save_user] 由于解除禁言失败，已回滚 is_banned 状态", flush=True)
+                    print(f"⚠️ [api_save_user] 由于解除禁言失败，已回滚到期时间和禁言状态", flush=True)
                     return jsonify({'status':'error','msg':f'解除禁言失败: {str(e)}'})
         else:
             # Just updating profile or extending time without unmuting
+            u.expiration_date = new_expiration
             db.session.commit()
             print(f"✅ [api_save_user] 用户 {u.tg_id} 信息已更新（无需解除禁言）", flush=True)
             return jsonify({'status':'ok'})
@@ -6052,6 +6063,8 @@ async def on_message(update: Update, context):
             
             # 🆕 **CRITICAL FIX**: Check user expiration BEFORE any other processing
             # This ensures expired users cannot send ANY messages, not just check-in
+            # TODO: Consider caching user expiration status or using async database operations
+            # to avoid performance bottlenecks under high message volume
             def _check_user_expiration():
                 with global_flask_app.app_context():
                     try:

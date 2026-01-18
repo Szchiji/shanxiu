@@ -779,18 +779,19 @@ def api_save_user():
         return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
     
     if add != 0:
-        base = u.expiration_date or get_beijing_now()
+        now = get_beijing_now()
+        old_expiration = u.expiration_date
+        base = u.expiration_date or now
         u.expiration_date = base + timedelta(days=add)
         
         # Check if user needs to be unmuted after renewal
-        # Unmute if: 1) adding days, 2) currently banned OR expired, 3) new expiration is in future
-        now = get_beijing_now()
-        was_expired = (u.expiration_date and u.expiration_date < now) or u.is_banned
+        # Unmute if: 1) adding days, 2) was expired OR banned before renewal, 3) new expiration is in future
+        was_expired = (old_expiration and old_expiration < now) or u.is_banned
         will_be_valid = u.expiration_date and u.expiration_date > now
         
         if add > 0 and was_expired and will_be_valid:
             u.is_banned = False
-            print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态，新到期时间: {u.expiration_date}", flush=True)
+            print(f"🔓 [api_save_user] 续费用户 {u.tg_id}，清除禁言状态，旧到期时间: {old_expiration}，新到期时间: {u.expiration_date}", flush=True)
             try: 
                 group = BotGroup.query.get(gid)
                 if group and group.chat_id:

@@ -106,22 +106,20 @@ async def check_bot_restrict_permissions(bot, chat_id, group_title=None):
     
     Args:
         bot: Telegram bot instance
-        chat_id: Group chat ID
-        group_title: Optional group title for logging
+        chat_id (int): Group chat ID
+        group_title (str, optional): Group title for logging
         
     Returns:
         tuple: (has_permission: bool, status_message: str)
+        
+    Raises:
+        Exception: If unable to retrieve chat administrators (e.g., bot kicked from group)
     """
     group_info = f"群组 {group_title} (ID: {chat_id})" if group_title else f"群组 (ID: {chat_id})"
     
     try:
         administrators = await bot.get_chat_administrators(chat_id)
-        bot_admin = None
-        
-        for admin in administrators:
-            if admin.user.id == bot.id:
-                bot_admin = admin
-                break
+        bot_admin = next((admin for admin in administrators if admin.user.id == bot.id), None)
         
         if not bot_admin:
             msg = f"⚠️ 机器人不是 {group_info} 的管理员"
@@ -887,6 +885,8 @@ def api_save_user():
         
         if (was_expired or was_banned) and will_be_valid_after_update:
             # Update expiration date first (always update regardless of unmute success)
+            # This is intentional: we preserve the renewal record even if Telegram operations fail
+            # so that admins can fix permissions and retry without losing the expiration update
             u.expiration_date = new_expiration
             db.session.commit()
             print(f"✅ [api_save_user] 已更新用户 {u.tg_id} 的到期时间为 {new_expiration}", flush=True)
@@ -3136,12 +3136,16 @@ async def check_expired_users(context):
     # Filter users_to_ban to only include groups with proper permissions
     if groups_without_permission:
         original_count = len(users_to_ban)
-        # Save users that will be skipped for rollback
-        skipped_users = [(user, group, msg) for user, group, msg in users_to_ban 
-                        if group.chat_id in groups_without_permission]
-        # Filter to only users in groups with permission
-        users_to_ban = [(user, group, msg) for user, group, msg in users_to_ban 
-                        if group.chat_id not in groups_without_permission]
+        # Partition users into two lists based on permissions in a single pass
+        users_to_ban_filtered = []
+        skipped_users = []
+        for user, group, msg in users_to_ban:
+            if group.chat_id in groups_without_permission:
+                skipped_users.append((user, group, msg))
+            else:
+                users_to_ban_filtered.append((user, group, msg))
+        
+        users_to_ban = users_to_ban_filtered
         skipped_by_permission = original_count - len(users_to_ban)
         if skipped_by_permission > 0:
             print(f"⚠️ [check_expired_users] 由于权限问题跳过了 {skipped_by_permission} 个用户", flush=True)
@@ -4870,7 +4874,7 @@ async def run_bot(app_instance):
             if app.job_queue:
                 try:
                     await app.job_queue.start()
-                    print("✅ Job queue 已正确启动（使用 await）", flush=True)
+                    print("✅ Job queue started successfully", flush=True)
                 except Exception as jq_error:
                     print(f"❌ Job queue 启动失败: {jq_error}", flush=True)
                     print(f"❌ 堆栈跟踪:\n{traceback.format_exc()}", flush=True)

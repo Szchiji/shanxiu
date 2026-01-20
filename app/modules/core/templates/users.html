@@ -283,7 +283,7 @@
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
                             <i class="fa-solid fa-bell"></i>
                         </button>
-                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' onclick="openEdit(this)" title="编辑">
+                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
                             <i class="fa-solid fa-pen"></i>
                         </button>
                         <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }})" title="删除">
@@ -302,6 +302,13 @@
 {{ pagination(current_page, total_pages, per_page, total_users) }}
 
 <script>
+    // Helper function to convert server datetime format (YYYY-MM-DD HH:MM:SS) to datetime-local format (YYYY-MM-DDTHH:MM)
+    function formatDatetimeForInput(serverDatetime) {
+        if (!serverDatetime) return '';
+        // Handle both 'YYYY-MM-DD HH:MM:SS' and 'YYYY-MM-DDTHH:MM' formats
+        return serverDatetime.replace(' ', 'T').substring(0, 16);
+    }
+
     async function searchUsers() {
         const query = document.getElementById("searchInput").value.trim();
         if (!query) return alert("请输入搜索关键字");
@@ -327,7 +334,7 @@
                     <td>${user.expiration_date || ""}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser(${user.id})" title="推送"><i class="fa-solid fa-bell"></i></button>
-                        <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>
+                        <button class="action-btn btn btn-sm btn-primary" data-id="${user.id}" data-tgid="${user.tg_id}" data-profile='${JSON.stringify(user.profile)}' data-expiration="${formatDatetimeForInput(user.expiration_date)}" onclick="openEdit(this)" title="编辑"><i class="fa-solid fa-pen"></i></button>
                         <button class="action-btn btn btn-sm btn-danger" onclick="delUser(${user.id})" title="删除"><i class="fa-solid fa-trash"></i></button>
                     </td>
                 </tr>
@@ -365,8 +372,9 @@
                         <input type="text" class="form-control" name="tg_id" required placeholder="输入 Telegram 用户 ID">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-bold">添加天数</label>
-                        <input type="number" class="form-control" name="add_days" value="30" placeholder="设置有效天数">
+                        <label class="form-label fw-bold">到期时间</label>
+                        <input type="datetime-local" class="form-control" name="expiration_date" placeholder="选择到期日期和时间">
+                        <small class="text-muted">留空表示永久有效</small>
                     </div>
                     {% for field in fields %}
                     <div class="mb-3">
@@ -408,8 +416,11 @@
         const tgIdInput = document.querySelector('input[name="tg_id"]');
         tgIdInput.readOnly = false;
         
-        // Set add_days to default value (30)
-        document.querySelector('input[name="add_days"]').value = '30';
+        // Set default expiration date (30 days from now)
+        const defaultDate = new Date();
+        defaultDate.setDate(defaultDate.getDate() + 30);
+        const isoString = defaultDate.toISOString().slice(0, 16);
+        document.querySelector('input[name="expiration_date"]').value = isoString;
         
         const modal = new bootstrap.Modal(document.getElementById('addUserModal'));
         modal.show();
@@ -436,8 +447,9 @@
         tgIdInput.value = btn.dataset.tgid;
         tgIdInput.readOnly = true;
         
-        // Set add_days to 0 (don't extend expiration by default)
-        document.querySelector('input[name="add_days"]').value = '0';
+        // Set expiration_date from button's data attribute
+        const expirationInput = document.querySelector('input[name="expiration_date"]');
+        expirationInput.value = btn.dataset.expiration || '';
         
         // Populate profile fields
         document.querySelectorAll('.profile-input').forEach(input => {
@@ -486,7 +498,7 @@
         const data = {
             group_id: {{ group.id|tojson }},
             tg_id: formData.get('tg_id'),
-            add_days: formData.get('add_days'),
+            expiration_date: formData.get('expiration_date') || null,
             profile: {}
         };
         

@@ -772,16 +772,41 @@ def api_save_user():
         db.session.add(u)
     
     u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
-    add = safe_int(d.get('add_days'))
     
-    # Validate add_days parameter (reasonable bounds: -3650 to 3650 days / 10 years)
-    if add < -3650 or add > 3650:
-        return jsonify({'status':'error','msg':'有效天数必须在 -3650 到 3650 之间'})
+    # Handle expiration_date - directly set from datetime picker
+    expiration_date_str = d.get('expiration_date')
+    old_expiration = u.expiration_date
     
-    if add != 0:
-        base = u.expiration_date or get_beijing_now()
-        u.expiration_date = base + timedelta(days=add)
-        if add > 0 and u.is_banned:
+    if expiration_date_str:
+        try:
+            # Parse datetime-local format: YYYY-MM-DDTHH:MM
+            new_expiration = datetime.strptime(expiration_date_str, '%Y-%m-%dT%H:%M')
+            u.expiration_date = new_expiration
+            
+            # If expiration is extended to future and user was banned, unban them
+            now = get_beijing_now()
+            if new_expiration > now and u.is_banned:
+                u.is_banned = False
+                try: 
+                    group = BotGroup.query.get(gid)
+                    asyncio.run_coroutine_threadsafe(
+                        global_ptb_app.bot.restrict_chat_member(
+                            chat_id=group.chat_id,
+                            user_id=u.tg_id,
+                            permissions=ChatPermissions.all_permissions()
+                        ),
+                        global_bot_loop
+                    ).result(timeout=5)
+                    print(f"✅ User {u.tg_id} unbanned in group {group.chat_id} after expiration extended")
+                except Exception as e:
+                    print(f"Failed to unban user: {e}")
+        except ValueError as e:
+            return jsonify({'status':'error','msg':f'日期格式错误: {e}'})
+    else:
+        # Clear expiration (set to permanent)
+        u.expiration_date = None
+        # If user was banned due to expiration, unban them when set to permanent
+        if u.is_banned:
             u.is_banned = False
             try: 
                 group = BotGroup.query.get(gid)
@@ -793,6 +818,7 @@ def api_save_user():
                     ),
                     global_bot_loop
                 ).result(timeout=5)
+                print(f"✅ User {u.tg_id} unbanned in group {group.chat_id} after set to permanent")
             except Exception as e:
                 print(f"Failed to unban user: {e}")
 

@@ -3,11 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UI 升级展示 - Before & After</title>
+    <title>UI 升级展示 - 新配色方案</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
+        :root {
+            /* Light theme color palette - Fresh and Modern */
+            --bg-dark: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-hover: #f1f5f9;
+            --border-color: #e2e8f0;
+            --text-primary: #1e293b;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            
+            /* Accent colors - Vibrant and Fresh */
+            --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            --secondary-gradient: linear-gradient(135deg, #f472b6 0%, #ec4899 100%);
+            --success-gradient: linear-gradient(135deg, #22c55e 0%, #4ade80 100%);
+            --warning-gradient: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
+            --info-gradient: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);
+            
+            /* Shadows for light mode */
+            --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            --hover-shadow: 0 8px 30px rgba(59, 130, 246, 0.2);
+        }
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
             margin: 0;
             padding: 20px;
         }
@@ -19,12 +45,13 @@
         
         h1 {
             text-align: center;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--primary-gradient);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             font-size: 2.5rem;
             margin-bottom: 3rem;
+            font-weight: 700;
         }
         
         .comparison {
@@ -35,27 +62,30 @@
         }
         
         .section {
-            background: white;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-radius: 15px;
             padding: 2rem;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            box-shadow: var(--card-shadow);
         }
         
         .section h2 {
             margin-top: 0;
             font-size: 1.5rem;
+            color: var(--text-primary);
         }
         
         .before h2 {
-            color: #e74c3c;
+            color: #ef4444;
         }
         
         .after h2 {
-            color: #27ae60;
+            color: #22c55e;
         }
         
         .feature-box {
-            background: #f8f9fa;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border-color);
             border-radius: 10px;
             padding: 1rem;
             margin: 1rem 0;
@@ -64,18 +94,20 @@
         .feature-box h3 {
             margin-top: 0;
             font-size: 1.1rem;
-            color: #495057;
+            color: var(--text-secondary);
         }
         
         .feature-list {
             list-style: none;
             padding: 0;
+            margin: 0;
         }
         
         .feature-list li {
             padding: 0.5rem 0;
             padding-left: 1.5rem;
             position: relative;
+            color: var(--text-secondary);
         }
         
         .before .feature-list li:before {
@@ -90,92 +122,276 @@
             left: 0;
         }
         
-        .pagination-demo {
-            background: white;
-            border-radius: 15px;
+        /* Demo Cards */
+        .demo-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
             padding: 1.5rem;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
-            margin-top: 1rem;
-        }
-        
-        .btn-demo {
-            display: inline-block;
-            border-radius: 10px;
-            padding: 0.5rem 1rem;
-            font-size: 0.875rem;
-            font-weight: 500;
+            margin: 1rem 0;
+            box-shadow: var(--card-shadow);
             transition: all 0.3s ease;
-            border: 2px solid #e9ecef;
-            background: white;
-            color: #495057;
+        }
+        
+        .demo-card:hover {
+            box-shadow: var(--hover-shadow);
+            transform: translateY(-3px);
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+        
+        /* Buttons */
+        .btn {
+            border-radius: 8px;
+            padding: 0.5rem 1.25rem;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            display: inline-block;
             text-decoration: none;
-            margin: 0.5rem;
+            margin: 0.25rem;
         }
         
-        .btn-demo:hover {
+        .btn-primary {
+            background: var(--primary-gradient);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+            color: #fff;
+        }
+        
+        .btn-primary:hover {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
-            border-color: #667eea;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
         }
         
-        .btn-demo.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            background: #f8f9fa;
+        .btn-success {
+            background: var(--success-gradient);
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
+            color: #fff;
         }
         
-        .commands-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-top: 2rem;
+        .btn-warning {
+            background: var(--warning-gradient);
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+            color: #fff;
         }
         
-        .command-card {
-            border-radius: 10px;
-            padding: 1.5rem;
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+        .btn-danger {
+            background: var(--secondary-gradient);
+            box-shadow: 0 4px 15px rgba(236, 72, 153, 0.3);
+            color: #fff;
         }
         
-        .command-card h4 {
-            margin-top: 0;
-            color: #667eea;
+        .btn-info {
+            background: var(--info-gradient);
+            box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);
+            color: #fff;
         }
         
-        .stats {
+        /* Badges */
+        .badge {
+            padding: 0.4rem 0.75rem;
+            font-weight: 600;
+            font-size: 0.75rem;
+            border-radius: 20px;
+            display: inline-block;
+            margin: 0.25rem;
+        }
+        
+        .badge-primary {
+            background: var(--primary-gradient);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+        
+        .badge-success {
+            background: var(--success-gradient);
+            color: #fff;
+        }
+        
+        .badge-warning {
+            background: var(--warning-gradient);
+            color: #fff;
+        }
+        
+        .badge-danger {
+            background: var(--secondary-gradient);
+            color: #fff;
+        }
+        
+        /* Sidebar Demo */
+        .sidebar-demo {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            width: 220px;
+        }
+        
+        .sidebar-heading {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 16px;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 8px;
+        }
+        
+        .nav-link-demo {
+            color: var(--text-secondary);
+            padding: 10px 16px;
+            margin: 2px 0;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            display: block;
+            text-decoration: none;
+            border: 1px solid transparent;
+        }
+        
+        .nav-link-demo:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+            border-color: var(--border-color);
+        }
+        
+        .nav-link-demo.active {
+            background: var(--primary-gradient);
+            color: #fff;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+        }
+        
+        .nav-link-demo i {
+            margin-right: 10px;
+            width: 18px;
             text-align: center;
-            background: white;
-            border-radius: 15px;
-            padding: 2rem;
-            margin-top: 2rem;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
         }
         
-        .stat-grid {
+        /* Stats Grid */
+        .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 2rem;
-            margin-top: 2rem;
+            gap: 1.5rem;
+            margin: 2rem 0;
         }
         
-        .stat-item {
-            padding: 1rem;
+        .stat-card {
+            background: var(--primary-gradient);
+            border-radius: 16px;
+            padding: 1.5rem;
+            color: white;
+            box-shadow: 0 10px 30px rgba(59, 130, 246, 0.25);
+            text-align: center;
         }
         
         .stat-number {
-            font-size: 3rem;
+            font-size: 2.5rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
         
         .stat-label {
-            color: #6c757d;
-            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        /* Mini Stat Cards */
+        .mini-stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        
+        .mini-stat-card:hover {
+            border-color: rgba(59, 130, 246, 0.4);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.12);
+            transform: translateY(-3px);
+        }
+        
+        .mini-stat-card .icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 0.75rem;
+            font-size: 1.25rem;
+        }
+        
+        .mini-stat-card h3 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 0 0 0.25rem 0;
+        }
+        
+        .mini-stat-card p {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin: 0;
+        }
+        
+        /* Forms */
+        .form-control {
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 0.6rem 1rem;
+            font-size: 0.85rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            width: 100%;
+            box-sizing: border-box;
+        }
+        
+        .form-control:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+            outline: none;
+        }
+        
+        .form-label {
+            color: var(--text-secondary);
+            font-weight: 500;
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Table Demo */
+        .table-demo {
+            width: 100%;
+            border-collapse: collapse;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .table-demo thead th {
+            background: var(--primary-gradient);
+            color: #fff;
+            font-weight: 600;
+            border: none;
+            padding: 0.875rem 1rem;
+            font-size: 0.85rem;
+            text-align: left;
+        }
+        
+        .table-demo tbody tr {
+            transition: background-color 0.3s ease;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .table-demo tbody tr:hover {
+            background: var(--bg-card-hover);
+        }
+        
+        .table-demo tbody td {
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
         }
         
         @media (max-width: 768px) {
@@ -183,143 +399,244 @@
                 grid-template-columns: 1fr;
             }
         }
+        
+        /* Color Palette Display */
+        .color-palette {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        
+        .color-swatch {
+            border-radius: 12px;
+            padding: 2rem 1rem 1rem;
+            text-align: center;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        
+        .color-swatch.light-text {
+            color: var(--text-primary);
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 UI 升级展示 - 统一分页 & 群管理机器人</h1>
+        <h1>🎨 新配色方案展示 - 清新明亮主题</h1>
+        
+        <!-- Color Palette -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>🌈 新配色板</h2>
+            <div class="color-palette">
+                <div class="color-swatch" style="background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);">
+                    主色调<br><small>#3b82f6 → #8b5cf6</small>
+                </div>
+                <div class="color-swatch" style="background: linear-gradient(135deg, #22c55e 0%, #4ade80 100%);">
+                    成功色<br><small>#22c55e → #4ade80</small>
+                </div>
+                <div class="color-swatch" style="background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);">
+                    警告色<br><small>#f59e0b → #fbbf24</small>
+                </div>
+                <div class="color-swatch" style="background: linear-gradient(135deg, #f472b6 0%, #ec4899 100%);">
+                    危险色<br><small>#f472b6 → #ec4899</small>
+                </div>
+                <div class="color-swatch" style="background: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);">
+                    信息色<br><small>#06b6d4 → #22d3ee</small>
+                </div>
+                <div class="color-swatch light-text" style="background: #f8fafc; border: 1px solid #e2e8f0;">
+                    背景色<br><small>#f8fafc</small>
+                </div>
+            </div>
+        </div>
         
         <div class="comparison">
             <div class="section before">
-                <h2>🔴 升级前 (Before)</h2>
+                <h2>🔴 升级前 (暗色主题)</h2>
                 
                 <div class="feature-box">
-                    <h3>分页系统</h3>
+                    <h3>问题</h3>
                     <ul class="feature-list">
-                        <li>各页面分页样式不统一</li>
-                        <li>按钮样式简单，无动画效果</li>
-                        <li>最大仅支持 50 条/页</li>
-                        <li>移动端体验一般</li>
-                        <li>代码重复，难以维护</li>
-                    </ul>
-                </div>
-                
-                <div class="feature-box">
-                    <h3>群管理功能</h3>
-                    <ul class="feature-list">
-                        <li>缺少群管理命令</li>
-                        <li>无法快速管理群成员</li>
-                        <li>需要手动操作 Telegram</li>
+                        <li>背景太暗 (#0d1117)</li>
+                        <li>紫色调过于深沉</li>
+                        <li>文字对比度可能不够</li>
+                        <li>长时间使用眼睛疲劳</li>
                     </ul>
                 </div>
             </div>
             
             <div class="section after">
-                <h2>🟢 升级后 (After)</h2>
+                <h2>🟢 升级后 (明亮主题)</h2>
                 
                 <div class="feature-box">
-                    <h3>分页系统</h3>
+                    <h3>改进</h3>
                     <ul class="feature-list">
-                        <li>统一的分页组件，可重复使用</li>
-                        <li>现代化渐变按钮，流畅动画</li>
-                        <li>支持 100 条/页大数据量</li>
-                        <li>完全响应式移动端设计</li>
-                        <li>DRY 原则，代码简洁高效</li>
-                    </ul>
-                </div>
-                
-                <div class="feature-box">
-                    <h3>群管理功能</h3>
-                    <ul class="feature-list">
-                        <li>8 个完整的群管理命令</li>
-                        <li>快速踢人、封禁、禁言</li>
-                        <li>管理员权限自动检查</li>
+                        <li>清新明亮背景 (#f8fafc)</li>
+                        <li>鲜艳蓝紫渐变主色</li>
+                        <li>高对比度文字配色</li>
+                        <li>舒适护眼的视觉体验</li>
                     </ul>
                 </div>
             </div>
         </div>
         
-        <div class="section">
-            <h2>📄 新增分页组件演示</h2>
-            <p>现代化的分页按钮，支持悬停动画效果：</p>
-            <div class="pagination-demo">
-                <span style="color: #6c757d; font-size: 0.875rem;">每页: 
-                    <select style="border-radius: 8px; padding: 0.375rem 0.75rem; border: 2px solid #e9ecef;">
-                        <option>10</option>
-                        <option selected>20</option>
-                        <option>50</option>
-                        <option>100</option>
-                    </select>
-                </span>
-                <span style="color: #6c757d; font-size: 0.875rem; margin-left: 1rem;">共 <strong>95</strong> 条</span>
-                
-                <div style="float: right;">
-                    <span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 0.5rem 1rem; border-radius: 10px; font-weight: 600;">
-                        2/5
-                    </span>
-                    <a href="#" class="btn-demo">⬅️ 上一页</a>
-                    <a href="#" class="btn-demo">下一页 ➡️</a>
+        <!-- Button Showcase -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>🔘 按钮样式</h2>
+            <div style="margin: 1rem 0;">
+                <button class="btn btn-primary">主要按钮</button>
+                <button class="btn btn-success">成功按钮</button>
+                <button class="btn btn-warning">警告按钮</button>
+                <button class="btn btn-danger">危险按钮</button>
+                <button class="btn btn-info">信息按钮</button>
+            </div>
+            
+            <h2 style="margin-top: 2rem;">🏷️ 徽章样式</h2>
+            <div style="margin: 1rem 0;">
+                <span class="badge badge-primary">主要</span>
+                <span class="badge badge-success">成功</span>
+                <span class="badge badge-warning">警告</span>
+                <span class="badge badge-danger">危险</span>
+            </div>
+        </div>
+        
+        <!-- Sidebar Demo -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>📱 侧边栏样式</h2>
+            <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
+                <div class="sidebar-demo">
+                    <div class="sidebar-heading">
+                        <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> 测试群组
+                    </div>
+                    <a href="#" class="nav-link-demo active">
+                        <i class="fa-solid fa-chart-line"></i> 数据概览
+                    </a>
+                    <a href="#" class="nav-link-demo">
+                        <i class="fa-solid fa-users"></i> 用户管理
+                    </a>
+                    <a href="#" class="nav-link-demo">
+                        <i class="fa-solid fa-message"></i> 消息管理
+                    </a>
+                    <a href="#" class="nav-link-demo">
+                        <i class="fa-solid fa-shield"></i> 群组安全
+                    </a>
+                    <a href="#" class="nav-link-demo">
+                        <i class="fa-solid fa-coins"></i> 积分系统
+                    </a>
                 </div>
             </div>
         </div>
         
-        <div class="section">
-            <h2>🤖 群管理机器人命令</h2>
-            <p>新增 8 个强大的群管理命令，仅限管理员使用：</p>
-            <div class="commands-grid">
-                <div class="command-card">
-                    <h4>👤 /kick</h4>
-                    <p>踢出群成员</p>
+        <!-- Stats Cards Demo -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>📊 统计卡片</h2>
+            <div class="stats-grid">
+                <div class="mini-stat-card">
+                    <div class="icon" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);">
+                        <i class="fa-solid fa-users" style="color: #3b82f6;"></i>
+                    </div>
+                    <h3>1,234</h3>
+                    <p>总用户数</p>
                 </div>
-                <div class="command-card">
-                    <h4>🚫 /ban</h4>
-                    <p>永久封禁</p>
+                <div class="mini-stat-card">
+                    <div class="icon" style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(74, 222, 128, 0.15) 100%);">
+                        <i class="fa-solid fa-calendar-check" style="color: #22c55e;"></i>
+                    </div>
+                    <h3>89</h3>
+                    <p>今日打卡</p>
                 </div>
-                <div class="command-card">
-                    <h4>✅ /unban</h4>
-                    <p>解除封禁</p>
+                <div class="mini-stat-card">
+                    <div class="icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(251, 191, 36, 0.15) 100%);">
+                        <i class="fa-solid fa-clock" style="color: #f59e0b;"></i>
+                    </div>
+                    <h3>23</h3>
+                    <p>定时消息</p>
                 </div>
-                <div class="command-card">
-                    <h4>🔇 /mute</h4>
-                    <p>禁言（可设置时长）</p>
-                </div>
-                <div class="command-card">
-                    <h4>🔊 /unmute</h4>
-                    <p>解除禁言</p>
-                </div>
-                <div class="command-card">
-                    <h4>📌 /pin</h4>
-                    <p>置顶消息</p>
-                </div>
-                <div class="command-card">
-                    <h4>📍 /unpin</h4>
-                    <p>取消置顶</p>
-                </div>
-                <div class="command-card">
-                    <h4>⚠️ /warn</h4>
-                    <p>警告用户</p>
+                <div class="mini-stat-card">
+                    <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(34, 211, 238, 0.15) 100%);">
+                        <i class="fa-solid fa-reply" style="color: #06b6d4;"></i>
+                    </div>
+                    <h3>45</h3>
+                    <p>自动回复</p>
                 </div>
             </div>
         </div>
         
-        <div class="stats">
-            <h2>📊 更新统计</h2>
-            <div class="stat-grid">
-                <div class="stat-item">
-                    <div class="stat-number">7</div>
-                    <div class="stat-label">文件更新</div>
+        <!-- Form Demo -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>📝 表单样式</h2>
+            <div class="demo-card">
+                <div style="margin-bottom: 1rem;">
+                    <label class="form-label">用户名</label>
+                    <input type="text" class="form-control" placeholder="请输入用户名">
                 </div>
-                <div class="stat-item">
+                <div style="margin-bottom: 1rem;">
+                    <label class="form-label">邮箱地址</label>
+                    <input type="email" class="form-control" placeholder="请输入邮箱">
+                </div>
+                <button class="btn btn-primary">提交</button>
+            </div>
+        </div>
+        
+        <!-- Table Demo -->
+        <div class="section" style="margin-bottom: 2rem;">
+            <h2>📋 表格样式</h2>
+            <div class="demo-card" style="padding: 0; overflow: hidden;">
+                <table class="table-demo">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>001</td>
+                            <td>张三</td>
+                            <td><span class="badge badge-success">正常</span></td>
+                            <td>
+                                <button class="btn btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">编辑</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>002</td>
+                            <td>李四</td>
+                            <td><span class="badge badge-warning">待审核</span></td>
+                            <td>
+                                <button class="btn btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">编辑</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>003</td>
+                            <td>王五</td>
+                            <td><span class="badge badge-danger">封禁</span></td>
+                            <td>
+                                <button class="btn btn-primary" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">编辑</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div class="section">
+            <h2 style="text-align: center;">📈 更新总结</h2>
+            <div class="stats-grid" style="justify-items: center;">
+                <div class="stat-card">
                     <div class="stat-number">4</div>
-                    <div class="stat-label">统一分页页面</div>
+                    <div class="stat-label">核心文件更新</div>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-number">8</div>
-                    <div class="stat-label">新增机器人命令</div>
-                </div>
-                <div class="stat-item">
+                <div class="stat-card" style="background: var(--success-gradient);">
                     <div class="stat-number">100%</div>
-                    <div class="stat-label">移动端兼容</div>
+                    <div class="stat-label">配色焕新</div>
+                </div>
+                <div class="stat-card" style="background: var(--info-gradient);">
+                    <div class="stat-number">✓</div>
+                    <div class="stat-label">响应式设计</div>
                 </div>
             </div>
         </div>

@@ -13,8 +13,8 @@
     }
     
     @keyframes glow {
-        0%, 100% { box-shadow: 0 0 15px rgba(124, 58, 237, 0.4); }
-        50% { box-shadow: 0 0 30px rgba(124, 58, 237, 0.6); }
+        0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+        50% { box-shadow: 0 0 30px rgba(59, 130, 246, 0.5); }
     }
     
     .stat-card {
@@ -22,7 +22,7 @@
         border-radius: 16px;
         padding: 1.5rem;
         color: white;
-        box-shadow: 0 10px 30px rgba(124, 58, 237, 0.4);
+        box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
         animation: fadeInUp 0.6s ease-out;
         position: relative;
         overflow: hidden;
@@ -71,7 +71,7 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
         opacity: 0;
         transition: opacity 0.3s ease;
     }
@@ -82,8 +82,8 @@
     
     .quick-action-card:hover {
         transform: translateY(-8px) scale(1.02);
-        box-shadow: 0 15px 40px rgba(124, 58, 237, 0.3) !important;
-        border-color: rgba(124, 58, 237, 0.5);
+        box-shadow: 0 15px 40px rgba(59, 130, 246, 0.2) !important;
+        border-color: rgba(59, 130, 246, 0.4);
     }
     
     .quick-action-card i {
@@ -94,9 +94,9 @@
         transform: scale(1.2) rotate(5deg);
     }
     
-    .icon-users { color: #a855f7; }
-    .icon-settings { color: #22d3ee; }
-    .icon-fields { color: #f472b6; }
+    .icon-users { color: #3b82f6; }
+    .icon-settings { color: #06b6d4; }
+    .icon-fields { color: #ec4899; }
     
     .stat-badge {
         font-size: 1.25rem;
@@ -125,8 +125,8 @@
     }
     
     .mini-stat-card:hover {
-        border-color: rgba(124, 58, 237, 0.5);
-        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.2);
+        border-color: rgba(59, 130, 246, 0.4);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
         transform: translateY(-3px);
     }
     
@@ -183,29 +183,29 @@
 <!-- Statistics Cards -->
 <div class="stats-grid mb-4" style="animation: fadeInUp 0.6s ease-out;">
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);">
-            <i class="fa-solid fa-calendar-check" style="color: #a855f7;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);">
+            <i class="fa-solid fa-calendar-check" style="color: #3b82f6;"></i>
         </div>
         <h3>{{ stats.today_checkins }}</h3>
         <p>今日打卡</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(251, 191, 36, 0.2) 100%);">
-            <i class="fa-solid fa-clock" style="color: #fbbf24;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(251, 191, 36, 0.15) 100%);">
+            <i class="fa-solid fa-clock" style="color: #f59e0b;"></i>
         </div>
         <h3>{{ stats.expired }}</h3>
         <p>过期用户</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.2) 0%, rgba(244, 63, 94, 0.2) 100%);">
-            <i class="fa-solid fa-ban" style="color: #f472b6;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(244, 63, 94, 0.15) 100%);">
+            <i class="fa-solid fa-ban" style="color: #ec4899;"></i>
         </div>
         <h3>{{ stats.banned }}</h3>
         <p>禁言用户</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.2) 0%, rgba(34, 211, 238, 0.2) 100%);">
-            <i class="fa-solid fa-reply" style="color: #22d3ee;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(34, 211, 238, 0.15) 100%);">
+            <i class="fa-solid fa-reply" style="color: #06b6d4;"></i>
         </div>
         <h3>{{ stats.auto_replies }}</h3>
         <p>自动回复</p>
@@ -215,22 +215,22 @@
 <!-- Module Status Cards -->
 <div class="stats-grid mb-4" style="animation: fadeInUp 0.7s ease-out;">
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(52, 211, 153, 0.2) 100%);">
-            <i class="fa-solid fa-clock" style="color: #34d399;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(74, 222, 128, 0.15) 100%);">
+            <i class="fa-solid fa-clock" style="color: #22c55e;"></i>
         </div>
         <h3>{{ stats.scheduled_msgs }}</h3>
         <p>定时消息</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(192, 132, 252, 0.2) 100%);">
-            <i class="fa-solid fa-rocket" style="color: #c084fc;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);">
+            <i class="fa-solid fa-rocket" style="color: #8b5cf6;"></i>
         </div>
         <h3>{{ stats.start_msgs }}</h3>
         <p>/start 消息</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);">
-            <i class="fa-solid fa-users" style="color: #a855f7;"></i>
+        <div class="icon" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);">
+            <i class="fa-solid fa-users" style="color: #3b82f6;"></i>
         </div>
         <h3>{{ stats.users }}</h3>
         <p>总用户数</p>

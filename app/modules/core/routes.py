@@ -100,6 +100,35 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
         print(f"Error checking admin status: {e}")
         return False
 
+def unban_user_in_group(group_id, user_tg_id):
+    """Helper function to unban a user in a Telegram group by lifting all restrictions.
+    
+    Args:
+        group_id: The database group ID
+        user_tg_id: The Telegram user ID
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        group = BotGroup.query.get(group_id)
+        if not group:
+            print(f"Group {group_id} not found for unbanning user {user_tg_id}")
+            return False
+        asyncio.run_coroutine_threadsafe(
+            global_ptb_app.bot.restrict_chat_member(
+                chat_id=group.chat_id,
+                user_id=user_tg_id,
+                permissions=ChatPermissions.all_permissions()
+            ),
+            global_bot_loop
+        ).result(timeout=5)
+        print(f"✅ User {user_tg_id} unbanned in group {group.chat_id}")
+        return True
+    except Exception as e:
+        print(f"Failed to unban user {user_tg_id}: {e}")
+        return False
+
 # --- Webhook ---
 @core_bp.route('/webhook', methods=['POST'])
 def webhook():
@@ -774,12 +803,13 @@ def api_save_user():
     u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
     
     # Handle expiration_date - directly set from datetime picker
+    # Note: datetime-local input returns browser local time, which we treat as Beijing time
+    # since the UI is in Chinese and the database stores naive datetimes in Beijing time
     expiration_date_str = d.get('expiration_date')
-    old_expiration = u.expiration_date
     
     if expiration_date_str:
         try:
-            # Parse datetime-local format: YYYY-MM-DDTHH:MM
+            # Parse datetime-local format: YYYY-MM-DDTHH:MM (treated as Beijing time)
             new_expiration = datetime.strptime(expiration_date_str, '%Y-%m-%dT%H:%M')
             u.expiration_date = new_expiration
             
@@ -787,19 +817,7 @@ def api_save_user():
             now = get_beijing_now()
             if new_expiration > now and u.is_banned:
                 u.is_banned = False
-                try: 
-                    group = BotGroup.query.get(gid)
-                    asyncio.run_coroutine_threadsafe(
-                        global_ptb_app.bot.restrict_chat_member(
-                            chat_id=group.chat_id,
-                            user_id=u.tg_id,
-                            permissions=ChatPermissions.all_permissions()
-                        ),
-                        global_bot_loop
-                    ).result(timeout=5)
-                    print(f"✅ User {u.tg_id} unbanned in group {group.chat_id} after expiration extended")
-                except Exception as e:
-                    print(f"Failed to unban user: {e}")
+                unban_user_in_group(gid, u.tg_id)
         except ValueError as e:
             return jsonify({'status':'error','msg':f'日期格式错误: {e}'})
     else:
@@ -808,19 +826,7 @@ def api_save_user():
         # If user was banned due to expiration, unban them when set to permanent
         if u.is_banned:
             u.is_banned = False
-            try: 
-                group = BotGroup.query.get(gid)
-                asyncio.run_coroutine_threadsafe(
-                    global_ptb_app.bot.restrict_chat_member(
-                        chat_id=group.chat_id,
-                        user_id=u.tg_id,
-                        permissions=ChatPermissions.all_permissions()
-                    ),
-                    global_bot_loop
-                ).result(timeout=5)
-                print(f"✅ User {u.tg_id} unbanned in group {group.chat_id} after set to permanent")
-            except Exception as e:
-                print(f"Failed to unban user: {e}")
+            unban_user_in_group(gid, u.tg_id)
 
     db.session.commit()
     return jsonify({'status':'ok'})

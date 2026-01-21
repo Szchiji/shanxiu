@@ -2884,7 +2884,8 @@ async def check_expired_users(context):
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
-                raise  # Re-raise to be caught by outer exception handler
+                # Don't re-raise to avoid duplicate logging in outer exception handler
+                return
             
             # Try to send notification to user privately
             try:
@@ -4266,7 +4267,8 @@ async def check_and_mute_expired_user(update: Update, context):
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
-                raise  # Re-raise to be caught by outer exception handler
+                # Don't re-raise to avoid duplicate logging in outer exception handler
+                return
             
             # 尝试发送私信通知（不阻塞主流程）
             try:
@@ -5716,7 +5718,8 @@ async def cmd_start(update: Update, context):
                         print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                         print(f"   Error details: {str(restrict_error)}", flush=True)
                         print(f"   Traceback: {traceback.format_exc()}", flush=True)
-                        raise  # Re-raise to be caught by outer exception handler
+                        # Don't re-raise to avoid duplicate logging in outer exception handler
+                        return
                 except Exception as e:
                     print(f"❌ [/start] Unexpected error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__})", flush=True)
                     print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)

@@ -100,6 +100,23 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
         print(f"Error checking admin status: {e}")
         return False
 
+def get_muted_permissions():
+    """返回完全禁言的权限设置（统一管理以避免代码重复）
+    
+    Returns:
+        ChatPermissions: 所有权限都被禁止的权限对象
+    """
+    return ChatPermissions(
+        can_send_messages=False,
+        can_send_media_messages=False,
+        can_send_polls=False,
+        can_send_other_messages=False,
+        can_add_web_page_previews=False,
+        can_change_info=False,
+        can_invite_users=False,
+        can_pin_messages=False
+    )
+
 def unban_user_in_group(group_id, user_tg_id):
     """Helper function to unban a user in a Telegram group by lifting all restrictions.
     
@@ -834,7 +851,10 @@ def api_save_user():
 @core_bp.route('/api/delete_user', methods=['POST'])
 def api_delete_user():
     if not session.get('logged_in'): return jsonify({'status':'error'})
-    GroupUser.query.filter_by(id=request.json['id']).delete()
+    d = request.json
+    if not d or 'id' not in d:
+        return jsonify({'status':'error', 'msg':'Missing required parameter: id'})
+    GroupUser.query.filter_by(id=d['id']).delete()
     db.session.commit()
     return jsonify({'status':'ok'})
 
@@ -1098,7 +1118,10 @@ def api_search_users():
 def api_push_user():
     if not session.get('logged_in'): return jsonify({'status':'error'})
     try:
-        user = GroupUser.query.get(request.json['id'])
+        d = request.json
+        if not d or 'id' not in d:
+            return jsonify({'status':'error', 'msg':'Missing required parameter: id'})
+        user = GroupUser.query.get(d['id'])
         if not user: return jsonify({'status':'error','msg':'User not found'})
         
         group = BotGroup.query.get(user.group_id)
@@ -2631,8 +2654,12 @@ def api_delete_quiz_game():
 @core_bp.route('/magic_login')
 def magic_login():
     token = request.args.get('token')
+    secret_key = os.getenv('SECRET_KEY')
+    if not secret_key:
+        print("❌ CRITICAL: SECRET_KEY environment variable is not set!")
+        return "Configuration error: SECRET_KEY not set", 500
     try:
-        data = jwt.decode(token, os.getenv('SECRET_KEY', 'default_secret_key'), algorithms=['HS256'])
+        data = jwt.decode(token, secret_key, algorithms=['HS256'])
         user_id = data.get('uid')
         chat_id = data.get('chat_id')
         
@@ -2798,16 +2825,7 @@ async def check_expired_users(context):
             await context.bot.restrict_chat_member(
                 chat_id=group.chat_id,
                 user_id=user.tg_id,
-                permissions=ChatPermissions(
-                    can_send_messages=False,
-                    can_send_media_messages=False,
-                    can_send_polls=False,
-                    can_send_other_messages=False,
-                    can_add_web_page_previews=False,
-                    can_change_info=False,
-                    can_invite_users=False,
-                    can_pin_messages=False
-                )
+                permissions=get_muted_permissions()
             )
             print(f"⛔️ Muted expired user {user.tg_id} in group {group.title}", flush=True)
             
@@ -5497,16 +5515,7 @@ async def cmd_start(update: Update, context):
                     await context.bot.restrict_chat_member(
                         chat_id=grp.chat_id,
                         user_id=group_user.tg_id,
-                        permissions=ChatPermissions(
-                            can_send_messages=False,
-                            can_send_media_messages=False,
-                            can_send_polls=False,
-                            can_send_other_messages=False,
-                            can_add_web_page_previews=False,
-                            can_change_info=False,
-                            can_invite_users=False,
-                            can_pin_messages=False
-                        )
+                        permissions=get_muted_permissions()
                     )
                     print(f"⛔️ [/start] Muted expired user {group_user.tg_id} in group {grp.title}", flush=True)
                 except Exception as e:
@@ -5533,6 +5542,7 @@ async def cmd_start(update: Update, context):
 
 
 async def on_my_chat_member(update: Update, context):
+    """处理机器人被添加到群组事件，仅注册群组信息，不发送通知消息"""
     try:
         chat = update.effective_chat
         status = update.my_chat_member.new_chat_member.status
@@ -5549,20 +5559,9 @@ async def on_my_chat_member(update: Update, context):
                     db.session.commit()
                     print(f"➕ 新群组注册: {chat.title}")
                 
-            domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '')
-            if domain:
-                # Check if user is admin in the group
-                is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
-                if is_admin:
-                    token = jwt.encode({'uid': user.id, 'chat_id': chat.id, 'exp': time.time() + 86400 * JWT_TOKEN_EXPIRY_DAYS}, os.getenv('SECRET_KEY', 'default_secret_key'), algorithm='HS256')
-                    url = f"https://{domain}/core/magic_login?token={token}"
-                    try: 
-                        await context.bot.send_message(chat.id, f"✅ 机器人已激活！\n\n👉 [点击进入后台管理]({url})\n\n⚠️ 注意：仅群组管理员可访问后台", parse_mode='Markdown')
-                    except: pass
-                else:
-                    try: 
-                        await context.bot.send_message(chat.id, f"✅ 机器人已激活！")
-                    except: pass
+            # 移除后台链接通知以提高安全性
+            # 管理员可以通过发送 /start 命令给机器人在私聊中获取后台访问权限
+            print(f"✅ 机器人已添加到群组 {chat.title}，群组已注册")
     except Exception as e: print(f"Error in on_my_chat_member: {e}")
 
 async def on_message(update: Update, context):

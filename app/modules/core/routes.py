@@ -4144,6 +4144,125 @@ async def update_user_activity(update: Update, context):
         print(f"Error updating user activity: {e}")
 
 
+async def check_and_mute_expired_user(update: Update, context):
+    """检查并立即禁言过期用户 - Called from on_message
+    
+    当认证用户在群内发消息时，即时检查其认证状态。
+    如果已过期且未被禁言，则立即自动禁言。
+    """
+    if not global_flask_app:
+        return
+    
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        # 只处理群组消息
+        if not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        # 排除机器人自身
+        if user.is_bot:
+            return
+        
+        # 检查是否为管理员，管理员不受限制
+        is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+        if is_admin:
+            return
+        
+        # 同步检查数据库并准备禁言操作
+        def _check_expiration():
+            with global_flask_app.app_context():
+                try:
+                    # 获取群组信息
+                    group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    if not group or not group.is_active:
+                        return None
+                    
+                    # 查找用户记录
+                    group_user = GroupUser.query.filter_by(
+                        group_id=group.id,
+                        tg_id=user.id
+                    ).first()
+                    
+                    # 如果用户没有记录，或者没有设置过期时间，则不处理
+                    if not group_user or not group_user.expiration_date:
+                        return None
+                    
+                    # 如果用户已经被禁言，则不处理
+                    if group_user.is_banned:
+                        return None
+                    
+                    # 检查是否过期
+                    now = get_beijing_now()
+                    if group_user.expiration_date >= now:
+                        # 未过期，无需处理
+                        return None
+                    
+                    # 用户已过期且未被禁言，需要立即禁言
+                    # 先更新数据库状态
+                    group_user.is_banned = True
+                    db.session.commit()
+                    
+                    # 获取配置信息用于通知消息
+                    conf = get_group_conf(group)
+                    ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
+                    
+                    return {
+                        'group': group,
+                        'user_id': user.id,
+                        'ban_msg': ban_msg
+                    }
+                    
+                except Exception as e:
+                    print(f"Error in _check_expiration: {e}")
+                    db.session.rollback()
+                    return None
+        
+        # 在线程池中执行数据库操作
+        result = await asyncio.get_running_loop().run_in_executor(None, _check_expiration)
+        
+        # 如果不需要禁言，直接返回
+        if not result:
+            return
+        
+        # 执行禁言操作
+        try:
+            group = result['group']
+            user_id = result['user_id']
+            ban_msg = result['ban_msg']
+            
+            # 转换 chat_id 为整数
+            chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
+            if chat_id_int is None:
+                return
+            
+            # 禁言用户
+            await context.bot.restrict_chat_member(
+                chat_id=chat_id_int,
+                user_id=user_id,
+                permissions=get_muted_permissions()
+            )
+            print(f"⛔️ Instantly muted expired user {user_id} in group {group.title}", flush=True)
+            
+            # 尝试发送私信通知（不阻塞主流程）
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=ban_msg,
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                # 私信失败不影响主流程（用户可能未与机器人对话）
+                print(f"Could not send DM to user {user_id}: {e}")
+                
+        except Exception as e:
+            print(f"Error muting expired user: {e}")
+            
+    except Exception as e:
+        print(f"Error in check_and_mute_expired_user: {e}")
+
+
 async def cmd_vote(update: Update, context):
     """创建投票命令 /vote"""
     chat = update.effective_chat
@@ -5654,6 +5773,9 @@ async def on_message(update: Update, context):
             keyword_filtered = await check_keyword_filter(update, context)
             if keyword_filtered:
                 return  # Message was deleted, stop processing
+            
+            # 🆕 Check and mute expired users immediately
+            await check_and_mute_expired_user(update, context)
             
             # 🆕 Update user last activity time
             await update_user_activity(update, context)

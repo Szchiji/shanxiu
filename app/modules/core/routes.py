@@ -3745,11 +3745,19 @@ async def check_channel_subscriptions(context):
                                 elif settings.unsubscribe_action == 'ban':
                                     await context.bot.ban_chat_member(chat_id, group_user.tg_id)
                                 elif settings.unsubscribe_action == 'mute':
-                                    await context.bot.restrict_chat_member(
-                                        chat_id=chat_id,
-                                        user_id=group_user.tg_id,
-                                        permissions=get_muted_permissions()
-                                    )
+                                    try:
+                                        print(f"🔄 [频道订阅检测] 准备禁言未订阅用户 {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                        await context.bot.restrict_chat_member(
+                                            chat_id=chat_id,
+                                            user_id=group_user.tg_id,
+                                            permissions=get_muted_permissions()
+                                        )
+                                        print(f"✅ [频道订阅检测] Successfully called restrict_chat_member API - Muted unsubscribed user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    except Exception as restrict_error:
+                                        print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                        print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                                        print(f"   Error details: {str(restrict_error)}", flush=True)
+                                        print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         except Exception as e:
                             # User may not be in channel or bot doesn't have access
                             print(f"Error checking subscription for user {group_user.tg_id}: {e}")
@@ -3912,66 +3920,114 @@ async def check_inactive_users(context):
     if not global_flask_app: return
     try:
         def _check_inactive():
+            """Sync part: query database and collect users for moderation actions"""
             with global_flask_app.app_context():
-                # Get all groups with inactive user settings enabled
-                settings_list = InactiveUserSettings.query.filter_by(enabled=True).all()
-                
-                for settings in settings_list:
-                    try:
-                        group = BotGroup.query.get(settings.group_id)
-                        if not group or not group.is_active:
-                            continue
-                        
-                        # Convert chat_id to integer for Telegram API
-                        chat_id_int = convert_chat_id_to_int(group.chat_id, group.id)
-                        if chat_id_int is None:
-                            continue
-                        
-                        # Calculate threshold date
-                        threshold_date = datetime.now() - timedelta(days=settings.inactivity_days)
-                        
-                        # Find inactive users
-                        inactive_users = GroupUser.query.filter(
-                            GroupUser.group_id == settings.group_id,
-                            GroupUser.last_activity < threshold_date,
-                            GroupUser.is_banned == False
-                        ).limit(10).all()  # Process in batches
-                        
-                        for user in inactive_users:
-                            try:
+                try:
+                    # Get all groups with inactive user settings enabled
+                    settings_list = InactiveUserSettings.query.filter_by(enabled=True).all()
+                    
+                    users_to_mute = []
+                    
+                    for settings in settings_list:
+                        try:
+                            group = BotGroup.query.get(settings.group_id)
+                            if not group or not group.is_active:
+                                continue
+                            
+                            # Convert chat_id to integer for Telegram API
+                            chat_id_int = convert_chat_id_to_int(group.chat_id, group.id)
+                            if chat_id_int is None:
+                                continue
+                            
+                            # Calculate threshold date
+                            threshold_date = datetime.now() - timedelta(days=settings.inactivity_days)
+                            
+                            # Find inactive users
+                            inactive_users = GroupUser.query.filter(
+                                GroupUser.group_id == settings.group_id,
+                                GroupUser.last_activity < threshold_date,
+                                GroupUser.is_banned == False
+                            ).limit(EXPIRED_USERS_BATCH_SIZE).all()  # Process in batches
+                            
+                            for user in inactive_users:
                                 # Take action based on settings
                                 if settings.action_type == 'kick':
-                                    asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=chat_id_int,
-                                        user_id=user.tg_id
-                                    ))
-                                    asyncio.create_task(context.bot.unban_chat_member(
-                                        chat_id=chat_id_int,
-                                        user_id=user.tg_id
-                                    ))
+                                    users_to_mute.append({
+                                        'action': 'kick',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
                                 elif settings.action_type == 'ban':
-                                    asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=chat_id_int,
-                                        user_id=user.tg_id
-                                    ))
-                                    user.is_banned = True
+                                    users_to_mute.append({
+                                        'action': 'ban',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
                                 elif settings.action_type == 'mute':
-                                    asyncio.create_task(context.bot.restrict_chat_member(
-                                        chat_id=chat_id_int,
-                                        user_id=user.tg_id,
-                                        permissions=get_muted_permissions()
-                                    ))
-                                
-                                db.session.commit()
-                            except Exception as e:
-                                print(f"Error handling inactive user {user.tg_id}: {e}")
-                                continue
-                                
-                    except Exception as e:
-                        print(f"Error processing group {settings.group_id}: {e}")
-                        continue
+                                    users_to_mute.append({
+                                        'action': 'mute',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
+                                    
+                        except Exception as e:
+                            print(f"Error processing group {settings.group_id}: {e}")
+                            continue
+                    
+                    return users_to_mute
+                    
+                except Exception as e:
+                    print(f"Error in _check_inactive: {e}")
+                    return []
         
-        await asyncio.get_running_loop().run_in_executor(None, _check_inactive)
+        # Execute sync part in executor
+        users_to_mute = await asyncio.get_running_loop().run_in_executor(None, _check_inactive)
+        
+        # Now handle async operations
+        if users_to_mute:
+            for item in users_to_mute:
+                try:
+                    if item['action'] == 'kick':
+                        await context.bot.ban_chat_member(item['chat_id'], item['user_id'])
+                        await context.bot.unban_chat_member(item['chat_id'], item['user_id'])
+                    elif item['action'] == 'ban':
+                        await context.bot.ban_chat_member(item['chat_id'], item['user_id'])
+                        # Update database only after successful API call
+                        def _update_banned_status():
+                            with global_flask_app.app_context():
+                                try:
+                                    user = GroupUser.query.get(item['user_db_id'])
+                                    if user:
+                                        user.is_banned = True
+                                        db.session.commit()
+                                except Exception as e:
+                                    print(f"Error updating is_banned for user {item['user_id']}: {e}")
+                                    db.session.rollback()
+                        await asyncio.get_running_loop().run_in_executor(None, _update_banned_status)
+                    elif item['action'] == 'mute':
+                        try:
+                            print(f"🔄 [不活跃用户检测] 准备禁言不活跃用户 {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                            await context.bot.restrict_chat_member(
+                                chat_id=item['chat_id'],
+                                user_id=item['user_id'],
+                                permissions=get_muted_permissions()
+                            )
+                            print(f"✅ [不活跃用户检测] Successfully called restrict_chat_member API - Muted inactive user {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                        except Exception as restrict_error:
+                            print(f"❌ [不活跃用户检测] restrict_chat_member API failed for user {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                            print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                            print(f"   Error details: {str(restrict_error)}", flush=True)
+                            print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                except Exception as e:
+                    print(f"Error executing action for user {item['user_id']}: {e}")
+                    continue
+                    
     except Exception as e:
         print(f"Error in check_inactive_users: {e}")
 
@@ -4105,12 +4161,20 @@ async def check_keyword_filter(update: Update, context):
             elif matched_filter.action == 'warn':
                 await msg.reply_text(f"⚠️ 警告：消息包含禁止关键词")
             elif matched_filter.action == 'mute':
-                await context.bot.restrict_chat_member(
-                    chat_id=chat.id,
-                    user_id=user.id,
-                    permissions=get_muted_permissions(),
-                    until_date=datetime.now() + timedelta(minutes=10)
-                )
+                try:
+                    print(f"🔄 [内容过滤] 准备禁言触发关键词的用户 {user.id} in group {chat.id}", flush=True)
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat.id,
+                        user_id=user.id,
+                        permissions=get_muted_permissions(),
+                        until_date=datetime.now() + timedelta(minutes=10)
+                    )
+                    print(f"✅ [内容过滤] Successfully called restrict_chat_member API - Muted user {user.id} for 10 minutes in group {chat.id}", flush=True)
+                except Exception as restrict_error:
+                    print(f"❌ [内容过滤] restrict_chat_member API failed for user {user.id} in group {chat.id}", flush=True)
+                    print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                    print(f"   Error details: {str(restrict_error)}", flush=True)
+                    print(f"   Traceback: {traceback.format_exc()}", flush=True)
                 await msg.delete()
                 return True
             elif matched_filter.action == 'kick':
@@ -6027,15 +6091,19 @@ async def on_message(update: Update, context):
                             db_user.is_banned = True
                             db.session.commit()
                             try:
+                                print(f"🔄 [打卡功能] 准备禁言过期用户 {user.id} in group {chat.id}", flush=True)
                                 # Mute with comprehensive restrictions
                                 await context.bot.restrict_chat_member(
                                     chat_id=chat.id,
                                     user_id=user.id,
                                     permissions=get_muted_permissions()
                                 )
-                                print(f"⛔️ Muted expired user {user.id} in group {chat.id}")
-                            except Exception as e:
-                                print(f"Failed to mute user {user.id}: {e}")
+                                print(f"✅ [打卡功能] Successfully called restrict_chat_member API - Muted expired user {user.id} in group {chat.id}", flush=True)
+                            except Exception as restrict_error:
+                                print(f"❌ [打卡功能] restrict_chat_member API failed for user {user.id} in group {chat.id}", flush=True)
+                                print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                                print(f"   Error details: {str(restrict_error)}", flush=True)
+                                print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         
                         # 🆕 Send ephemeral message in group (visible only to that user)
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))

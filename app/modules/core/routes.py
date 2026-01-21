@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
 from datetime import datetime, timedelta
 import pytz
 from openpyxl import Workbook, load_workbook
@@ -2883,7 +2883,6 @@ async def check_expired_users(context):
                 print(f"❌ [定时任务] restrict_chat_member API failed for user {user.tg_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
-                import traceback
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
                 raise  # Re-raise to be caught by outer exception handler
             
@@ -2905,7 +2904,6 @@ async def check_expired_users(context):
             # 捕获所有其他异常，确保详细记录
             print(f"❌ [定时任务] Unexpected error in ban_user_async for user {user.tg_id} in group {group.chat_id} (type: {type(group.chat_id).__name__})", flush=True)
             print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
-            import traceback
             print(f"   Full traceback: {traceback.format_exc()}", flush=True)
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
@@ -4267,7 +4265,6 @@ async def check_and_mute_expired_user(update: Update, context):
                 print(f"❌ [群消息触发] restrict_chat_member API failed for user {user_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
-                import traceback
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
                 raise  # Re-raise to be caught by outer exception handler
             
@@ -4286,7 +4283,6 @@ async def check_and_mute_expired_user(update: Update, context):
         except Exception as e:
             print(f"❌ [群消息触发] Unexpected error muting expired user {user_id}", flush=True)
             print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
-            import traceback
             print(f"   Full traceback: {traceback.format_exc()}", flush=True)
             
     except Exception as e:
@@ -5719,13 +5715,11 @@ async def cmd_start(update: Update, context):
                         print(f"❌ [/start] restrict_chat_member API failed for user {group_user.tg_id} in group {grp.title} (chat_id={chat_id_int})", flush=True)
                         print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                         print(f"   Error details: {str(restrict_error)}", flush=True)
-                        import traceback
                         print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         raise  # Re-raise to be caught by outer exception handler
                 except Exception as e:
                     print(f"❌ [/start] Unexpected error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__})", flush=True)
                     print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
-                    import traceback
                     print(f"   Full traceback: {traceback.format_exc()}", flush=True)
             
             # Use semaphore to limit concurrent operations

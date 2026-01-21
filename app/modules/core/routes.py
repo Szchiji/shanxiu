@@ -108,7 +108,7 @@ def get_muted_permissions():
     """
     return ChatPermissions(
         can_send_messages=False,
-        can_send_media_messages=False,
+        can_send_media=False,
         can_send_polls=False,
         can_send_other_messages=False,
         can_add_web_page_previews=False,
@@ -4586,7 +4586,7 @@ async def cmd_mute(update: Update, context):
         # Restrict user from sending messages
         permissions = ChatPermissions(
             can_send_messages=False,
-            can_send_media_messages=False,
+            can_send_media=False,
             can_send_polls=False,
             can_send_other_messages=False,
             can_add_web_page_previews=False
@@ -4624,7 +4624,7 @@ async def cmd_unmute(update: Update, context):
         # Restore default permissions
         permissions = ChatPermissions(
             can_send_messages=True,
-            can_send_media_messages=True,
+            can_send_media=True,
             can_send_polls=True,
             can_send_other_messages=True,
             can_add_web_page_previews=True
@@ -5876,7 +5876,7 @@ async def on_message(update: Update, context):
                                     user_id=user.id,
                                     permissions=ChatPermissions(
                                         can_send_messages=False,
-                                        can_send_media_messages=False,
+                                        can_send_media=False,
                                         can_send_polls=False,
                                         can_send_other_messages=False,
                                         can_add_web_page_previews=False,

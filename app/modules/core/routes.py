@@ -1167,8 +1167,9 @@ def api_save_auto_reply():
     if not trigger_keyword: return jsonify({'status':'error','msg':'触发关键词不能为空'})
     
     # 检查是否包含 /start 关键词 - /start 应使用专门的 /start 消息功能
-    keywords = [k.strip().lower() for k in trigger_keyword.split(',') if k.strip()]
-    if '/start' in keywords or 'start' in keywords:
+    # 只阻止精确的 /start 命令，不影响其他包含 start 的关键词
+    keywords = [k.strip() for k in trigger_keyword.split(',') if k.strip()]
+    if '/start' in keywords:
         return jsonify({'status':'error','msg':'/start 命令请使用「/start 消息」功能配置，不能在自动回复中设置'})
     
     try:

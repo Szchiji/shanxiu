@@ -132,9 +132,17 @@ def unban_user_in_group(group_id, user_tg_id):
         if not group:
             print(f"Group {group_id} not found for unbanning user {user_tg_id}")
             return False
+        
+        # Convert chat_id to integer for Telegram API
+        try:
+            chat_id_int = int(group.chat_id)
+        except (ValueError, TypeError) as e:
+            print(f"Invalid chat_id for group {group.id}: {group.chat_id}")
+            return False
+        
         asyncio.run_coroutine_threadsafe(
             global_ptb_app.bot.restrict_chat_member(
-                chat_id=int(group.chat_id),
+                chat_id=chat_id_int,
                 user_id=user_tg_id,
                 permissions=ChatPermissions.all_permissions()
             ),
@@ -2827,9 +2835,16 @@ async def check_expired_users(context):
     async def ban_user_async(user, group, ban_msg):
         """Mute an expired user and send notification"""
         try:
+            # Convert chat_id to integer for Telegram API
+            try:
+                chat_id_int = int(group.chat_id)
+            except (ValueError, TypeError) as e:
+                print(f"Invalid chat_id for group {group.id} ({group.title}): {group.chat_id}")
+                return
+            
             # Mute the user in the group with comprehensive restrictions
             await context.bot.restrict_chat_member(
-                chat_id=int(group.chat_id),
+                chat_id=chat_id_int,
                 user_id=user.tg_id,
                 permissions=get_muted_permissions()
             )
@@ -3866,6 +3881,13 @@ async def check_inactive_users(context):
                         if not group or not group.is_active:
                             continue
                         
+                        # Convert chat_id to integer for Telegram API
+                        try:
+                            chat_id_int = int(group.chat_id)
+                        except (ValueError, TypeError) as e:
+                            print(f"Invalid chat_id for group {group.id}: {group.chat_id}")
+                            continue
+                        
                         # Calculate threshold date
                         threshold_date = datetime.now() - timedelta(days=settings.inactivity_days)
                         
@@ -3881,22 +3903,22 @@ async def check_inactive_users(context):
                                 # Take action based on settings
                                 if settings.action_type == 'kick':
                                     asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=int(group.chat_id),
+                                        chat_id=chat_id_int,
                                         user_id=user.tg_id
                                     ))
                                     asyncio.create_task(context.bot.unban_chat_member(
-                                        chat_id=int(group.chat_id),
+                                        chat_id=chat_id_int,
                                         user_id=user.tg_id
                                     ))
                                 elif settings.action_type == 'ban':
                                     asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=int(group.chat_id),
+                                        chat_id=chat_id_int,
                                         user_id=user.tg_id
                                     ))
                                     user.is_banned = True
                                 elif settings.action_type == 'mute':
                                     asyncio.create_task(context.bot.restrict_chat_member(
-                                        chat_id=int(group.chat_id),
+                                        chat_id=chat_id_int,
                                         user_id=user.tg_id,
                                         permissions=ChatPermissions(can_send_messages=False)
                                     ))
@@ -5518,8 +5540,15 @@ async def cmd_start(update: Update, context):
             async def mute_expired_user(group_user, grp):
                 """Mute an expired user in a group"""
                 try:
+                    # Convert chat_id to integer for Telegram API
+                    try:
+                        chat_id_int = int(grp.chat_id)
+                    except (ValueError, TypeError) as e:
+                        print(f"❌ [/start] Invalid chat_id for group {grp.id} ({grp.title}): {grp.chat_id}", flush=True)
+                        return
+                    
                     await context.bot.restrict_chat_member(
-                        chat_id=int(grp.chat_id),
+                        chat_id=chat_id_int,
                         user_id=group_user.tg_id,
                         permissions=get_muted_permissions()
                     )

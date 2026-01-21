@@ -256,6 +256,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
+                    credentials: 'include',  // 确保携带 Cookie 进行会话验证
                     body: JSON.stringify({ session_token: sessionToken })
                 });
                 
@@ -270,6 +271,11 @@
                     setTimeout(() => {
                         window.location.href = data.redirect_url;
                     }, 1000);
+                } else if (data.status === 'expired') {
+                    clearInterval(checkInterval);
+                    clearInterval(countdownInterval);
+                    document.getElementById('errorMessage').style.display = 'block';
+                    document.getElementById('errorMessage').innerHTML = '<i class="fas fa-exclamation-circle"></i> 验证码已过期，请重新发送 /start';
                 }
             } catch (error) {
                 console.error('Error checking verification status:', error);

@@ -1166,6 +1166,11 @@ def api_save_auto_reply():
     trigger_keyword = d.get('trigger_keyword', '').strip()
     if not trigger_keyword: return jsonify({'status':'error','msg':'触发关键词不能为空'})
     
+    # 检查是否包含 /start 关键词 - /start 应使用专门的 /start 消息功能
+    keywords = [k.strip().lower() for k in trigger_keyword.split(',') if k.strip()]
+    if '/start' in keywords or 'start' in keywords:
+        return jsonify({'status':'error','msg':'/start 命令请使用「/start 消息」功能配置，不能在自动回复中设置'})
+    
     try:
         item_id = d.get('id')
         if item_id:
@@ -5545,24 +5550,49 @@ async def on_my_chat_member(update: Update, context):
     """处理机器人被添加到群组事件，仅注册群组信息，不发送通知消息"""
     try:
         chat = update.effective_chat
-        status = update.my_chat_member.new_chat_member.status
+        new_member = update.my_chat_member.new_chat_member
+        old_member = update.my_chat_member.old_chat_member
+        status = new_member.status
+        old_status = old_member.status if old_member else None
         user = update.effective_user
         
-        if chat.type in ['group', 'supergroup'] and status in ['administrator', 'member']:
-            # 使用全局 App Context
-            with global_flask_app.app_context():
-                g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
-                if not g:
-                    g = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
-                    g.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
-                    db.session.add(g)
-                    db.session.commit()
-                    print(f"➕ 新群组注册: {chat.title}")
-                
-            # 移除后台链接通知以提高安全性
-            # 管理员可以通过发送 /start 命令给机器人在私聊中获取后台访问权限
-            print(f"✅ 机器人已添加到群组 {chat.title}，群组已注册")
-    except Exception as e: print(f"Error in on_my_chat_member: {e}")
+        print(f"📍 on_my_chat_member: chat={chat.title}, type={chat.type}, new_status={status}, old_status={old_status}")
+        
+        if chat.type in ['group', 'supergroup']:
+            # 处理机器人被添加到群组 (从 left/kicked 变为 member/administrator)
+            if status in ['administrator', 'member'] and old_status in ['left', 'kicked', None]:
+                # 使用全局 App Context
+                with global_flask_app.app_context():
+                    g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    if not g:
+                        # 新群组，创建记录
+                        g = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                        g.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+                        db.session.add(g)
+                        db.session.commit()
+                        print(f"➕ 新群组注册: {chat.title} (chat_id: {chat.id})")
+                    else:
+                        # 已存在的群组，确保激活并更新标题
+                        g.is_active = True
+                        g.title = chat.title
+                        g.type = chat.type
+                        db.session.commit()
+                        print(f"🔄 群组已重新激活: {chat.title} (chat_id: {chat.id})")
+                    
+                print(f"✅ 机器人已添加到群组 {chat.title}，群组已注册")
+            
+            # 处理机器人被移出群组 (从 member/administrator 变为 left/kicked)
+            elif status in ['left', 'kicked'] and old_status in ['administrator', 'member']:
+                with global_flask_app.app_context():
+                    g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    if g:
+                        g.is_active = False
+                        db.session.commit()
+                        print(f"⛔️ 机器人已被移出群组 {chat.title}，群组已停用")
+    except Exception as e:
+        import traceback
+        print(f"Error in on_my_chat_member: {e}")
+        traceback.print_exc()
 
 async def on_message(update: Update, context):
     if not global_flask_app: return

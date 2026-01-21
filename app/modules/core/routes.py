@@ -3920,7 +3920,7 @@ async def check_inactive_users(context):
     if not global_flask_app: return
     try:
         def _check_inactive():
-            """Sync part: query database and collect users to mute"""
+            """Sync part: query database and collect users for moderation actions"""
             with global_flask_app.app_context():
                 try:
                     # Get all groups with inactive user settings enabled
@@ -3947,42 +3947,34 @@ async def check_inactive_users(context):
                                 GroupUser.group_id == settings.group_id,
                                 GroupUser.last_activity < threshold_date,
                                 GroupUser.is_banned == False
-                            ).limit(10).all()  # Process in batches
+                            ).limit(EXPIRED_USERS_BATCH_SIZE).all()  # Process in batches
                             
                             for user in inactive_users:
-                                try:
-                                    # Take action based on settings
-                                    if settings.action_type == 'kick':
-                                        users_to_mute.append({
-                                            'action': 'kick',
-                                            'chat_id': chat_id_int,
-                                            'user_id': user.tg_id,
-                                            'group_id': settings.group_id,
-                                            'user': user
-                                        })
-                                    elif settings.action_type == 'ban':
-                                        users_to_mute.append({
-                                            'action': 'ban',
-                                            'chat_id': chat_id_int,
-                                            'user_id': user.tg_id,
-                                            'group_id': settings.group_id,
-                                            'user': user
-                                        })
-                                        user.is_banned = True
-                                    elif settings.action_type == 'mute':
-                                        users_to_mute.append({
-                                            'action': 'mute',
-                                            'chat_id': chat_id_int,
-                                            'user_id': user.tg_id,
-                                            'group_id': settings.group_id,
-                                            'user': user
-                                        })
-                                    
-                                    db.session.commit()
-                                except Exception as e:
-                                    print(f"Error handling inactive user {user.tg_id}: {e}")
-                                    db.session.rollback()
-                                    continue
+                                # Take action based on settings
+                                if settings.action_type == 'kick':
+                                    users_to_mute.append({
+                                        'action': 'kick',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
+                                elif settings.action_type == 'ban':
+                                    users_to_mute.append({
+                                        'action': 'ban',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
+                                elif settings.action_type == 'mute':
+                                    users_to_mute.append({
+                                        'action': 'mute',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
                                     
                         except Exception as e:
                             print(f"Error processing group {settings.group_id}: {e}")
@@ -4006,6 +3998,18 @@ async def check_inactive_users(context):
                         await context.bot.unban_chat_member(item['chat_id'], item['user_id'])
                     elif item['action'] == 'ban':
                         await context.bot.ban_chat_member(item['chat_id'], item['user_id'])
+                        # Update database only after successful API call
+                        def _update_banned_status():
+                            with global_flask_app.app_context():
+                                try:
+                                    user = GroupUser.query.get(item['user_db_id'])
+                                    if user:
+                                        user.is_banned = True
+                                        db.session.commit()
+                                except Exception as e:
+                                    print(f"Error updating is_banned for user {item['user_id']}: {e}")
+                                    db.session.rollback()
+                        await asyncio.get_running_loop().run_in_executor(None, _update_banned_status)
                     elif item['action'] == 'mute':
                         try:
                             print(f"🔄 [不活跃用户检测] 准备禁言不活跃用户 {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)

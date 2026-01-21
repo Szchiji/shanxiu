@@ -3881,22 +3881,22 @@ async def check_inactive_users(context):
                                 # Take action based on settings
                                 if settings.action_type == 'kick':
                                     asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=group.chat_id,
+                                        chat_id=int(group.chat_id),
                                         user_id=user.tg_id
                                     ))
                                     asyncio.create_task(context.bot.unban_chat_member(
-                                        chat_id=group.chat_id,
+                                        chat_id=int(group.chat_id),
                                         user_id=user.tg_id
                                     ))
                                 elif settings.action_type == 'ban':
                                     asyncio.create_task(context.bot.ban_chat_member(
-                                        chat_id=group.chat_id,
+                                        chat_id=int(group.chat_id),
                                         user_id=user.tg_id
                                     ))
                                     user.is_banned = True
                                 elif settings.action_type == 'mute':
                                     asyncio.create_task(context.bot.restrict_chat_member(
-                                        chat_id=group.chat_id,
+                                        chat_id=int(group.chat_id),
                                         user_id=user.tg_id,
                                         permissions=ChatPermissions(can_send_messages=False)
                                     ))

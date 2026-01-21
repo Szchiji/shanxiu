@@ -117,6 +117,29 @@ def get_muted_permissions():
         can_pin_messages=False
     )
 
+def convert_chat_id_to_int(chat_id, group_id=None, group_title=None):
+    """Helper function to convert chat_id to integer for Telegram API.
+    
+    Args:
+        chat_id: The chat_id string to convert
+        group_id: Optional group ID for error messages
+        group_title: Optional group title for error messages
+        
+    Returns:
+        The chat_id as an integer, or None if conversion fails
+    """
+    try:
+        return int(chat_id)
+    except (ValueError, TypeError) as e:
+        error_msg = f"Invalid chat_id '{chat_id}'"
+        if group_id:
+            error_msg += f" for group {group_id}"
+        if group_title:
+            error_msg += f" ({group_title})"
+        error_msg += f": {e}"
+        print(error_msg)
+        return None
+
 def unban_user_in_group(group_id, user_tg_id):
     """Helper function to unban a user in a Telegram group by lifting all restrictions.
     
@@ -134,10 +157,8 @@ def unban_user_in_group(group_id, user_tg_id):
             return False
         
         # Convert chat_id to integer for Telegram API
-        try:
-            chat_id_int = int(group.chat_id)
-        except (ValueError, TypeError) as e:
-            print(f"Invalid chat_id for group {group.id}: {group.chat_id}")
+        chat_id_int = convert_chat_id_to_int(group.chat_id, group.id)
+        if chat_id_int is None:
             return False
         
         asyncio.run_coroutine_threadsafe(
@@ -2836,10 +2857,8 @@ async def check_expired_users(context):
         """Mute an expired user and send notification"""
         try:
             # Convert chat_id to integer for Telegram API
-            try:
-                chat_id_int = int(group.chat_id)
-            except (ValueError, TypeError) as e:
-                print(f"Invalid chat_id for group {group.id} ({group.title}): {group.chat_id}")
+            chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
+            if chat_id_int is None:
                 return
             
             # Mute the user in the group with comprehensive restrictions
@@ -3882,10 +3901,8 @@ async def check_inactive_users(context):
                             continue
                         
                         # Convert chat_id to integer for Telegram API
-                        try:
-                            chat_id_int = int(group.chat_id)
-                        except (ValueError, TypeError) as e:
-                            print(f"Invalid chat_id for group {group.id}: {group.chat_id}")
+                        chat_id_int = convert_chat_id_to_int(group.chat_id, group.id)
+                        if chat_id_int is None:
                             continue
                         
                         # Calculate threshold date
@@ -5541,10 +5558,8 @@ async def cmd_start(update: Update, context):
                 """Mute an expired user in a group"""
                 try:
                     # Convert chat_id to integer for Telegram API
-                    try:
-                        chat_id_int = int(grp.chat_id)
-                    except (ValueError, TypeError) as e:
-                        print(f"❌ [/start] Invalid chat_id for group {grp.id} ({grp.title}): {grp.chat_id}", flush=True)
+                    chat_id_int = convert_chat_id_to_int(grp.chat_id, grp.id, grp.title)
+                    if chat_id_int is None:
                         return
                     
                     await context.bot.restrict_chat_member(

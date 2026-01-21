@@ -134,7 +134,7 @@ def unban_user_in_group(group_id, user_tg_id):
             return False
         asyncio.run_coroutine_threadsafe(
             global_ptb_app.bot.restrict_chat_member(
-                chat_id=group.chat_id,
+                chat_id=int(group.chat_id),
                 user_id=user_tg_id,
                 permissions=ChatPermissions.all_permissions()
             ),
@@ -143,7 +143,7 @@ def unban_user_in_group(group_id, user_tg_id):
         print(f"✅ User {user_tg_id} unbanned in group {group.chat_id}")
         return True
     except Exception as e:
-        print(f"Failed to unban user {user_tg_id}: {e}")
+        print(f"Failed to unban user {user_tg_id} in group {group.chat_id} (chat_id type: {type(group.chat_id).__name__}): {e}")
         return False
 
 # --- Webhook ---
@@ -2829,7 +2829,7 @@ async def check_expired_users(context):
         try:
             # Mute the user in the group with comprehensive restrictions
             await context.bot.restrict_chat_member(
-                chat_id=group.chat_id,
+                chat_id=int(group.chat_id),
                 user_id=user.tg_id,
                 permissions=get_muted_permissions()
             )
@@ -2849,7 +2849,7 @@ async def check_expired_users(context):
                 print(f"Failed to send ban notification to user {user.tg_id}: {e}")
                 
         except Exception as e:
-            print(f"Error muting user {user.tg_id}: {e}")
+            print(f"Error muting user {user.tg_id} in group {group.chat_id} (chat_id type: {type(group.chat_id).__name__}): {e}")
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -5519,13 +5519,13 @@ async def cmd_start(update: Update, context):
                 """Mute an expired user in a group"""
                 try:
                     await context.bot.restrict_chat_member(
-                        chat_id=grp.chat_id,
+                        chat_id=int(grp.chat_id),
                         user_id=group_user.tg_id,
                         permissions=get_muted_permissions()
                     )
                     print(f"⛔️ [/start] Muted expired user {group_user.tg_id} in group {grp.title}", flush=True)
                 except Exception as e:
-                    print(f"❌ [/start] Error muting user {group_user.tg_id} in group {grp.chat_id}: {e}", flush=True)
+                    print(f"❌ [/start] Error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__}): {e}", flush=True)
             
             # Use semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)

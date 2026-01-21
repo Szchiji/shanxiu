@@ -851,7 +851,10 @@ def api_save_user():
 @core_bp.route('/api/delete_user', methods=['POST'])
 def api_delete_user():
     if not session.get('logged_in'): return jsonify({'status':'error'})
-    GroupUser.query.filter_by(id=request.json['id']).delete()
+    d = request.json
+    if not d or 'id' not in d:
+        return jsonify({'status':'error', 'msg':'Missing required parameter: id'})
+    GroupUser.query.filter_by(id=d['id']).delete()
     db.session.commit()
     return jsonify({'status':'ok'})
 
@@ -1115,7 +1118,10 @@ def api_search_users():
 def api_push_user():
     if not session.get('logged_in'): return jsonify({'status':'error'})
     try:
-        user = GroupUser.query.get(request.json['id'])
+        d = request.json
+        if not d or 'id' not in d:
+            return jsonify({'status':'error', 'msg':'Missing required parameter: id'})
+        user = GroupUser.query.get(d['id'])
         if not user: return jsonify({'status':'error','msg':'User not found'})
         
         group = BotGroup.query.get(user.group_id)
@@ -2648,8 +2654,12 @@ def api_delete_quiz_game():
 @core_bp.route('/magic_login')
 def magic_login():
     token = request.args.get('token')
+    secret_key = os.getenv('SECRET_KEY')
+    if not secret_key:
+        print("❌ CRITICAL: SECRET_KEY environment variable is not set!")
+        return "Configuration error: SECRET_KEY not set", 500
     try:
-        data = jwt.decode(token, os.getenv('SECRET_KEY', 'default_secret_key'), algorithms=['HS256'])
+        data = jwt.decode(token, secret_key, algorithms=['HS256'])
         user_id = data.get('uid')
         chat_id = data.get('chat_id')
         

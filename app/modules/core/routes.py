@@ -108,13 +108,8 @@ def get_muted_permissions():
     """
     return ChatPermissions(
         can_send_messages=False,
-        can_send_media=False,
-        can_send_polls=False,
         can_send_other_messages=False,
-        can_add_web_page_previews=False,
-        can_change_info=False,
-        can_invite_users=False,
-        can_pin_messages=False
+        can_add_web_page_previews=False
     )
 
 def convert_chat_id_to_int(chat_id, group_id=None, group_title=None):
@@ -165,7 +160,11 @@ def unban_user_in_group(group_id, user_tg_id):
             global_ptb_app.bot.restrict_chat_member(
                 chat_id=chat_id_int,
                 user_id=user_tg_id,
-                permissions=ChatPermissions.all_permissions()
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True
+                )
             ),
             global_bot_loop
         ).result(timeout=5)
@@ -3247,7 +3246,11 @@ async def check_spam_protection(update: Update, context):
                     await context.bot.restrict_chat_member(
                         chat_id=chat.id,
                         user_id=user.id,
-                        permissions=ChatPermissions(can_send_messages=False),
+                        permissions=ChatPermissions(
+                            can_send_messages=False,
+                            can_send_other_messages=False,
+                            can_add_web_page_previews=False
+                        ),
                         until_date=until_date
                     )
                 elif protection.punishment_type == 'kick':
@@ -3726,7 +3729,11 @@ async def check_channel_subscriptions(context):
                                     await context.bot.restrict_chat_member(
                                         chat_id=chat_id,
                                         user_id=group_user.tg_id,
-                                        permissions=ChatPermissions(can_send_messages=False)
+                                        permissions=ChatPermissions(
+                                            can_send_messages=False,
+                                            can_send_other_messages=False,
+                                            can_add_web_page_previews=False
+                                        )
                                     )
                         except Exception as e:
                             # User may not be in channel or bot doesn't have access
@@ -3937,7 +3944,11 @@ async def check_inactive_users(context):
                                     asyncio.create_task(context.bot.restrict_chat_member(
                                         chat_id=chat_id_int,
                                         user_id=user.tg_id,
-                                        permissions=ChatPermissions(can_send_messages=False)
+                                        permissions=ChatPermissions(
+                                            can_send_messages=False,
+                                            can_send_other_messages=False,
+                                            can_add_web_page_previews=False
+                                        )
                                     ))
                                 
                                 db.session.commit()
@@ -4086,7 +4097,11 @@ async def check_keyword_filter(update: Update, context):
                 await context.bot.restrict_chat_member(
                     chat_id=chat.id,
                     user_id=user.id,
-                    permissions=ChatPermissions(can_send_messages=False),
+                    permissions=ChatPermissions(
+                        can_send_messages=False,
+                        can_send_other_messages=False,
+                        can_add_web_page_previews=False
+                    ),
                     until_date=datetime.now() + timedelta(minutes=10)
                 )
                 await msg.delete()
@@ -4586,8 +4601,6 @@ async def cmd_mute(update: Update, context):
         # Restrict user from sending messages
         permissions = ChatPermissions(
             can_send_messages=False,
-            can_send_media=False,
-            can_send_polls=False,
             can_send_other_messages=False,
             can_add_web_page_previews=False
         )
@@ -4624,8 +4637,6 @@ async def cmd_unmute(update: Update, context):
         # Restore default permissions
         permissions = ChatPermissions(
             can_send_messages=True,
-            can_send_media=True,
-            can_send_polls=True,
             can_send_other_messages=True,
             can_add_web_page_previews=True
         )
@@ -5876,13 +5887,8 @@ async def on_message(update: Update, context):
                                     user_id=user.id,
                                     permissions=ChatPermissions(
                                         can_send_messages=False,
-                                        can_send_media=False,
-                                        can_send_polls=False,
                                         can_send_other_messages=False,
-                                        can_add_web_page_previews=False,
-                                        can_change_info=False,
-                                        can_invite_users=False,
-                                        can_pin_messages=False
+                                        can_add_web_page_previews=False
                                     )
                                 )
                                 print(f"⛔️ Muted expired user {user.id} in group {chat.id}")

@@ -103,13 +103,14 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
 def get_muted_permissions():
     """返回完全禁言的权限设置（统一管理以避免代码重复）
     
+    使用最简单、最兼容的配置：只禁止发送消息
+    这是最兼容的方式，避免某些 Telegram 版本或配置下的 API 调用失败
+    
     Returns:
-        ChatPermissions: 所有权限都被禁止的权限对象
+        ChatPermissions: 禁止发送消息的权限对象
     """
     return ChatPermissions(
-        can_send_messages=False,
-        can_send_other_messages=False,
-        can_add_web_page_previews=False
+        can_send_messages=False
     )
 
 def get_unrestricted_permissions():
@@ -2866,15 +2867,25 @@ async def check_expired_users(context):
             # Convert chat_id to integer for Telegram API
             chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
             if chat_id_int is None:
+                print(f"❌ [定时任务] Failed to convert chat_id for group {group.id} ({group.title}), chat_id={group.chat_id}", flush=True)
                 return
             
             # Mute the user in the group with comprehensive restrictions
-            await context.bot.restrict_chat_member(
-                chat_id=chat_id_int,
-                user_id=user.tg_id,
-                permissions=get_muted_permissions()
-            )
-            print(f"⛔️ Muted expired user {user.tg_id} in group {group.title}", flush=True)
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=chat_id_int,
+                    user_id=user.tg_id,
+                    permissions=get_muted_permissions()
+                )
+                print(f"✅ [定时任务] Successfully called restrict_chat_member API - Muted user {user.tg_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+            except Exception as restrict_error:
+                # 详细记录 restrict_chat_member API 调用失败的错误
+                print(f"❌ [定时任务] restrict_chat_member API failed for user {user.tg_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                print(f"   Error details: {str(restrict_error)}", flush=True)
+                import traceback
+                print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                raise  # Re-raise to be caught by outer exception handler
             
             # Try to send notification to user privately
             try:
@@ -2885,12 +2896,17 @@ async def check_expired_users(context):
                     text=sanitized_msg,
                     parse_mode='HTML'
                 )
+                print(f"✅ [定时任务] Sent ban notification to user {user.tg_id}", flush=True)
             except Exception as e:
                 # If private message fails, we don't send to group to avoid spam
-                print(f"Failed to send ban notification to user {user.tg_id}: {e}")
+                print(f"⚠️  [定时任务] Failed to send ban notification to user {user.tg_id}: {e}", flush=True)
                 
         except Exception as e:
-            print(f"Error muting user {user.tg_id} in group {group.chat_id} (chat_id type: {type(group.chat_id).__name__}): {e}")
+            # 捕获所有其他异常，确保详细记录
+            print(f"❌ [定时任务] Unexpected error in ban_user_async for user {user.tg_id} in group {group.chat_id} (type: {type(group.chat_id).__name__})", flush=True)
+            print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
+            import traceback
+            print(f"   Full traceback: {traceback.format_exc()}", flush=True)
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
@@ -4235,15 +4251,25 @@ async def check_and_mute_expired_user(update: Update, context):
             # 转换 chat_id 为整数
             chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
             if chat_id_int is None:
+                print(f"❌ [群消息触发] Failed to convert chat_id for group {group.id} ({group.title}), chat_id={group.chat_id}", flush=True)
                 return
             
             # 禁言用户
-            await context.bot.restrict_chat_member(
-                chat_id=chat_id_int,
-                user_id=user_id,
-                permissions=get_muted_permissions()
-            )
-            print(f"⛔️ Instantly muted expired user {user_id} in group {group.title}", flush=True)
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=chat_id_int,
+                    user_id=user_id,
+                    permissions=get_muted_permissions()
+                )
+                print(f"✅ [群消息触发] Successfully called restrict_chat_member API - Instantly muted expired user {user_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+            except Exception as restrict_error:
+                # 详细记录 restrict_chat_member API 调用失败的错误
+                print(f"❌ [群消息触发] restrict_chat_member API failed for user {user_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                print(f"   Error details: {str(restrict_error)}", flush=True)
+                import traceback
+                print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                raise  # Re-raise to be caught by outer exception handler
             
             # 尝试发送私信通知（不阻塞主流程）
             try:
@@ -4252,12 +4278,16 @@ async def check_and_mute_expired_user(update: Update, context):
                     text=ban_msg,
                     parse_mode='HTML'
                 )
+                print(f"✅ [群消息触发] Sent ban notification to user {user_id}", flush=True)
             except Exception as e:
                 # 私信失败不影响主流程（用户可能未与机器人对话）
-                print(f"Could not send DM to user {user_id}: {e}")
+                print(f"⚠️  [群消息触发] Could not send DM to user {user_id}: {e}", flush=True)
                 
         except Exception as e:
-            print(f"Error muting expired user: {e}")
+            print(f"❌ [群消息触发] Unexpected error muting expired user {user_id}", flush=True)
+            print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
+            import traceback
+            print(f"   Full traceback: {traceback.format_exc()}", flush=True)
             
     except Exception as e:
         print(f"Error in check_and_mute_expired_user: {e}")
@@ -5674,16 +5704,29 @@ async def cmd_start(update: Update, context):
                     # Convert chat_id to integer for Telegram API
                     chat_id_int = convert_chat_id_to_int(grp.chat_id, grp.id, grp.title)
                     if chat_id_int is None:
+                        print(f"❌ [/start] Failed to convert chat_id for group {grp.id} ({grp.title}), chat_id={grp.chat_id}", flush=True)
                         return
                     
-                    await context.bot.restrict_chat_member(
-                        chat_id=chat_id_int,
-                        user_id=group_user.tg_id,
-                        permissions=get_muted_permissions()
-                    )
-                    print(f"⛔️ [/start] Muted expired user {group_user.tg_id} in group {grp.title}", flush=True)
+                    try:
+                        await context.bot.restrict_chat_member(
+                            chat_id=chat_id_int,
+                            user_id=group_user.tg_id,
+                            permissions=get_muted_permissions()
+                        )
+                        print(f"✅ [/start] Successfully called restrict_chat_member API - Muted expired user {group_user.tg_id} in group {grp.title} (chat_id={chat_id_int})", flush=True)
+                    except Exception as restrict_error:
+                        # 详细记录 restrict_chat_member API 调用失败的错误
+                        print(f"❌ [/start] restrict_chat_member API failed for user {group_user.tg_id} in group {grp.title} (chat_id={chat_id_int})", flush=True)
+                        print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                        print(f"   Error details: {str(restrict_error)}", flush=True)
+                        import traceback
+                        print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                        raise  # Re-raise to be caught by outer exception handler
                 except Exception as e:
-                    print(f"❌ [/start] Error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__}): {e}", flush=True)
+                    print(f"❌ [/start] Unexpected error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__})", flush=True)
+                    print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
+                    import traceback
+                    print(f"   Full traceback: {traceback.format_exc()}", flush=True)
             
             # Use semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)

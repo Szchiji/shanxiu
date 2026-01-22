@@ -2837,23 +2837,17 @@ async def check_expired_users(context):
                 
                 if not users_to_ban:
                     return None
-                    
-                # Mark users as banned in database first
-                for user, group, _ in users_to_ban:
-                    user.is_banned = True
-                
-                # Commit all changes at once
-                db.session.commit()
-                print(f"✅ Marked {len(users_to_ban)} users as banned in database", flush=True)
                 
                 # Extract scalar values BEFORE leaving the app context to avoid detached instance errors
                 # This is crucial because accessing attributes outside the session context can fail
+                # Note: We extract data WITHOUT marking as banned yet - we'll update DB after API success
                 users_data = []
                 for user, group, ban_msg in users_to_ban:
                     users_data.append({
                         'user_tg_id': user.tg_id,
                         'group_chat_id': group.chat_id,
                         'group_id': group.id,
+                        'group_user_id': user.id,  # Store user.id to update database later
                         'group_title': group.title,
                         'ban_msg': ban_msg
                     })
@@ -2878,12 +2872,29 @@ async def check_expired_users(context):
     for idx, user_data in enumerate(users_to_ban):
         print(f"   User {idx+1}: tg_id={user_data['user_tg_id']}, group={user_data['group_title']} (chat_id={user_data['group_chat_id']})", flush=True)
     
+    # Helper function to mark user as banned in database after successful API call
+    def _mark_user_banned_in_db(group_user_id):
+        """Mark user as banned in database - called after successful API mute"""
+        with global_flask_app.app_context():
+            try:
+                group_user = GroupUser.query.get(group_user_id)
+                if group_user:
+                    group_user.is_banned = True
+                    db.session.commit()
+                    return True
+            except Exception as e:
+                print(f"❌ [定时任务] Failed to mark user {group_user_id} as banned in DB: {e}", flush=True)
+                db.session.rollback()
+                return False
+        return False
+    
     # Now perform all async Telegram operations with rate limiting
     async def ban_user_async(user_data):
         """Mute an expired user and send notification"""
         user_tg_id = user_data['user_tg_id']
         group_chat_id = user_data['group_chat_id']
         group_id = user_data['group_id']
+        group_user_id = user_data['group_user_id']
         group_title = user_data['group_title']
         ban_msg = user_data['ban_msg']
         
@@ -2903,12 +2914,21 @@ async def check_expired_users(context):
                     permissions=get_muted_permissions()
                 )
                 print(f"✅ [定时任务] Successfully called restrict_chat_member API - Muted user {user_tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
+                
+                # ✅ NEW: Only mark as banned in DB after successful API call
+                success = await asyncio.get_running_loop().run_in_executor(None, _mark_user_banned_in_db, group_user_id)
+                if success:
+                    print(f"✅ [定时任务] Marked user {user_tg_id} as banned in database after successful API call", flush=True)
+                else:
+                    print(f"⚠️  [定时任务] API succeeded but failed to update database for user {user_tg_id}", flush=True)
+                    
             except Exception as restrict_error:
                 # 详细记录 restrict_chat_member API 调用失败的错误
                 print(f"❌ [定时任务] restrict_chat_member API failed for user {user_tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                print(f"   ⚠️  Database NOT updated - user will be retried in next check", flush=True)
                 # Don't re-raise to avoid duplicate logging in outer exception handler
                 return
             
@@ -4302,9 +4322,9 @@ async def check_and_mute_expired_user(update: Update, context):
                     if not group_user or not group_user.expiration_date:
                         return None
                     
-                    # 如果用户已经被禁言，则不处理
-                    if group_user.is_banned:
-                        return None
+                    # 如果用户已经被禁言，仍然尝试调用API（补救机制）
+                    # 因为之前的API调用可能失败了，但数据库已标记为banned
+                    # 这样可以确保用户真正被禁言
                     
                     # 检查是否过期
                     now = get_beijing_now()
@@ -4312,10 +4332,8 @@ async def check_and_mute_expired_user(update: Update, context):
                         # 未过期，无需处理
                         return None
                     
-                    # 用户已过期且未被禁言，需要立即禁言
-                    # 先更新数据库状态
-                    group_user.is_banned = True
-                    db.session.commit()
+                    # 用户已过期，需要立即禁言
+                    # ✅ NEW: 不再先更新数据库，而是在API成功后更新
                     
                     # 获取配置信息用于通知消息
                     conf = get_group_conf(group)
@@ -4325,6 +4343,7 @@ async def check_and_mute_expired_user(update: Update, context):
                     return {
                         'group_chat_id': group.chat_id,
                         'group_id': group.id,
+                        'group_user_id': group_user.id,  # Store group_user.id to update database later
                         'group_title': group.title,
                         'user_id': user.id,
                         'ban_msg': ban_msg
@@ -4344,10 +4363,27 @@ async def check_and_mute_expired_user(update: Update, context):
         
         print(f"🚀 [群消息触发] User {user.id} in group {chat.id} needs to be muted (expired)", flush=True)
         
+        # Helper function to mark user as banned in database after successful API call
+        def _mark_user_banned_in_db(group_user_id):
+            """Mark user as banned in database - called after successful API mute"""
+            with global_flask_app.app_context():
+                try:
+                    group_user = GroupUser.query.get(group_user_id)
+                    if group_user:
+                        group_user.is_banned = True
+                        db.session.commit()
+                        return True
+                except Exception as e:
+                    print(f"❌ [群消息触发] Failed to mark user {group_user_id} as banned in DB: {e}", flush=True)
+                    db.session.rollback()
+                    return False
+            return False
+        
         # 执行禁言操作
         try:
             group_chat_id = result['group_chat_id']
             group_id = result['group_id']
+            group_user_id = result['group_user_id']
             group_title = result['group_title']
             user_id = result['user_id']
             ban_msg = result['ban_msg']
@@ -4368,12 +4404,21 @@ async def check_and_mute_expired_user(update: Update, context):
                     permissions=get_muted_permissions()
                 )
                 print(f"✅ [群消息触发] Successfully called restrict_chat_member API - Instantly muted expired user {user_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
+                
+                # ✅ NEW: Only mark as banned in DB after successful API call
+                success = await asyncio.get_running_loop().run_in_executor(None, _mark_user_banned_in_db, group_user_id)
+                if success:
+                    print(f"✅ [群消息触发] Marked user {user_id} as banned in database after successful API call", flush=True)
+                else:
+                    print(f"⚠️  [群消息触发] API succeeded but failed to update database for user {user_id}", flush=True)
+                    
             except Exception as restrict_error:
                 # 详细记录 restrict_chat_member API 调用失败的错误
                 print(f"❌ [群消息触发] restrict_chat_member API failed for user {user_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                print(f"   ⚠️  Database NOT updated - user will be retried on next message or scheduled check", flush=True)
                 # Don't re-raise to avoid duplicate logging in outer exception handler
                 return
             
@@ -5788,62 +5833,94 @@ async def cmd_start(update: Update, context):
                 users_to_ban = []
                 for group_user in expired_memberships:
                     if group_user.group and group_user.group.is_active:
-                        users_to_ban.append((group_user, group_user.group))
+                        # Store group_user.id for later database update
+                        users_to_ban.append({
+                            'group_user_id': group_user.id,
+                            'tg_id': group_user.tg_id,
+                            'group_chat_id': group_user.group.chat_id,
+                            'group_id': group_user.group.id,
+                            'group_title': group_user.group.title
+                        })
                 
-                # Mark users as banned in database
-                if users_to_ban:
-                    for group_user, grp in users_to_ban:
-                        group_user.is_banned = True
-                    db.session.commit()
-                    print(f"✅ [/start] Marked {len(users_to_ban)} expired memberships as banned for user {user_id}", flush=True)
-                
+                # Return data WITHOUT marking as banned - will update after successful API call
                 return private_msg, users_to_ban
         
         private_msg, users_to_ban = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg_and_check_expiration)
         
+        # Helper function to mark user as banned in database after successful API call
+        def _mark_user_banned_in_db(group_user_id):
+            """Mark user as banned in database - called after successful API mute"""
+            with global_flask_app.app_context():
+                try:
+                    group_user = GroupUser.query.get(group_user_id)
+                    if group_user:
+                        group_user.is_banned = True
+                        db.session.commit()
+                        return True
+                except Exception as e:
+                    print(f"❌ [/start] Failed to mark user {group_user_id} as banned in DB: {e}", flush=True)
+                    db.session.rollback()
+                    return False
+            return False
+        
         # Mute expired users in their groups
         if users_to_ban:
-            async def mute_expired_user(group_user, grp):
+            async def mute_expired_user(user_data):
                 """Mute an expired user in a group"""
                 try:
+                    group_user_id = user_data['group_user_id']
+                    tg_id = user_data['tg_id']
+                    group_chat_id = user_data['group_chat_id']
+                    group_id = user_data['group_id']
+                    group_title = user_data['group_title']
+                    
                     # Convert chat_id to integer for Telegram API
-                    chat_id_int = convert_chat_id_to_int(grp.chat_id, grp.id, grp.title)
+                    chat_id_int = convert_chat_id_to_int(group_chat_id, group_id, group_title)
                     if chat_id_int is None:
-                        print(f"❌ [/start] Failed to convert chat_id for group {grp.id} ({grp.title}), chat_id={grp.chat_id}", flush=True)
+                        print(f"❌ [/start] Failed to convert chat_id for group {group_id} ({group_title}), chat_id={group_chat_id}", flush=True)
                         return
                     
                     try:
                         await context.bot.restrict_chat_member(
                             chat_id=chat_id_int,
-                            user_id=group_user.tg_id,
+                            user_id=tg_id,
                             permissions=get_muted_permissions()
                         )
-                        print(f"✅ [/start] Successfully called restrict_chat_member API - Muted expired user {group_user.tg_id} in group {grp.title} (chat_id={chat_id_int})", flush=True)
+                        print(f"✅ [/start] Successfully called restrict_chat_member API - Muted expired user {tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
+                        
+                        # ✅ NEW: Only mark as banned in DB after successful API call
+                        success = await asyncio.get_running_loop().run_in_executor(None, _mark_user_banned_in_db, group_user_id)
+                        if success:
+                            print(f"✅ [/start] Marked user {tg_id} as banned in database after successful API call", flush=True)
+                        else:
+                            print(f"⚠️  [/start] API succeeded but failed to update database for user {tg_id}", flush=True)
+                            
                     except Exception as restrict_error:
                         # 详细记录 restrict_chat_member API 调用失败的错误
-                        print(f"❌ [/start] restrict_chat_member API failed for user {group_user.tg_id} in group {grp.title} (chat_id={chat_id_int})", flush=True)
+                        print(f"❌ [/start] restrict_chat_member API failed for user {tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
                         print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                         print(f"   Error details: {str(restrict_error)}", flush=True)
                         print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                        print(f"   ⚠️  Database NOT updated - user will be retried on next check", flush=True)
                         # Don't re-raise to avoid duplicate logging in outer exception handler
                         return
                 except Exception as e:
-                    print(f"❌ [/start] Unexpected error muting user {group_user.tg_id} in group {grp.chat_id} (chat_id type: {type(grp.chat_id).__name__})", flush=True)
+                    print(f"❌ [/start] Unexpected error muting user {user_data['tg_id']} in group {user_data['group_chat_id']} (chat_id type: {type(user_data['group_chat_id']).__name__})", flush=True)
                     print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
                     print(f"   Full traceback: {traceback.format_exc()}", flush=True)
             
             # Use semaphore to limit concurrent operations
             semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
             
-            async def mute_with_limit(group_user, grp):
+            async def mute_with_limit(user_data):
                 async with semaphore:
-                    await mute_expired_user(group_user, grp)
+                    await mute_expired_user(user_data)
             
             # Mute users in all their expired groups concurrently
-            await asyncio.gather(*[mute_with_limit(group_user, grp) for group_user, grp in users_to_ban], return_exceptions=True)
+            await asyncio.gather(*[mute_with_limit(user_data) for user_data in users_to_ban], return_exceptions=True)
             
             # Notify the user about expired memberships
-            expired_groups = [grp.title for _, grp in users_to_ban]
+            expired_groups = [user_data['group_title'] for user_data in users_to_ban]
             notification_msg = f"⚠️ <b>注意</b>\n\n您在以下群组的认证已过期，已被暂时禁言：\n• " + "\n• ".join(expired_groups) + "\n\n请联系管理员续费。"
             # Sanitize the notification message before sending
             sanitized_notification = sanitize_html_for_telegram(notification_msg)
@@ -6130,23 +6207,29 @@ async def on_message(update: Update, context):
                 else:
                      # Check if user is expired and should be banned
                     if db_user.expiration_date and get_beijing_now() > db_user.expiration_date:
-                        if not db_user.is_banned:
-                            db_user.is_banned = True
-                            db.session.commit()
-                            try:
-                                print(f"🔄 [打卡功能] 准备禁言过期用户 {user.id} in group {chat.id}", flush=True)
-                                # Mute with comprehensive restrictions
-                                await context.bot.restrict_chat_member(
-                                    chat_id=chat.id,
-                                    user_id=user.id,
-                                    permissions=get_muted_permissions()
-                                )
-                                print(f"✅ [打卡功能] Successfully called restrict_chat_member API - Muted expired user {user.id} in group {chat.id}", flush=True)
-                            except Exception as restrict_error:
-                                print(f"❌ [打卡功能] restrict_chat_member API failed for user {user.id} in group {chat.id}", flush=True)
-                                print(f"   Error type: {type(restrict_error).__name__}", flush=True)
-                                print(f"   Error details: {str(restrict_error)}", flush=True)
-                                print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                        # Always try to mute, even if already marked as banned (in case API failed before)
+                        try:
+                            print(f"🔄 [打卡功能] 准备禁言过期用户 {user.id} in group {chat.id}", flush=True)
+                            # Mute with comprehensive restrictions
+                            await context.bot.restrict_chat_member(
+                                chat_id=chat.id,
+                                user_id=user.id,
+                                permissions=get_muted_permissions()
+                            )
+                            print(f"✅ [打卡功能] Successfully called restrict_chat_member API - Muted expired user {user.id} in group {chat.id}", flush=True)
+                            
+                            # ✅ NEW: Only mark as banned in DB after successful API call
+                            if not db_user.is_banned:
+                                db_user.is_banned = True
+                                db.session.commit()
+                                print(f"✅ [打卡功能] Marked user {user.id} as banned in database after successful API call", flush=True)
+                                
+                        except Exception as restrict_error:
+                            print(f"❌ [打卡功能] restrict_chat_member API failed for user {user.id} in group {chat.id}", flush=True)
+                            print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                            print(f"   Error details: {str(restrict_error)}", flush=True)
+                            print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                            print(f"   ⚠️  Database NOT updated - user will be retried on next check", flush=True)
                         
                         # 🆕 Send ephemeral message in group (visible only to that user)
                         msg_text = sanitize_html_for_telegram(conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。'))

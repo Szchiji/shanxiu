@@ -5030,7 +5030,7 @@ async def cmd_userinfo(update: Update, context):
     target_user = None
     if update.message.reply_to_message:
         target_user = update.message.reply_to_message.from_user
-    elif getattr(update.message, 'forward_from', None):
+    else:
         target_user = getattr(update.message, 'forward_from', None)
     
     if not target_user:

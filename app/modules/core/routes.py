@@ -2846,8 +2846,21 @@ async def check_expired_users(context):
                 db.session.commit()
                 print(f"✅ Marked {len(users_to_ban)} users as banned in database", flush=True)
                 
-                # Return the list for async processing
-                return users_to_ban
+                # Extract scalar values BEFORE leaving the app context to avoid detached instance errors
+                # This is crucial because accessing attributes outside the session context can fail
+                users_data = []
+                for user, group, ban_msg in users_to_ban:
+                    users_data.append({
+                        'user_tg_id': user.tg_id,
+                        'group_chat_id': group.chat_id,
+                        'group_id': group.id,
+                        'group_title': group.title,
+                        'ban_msg': ban_msg
+                    })
+                print(f"📦 [定时任务] Extracted data for {len(users_data)} users to ban", flush=True)
+                
+                # Return the extracted data for async processing
+                return users_data
                             
             except Exception as e:
                 print(f"Error in check_expired_users sync part: {e}")
@@ -2860,27 +2873,39 @@ async def check_expired_users(context):
     if not users_to_ban:
         return
     
+    # Log the users_to_ban list to confirm we have users to process
+    print(f"🚀 [定时任务] Starting async ban operations for {len(users_to_ban)} users", flush=True)
+    for idx, user_data in enumerate(users_to_ban):
+        print(f"   User {idx+1}: tg_id={user_data['user_tg_id']}, group={user_data['group_title']} (chat_id={user_data['group_chat_id']})", flush=True)
+    
     # Now perform all async Telegram operations with rate limiting
-    async def ban_user_async(user, group, ban_msg):
+    async def ban_user_async(user_data):
         """Mute an expired user and send notification"""
+        user_tg_id = user_data['user_tg_id']
+        group_chat_id = user_data['group_chat_id']
+        group_id = user_data['group_id']
+        group_title = user_data['group_title']
+        ban_msg = user_data['ban_msg']
+        
+        print(f"🔧 [定时任务] ban_user_async CALLED for user {user_tg_id} in group {group_title}", flush=True)
         try:
             # Convert chat_id to integer for Telegram API
-            chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
+            chat_id_int = convert_chat_id_to_int(group_chat_id, group_id, group_title)
             if chat_id_int is None:
-                print(f"❌ [定时任务] Failed to convert chat_id for group {group.id} ({group.title}), chat_id={group.chat_id}", flush=True)
+                print(f"❌ [定时任务] Failed to convert chat_id for group {group_id} ({group_title}), chat_id={group_chat_id}", flush=True)
                 return
             
             # Mute the user in the group with comprehensive restrictions
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=chat_id_int,
-                    user_id=user.tg_id,
+                    user_id=user_tg_id,
                     permissions=get_muted_permissions()
                 )
-                print(f"✅ [定时任务] Successfully called restrict_chat_member API - Muted user {user.tg_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"✅ [定时任务] Successfully called restrict_chat_member API - Muted user {user_tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
             except Exception as restrict_error:
                 # 详细记录 restrict_chat_member API 调用失败的错误
-                print(f"❌ [定时任务] restrict_chat_member API failed for user {user.tg_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"❌ [定时任务] restrict_chat_member API failed for user {user_tg_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)
@@ -2892,30 +2917,39 @@ async def check_expired_users(context):
                 # Sanitize HTML before sending to Telegram
                 sanitized_msg = sanitize_html_for_telegram(ban_msg)
                 await context.bot.send_message(
-                    chat_id=user.tg_id,
+                    chat_id=user_tg_id,
                     text=sanitized_msg,
                     parse_mode='HTML'
                 )
-                print(f"✅ [定时任务] Sent ban notification to user {user.tg_id}", flush=True)
+                print(f"✅ [定时任务] Sent ban notification to user {user_tg_id}", flush=True)
             except Exception as e:
                 # If private message fails, we don't send to group to avoid spam
-                print(f"⚠️  [定时任务] Failed to send ban notification to user {user.tg_id}: {e}", flush=True)
+                print(f"⚠️  [定时任务] Failed to send ban notification to user {user_tg_id}: {e}", flush=True)
                 
         except Exception as e:
             # 捕获所有其他异常，确保详细记录
-            print(f"❌ [定时任务] Unexpected error in ban_user_async for user {user.tg_id} in group {group.chat_id} (type: {type(group.chat_id).__name__})", flush=True)
+            print(f"❌ [定时任务] Unexpected error in ban_user_async for user {user_tg_id} in group {group_chat_id} (type: {type(group_chat_id).__name__})", flush=True)
             print(f"   Error: {type(e).__name__}: {str(e)}", flush=True)
             print(f"   Full traceback: {traceback.format_exc()}", flush=True)
     
     # Use semaphore to limit concurrent operations and avoid Telegram API rate limits
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_BANS)
     
-    async def ban_with_limit(user, group, ban_msg):
+    async def ban_with_limit(user_data):
+        user_tg_id = user_data['user_tg_id']
+        print(f"🔄 [定时任务] ban_with_limit wrapper CALLED for user {user_tg_id}", flush=True)
         async with semaphore:
-            await ban_user_async(user, group, ban_msg)
+            await ban_user_async(user_data)
     
     # Run ban operations with rate limiting
-    await asyncio.gather(*[ban_with_limit(user, group, ban_msg) for user, group, ban_msg in users_to_ban], return_exceptions=True)
+    print(f"📋 [定时任务] About to call asyncio.gather for {len(users_to_ban)} ban operations", flush=True)
+    results = await asyncio.gather(*[ban_with_limit(user_data) for user_data in users_to_ban], return_exceptions=True)
+    print(f"✅ [定时任务] asyncio.gather completed, results count: {len(results)}", flush=True)
+    
+    # Log any exceptions that occurred
+    for idx, result in enumerate(results):
+        if isinstance(result, Exception):
+            print(f"❌ [定时任务] Exception in ban operation {idx}: {type(result).__name__}: {str(result)}", flush=True)
 
 async def check_scheduled_messages(context):
     """
@@ -4287,8 +4321,11 @@ async def check_and_mute_expired_user(update: Update, context):
                     conf = get_group_conf(group)
                     ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
                     
+                    # Extract scalar values to avoid detached instance issues
                     return {
-                        'group': group,
+                        'group_chat_id': group.chat_id,
+                        'group_id': group.id,
+                        'group_title': group.title,
                         'user_id': user.id,
                         'ban_msg': ban_msg
                     }
@@ -4305,17 +4342,23 @@ async def check_and_mute_expired_user(update: Update, context):
         if not result:
             return
         
+        print(f"🚀 [群消息触发] User {user.id} in group {chat.id} needs to be muted (expired)", flush=True)
+        
         # 执行禁言操作
         try:
-            group = result['group']
+            group_chat_id = result['group_chat_id']
+            group_id = result['group_id']
+            group_title = result['group_title']
             user_id = result['user_id']
             ban_msg = result['ban_msg']
             
             # 转换 chat_id 为整数
-            chat_id_int = convert_chat_id_to_int(group.chat_id, group.id, group.title)
+            chat_id_int = convert_chat_id_to_int(group_chat_id, group_id, group_title)
             if chat_id_int is None:
-                print(f"❌ [群消息触发] Failed to convert chat_id for group {group.id} ({group.title}), chat_id={group.chat_id}", flush=True)
+                print(f"❌ [群消息触发] Failed to convert chat_id for group {group_id} ({group_title}), chat_id={group_chat_id}", flush=True)
                 return
+            
+            print(f"🔧 [群消息触发] About to call restrict_chat_member for user {user_id} in group {group_title}", flush=True)
             
             # 禁言用户
             try:
@@ -4324,10 +4367,10 @@ async def check_and_mute_expired_user(update: Update, context):
                     user_id=user_id,
                     permissions=get_muted_permissions()
                 )
-                print(f"✅ [群消息触发] Successfully called restrict_chat_member API - Instantly muted expired user {user_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"✅ [群消息触发] Successfully called restrict_chat_member API - Instantly muted expired user {user_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
             except Exception as restrict_error:
                 # 详细记录 restrict_chat_member API 调用失败的错误
-                print(f"❌ [群消息触发] restrict_chat_member API failed for user {user_id} in group {group.title} (chat_id={chat_id_int})", flush=True)
+                print(f"❌ [群消息触发] restrict_chat_member API failed for user {user_id} in group {group_title} (chat_id={chat_id_int})", flush=True)
                 print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                 print(f"   Error details: {str(restrict_error)}", flush=True)
                 print(f"   Traceback: {traceback.format_exc()}", flush=True)

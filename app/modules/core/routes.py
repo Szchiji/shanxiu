@@ -6099,7 +6099,10 @@ async def on_message(update: Update, context):
                 elif result is False:
                     await msg.reply_html("⚠️ <b>验证码已过期</b>\n\n请重新发送 /start 获取新的验证码。")
                     return
-                # If result is None, fall through to normal message processing
+                else:
+                    # result is None - code didn't match any pending session
+                    await msg.reply_html("❌ <b>验证码无效</b>\n\n请检查验证码是否正确，或重新发送 /start 获取新的验证码。")
+                    return
 
         # 使用全局 App Context
         with global_flask_app.app_context():

@@ -5030,8 +5030,8 @@ async def cmd_userinfo(update: Update, context):
     target_user = None
     if update.message.reply_to_message:
         target_user = update.message.reply_to_message.from_user
-    elif update.message.forward_from:
-        target_user = update.message.forward_from
+    else:
+        target_user = getattr(update.message, 'forward_from', None)
     
     if not target_user:
         await update.message.reply_text("❌ 请回复或转发用户的消息来查看详情")
@@ -6016,57 +6016,62 @@ async def on_message(update: Update, context):
         # Check if this is a verification code from admin in private chat
         if chat.type == 'private':
             # 🆕 Handle forwarded messages - show detailed user info
-            if msg.forward_from:
-                forwarded_user = msg.forward_from
-                info_lines = ["🔍 转发消息详细信息\n"]
-                info_lines.append("━━━━━━━━━━━━━━━━")
-                info_lines.append(f"📛 用户名: {forwarded_user.first_name or '-'}")
-                if forwarded_user.last_name:
-                    info_lines.append(f"   姓氏: {forwarded_user.last_name}")
-                if forwarded_user.username:
-                    info_lines.append(f"🔗 Username: @{forwarded_user.username}")
-                info_lines.append(f"🆔 用户ID: <code>{forwarded_user.id}</code>")
-                info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
-                
-                # Try to get user's group membership info
-                def _get_forwarded_user_info():
-                    with global_flask_app.app_context():
-                        # Find all groups where this user is a member
-                        group_users = GroupUser.query.filter_by(tg_id=forwarded_user.id).all()
-                        results = []
-                        for gu in group_users:
-                            group = BotGroup.query.get(gu.group_id)
-                            if group:
-                                user_points = UserPoints.query.filter_by(
-                                    group_id=group.id,
-                                    user_id=forwarded_user.id
-                                ).first()
-                                
-                                results.append({
-                                    'group_name': group.title,
-                                    'banned': gu.is_banned,
-                                    'expiration': gu.expiration_date,
-                                    'points': user_points.points_balance if user_points else 0
-                                })
-                        return results
-                
-                user_groups = await asyncio.get_running_loop().run_in_executor(None, _get_forwarded_user_info)
-                
-                if user_groups:
-                    info_lines.append(f"\n📊 群组信息 ({len(user_groups)}个群)")
+            # Use getattr to safely check for forward_from attribute (may not exist in non-forwarded messages)
+            try:
+                forwarded_user = getattr(msg, 'forward_from', None)
+                if forwarded_user:
+                    info_lines = ["🔍 转发消息详细信息\n"]
                     info_lines.append("━━━━━━━━━━━━━━━━")
-                    for idx, info in enumerate(user_groups[:5], 1):  # Show max 5 groups
-                        info_lines.append(f"\n{idx}. {info['group_name']}")
-                        info_lines.append(f"   状态: {'🚫 已封禁' if info['banned'] else '✅ 正常'}")
-                        if info['expiration']:
-                            info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M')}")
-                        info_lines.append(f"   积分: {info['points']}")
+                    info_lines.append(f"📛 用户名: {forwarded_user.first_name or '-'}")
+                    if forwarded_user.last_name:
+                        info_lines.append(f"   姓氏: {forwarded_user.last_name}")
+                    if forwarded_user.username:
+                        info_lines.append(f"🔗 Username: @{forwarded_user.username}")
+                    info_lines.append(f"🆔 用户ID: <code>{forwarded_user.id}</code>")
+                    info_lines.append(f"🤖 机器人: {'是' if forwarded_user.is_bot else '否'}")
                     
-                    if len(user_groups) > 5:
-                        info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
-                
-                await msg.reply_text("\n".join(info_lines), parse_mode='HTML')
-                return
+                    # Try to get user's group membership info
+                    def _get_forwarded_user_info():
+                        with global_flask_app.app_context():
+                            # Find all groups where this user is a member
+                            group_users = GroupUser.query.filter_by(tg_id=forwarded_user.id).all()
+                            results = []
+                            for gu in group_users:
+                                group = BotGroup.query.get(gu.group_id)
+                                if group:
+                                    user_points = UserPoints.query.filter_by(
+                                        group_id=group.id,
+                                        user_id=forwarded_user.id
+                                    ).first()
+                                    
+                                    results.append({
+                                        'group_name': group.title,
+                                        'banned': gu.is_banned,
+                                        'expiration': gu.expiration_date,
+                                        'points': user_points.points_balance if user_points else 0
+                                    })
+                            return results
+                    
+                    user_groups = await asyncio.get_running_loop().run_in_executor(None, _get_forwarded_user_info)
+                    
+                    if user_groups:
+                        info_lines.append(f"\n📊 群组信息 ({len(user_groups)}个群)")
+                        info_lines.append("━━━━━━━━━━━━━━━━")
+                        for idx, info in enumerate(user_groups[:5], 1):  # Show max 5 groups
+                            info_lines.append(f"\n{idx}. {info['group_name']}")
+                            info_lines.append(f"   状态: {'🚫 已封禁' if info['banned'] else '✅ 正常'}")
+                            if info['expiration']:
+                                info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M')}")
+                            info_lines.append(f"   积分: {info['points']}")
+                        
+                        if len(user_groups) > 5:
+                            info_lines.append(f"\n... 及其他 {len(user_groups) - 5} 个群组")
+                    
+                    await msg.reply_text("\n".join(info_lines), parse_mode='HTML')
+                    return
+            except Exception as e:
+                print(f"Error handling forwarded message: {e}")
+                # Continue to verification code check even if forward message handling fails
             
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
             if user.id == admin_id and txt.isdigit() and len(txt) == 6:

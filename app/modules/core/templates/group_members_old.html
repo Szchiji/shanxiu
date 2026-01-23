@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+    }
+    .stats-card {
+        background: var(--bg-card);
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: center;
+        border: 1px solid var(--border-color);
+    }
+    .stats-number {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--primary);
+    }
+    .verified-badge {
+        background: #10b981;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+    }
+    .unverified-badge {
+        background: #6b7280;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+    }
+    
+    @media (max-width: 767px) {
+        .page-header {
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+        }
+        .page-header h4 {
+            font-size: 1.1rem;
+        }
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-users me-2"></i>群成员列表</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">显示所有有积分记录的群成员</p>
+        </div>
+    </div>
+</div>
+
+<!-- 统计卡片 -->
+<div class="row mb-3">
+    <div class="col-4">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.total_users }}</div>
+            <div class="text-muted small">有积分用户</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.total_verified }}</div>
+            <div class="text-muted small">已认证用户</div>
+        </div>
+    </div>
+    <div class="col-4">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.total_points }}</div>
+            <div class="text-muted small">总积分</div>
+        </div>
+    </div>
+</div>
+
+<!-- 搜索和筛选 -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="get" class="row g-2">
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="search" placeholder="搜索用户ID..." value="{{ search }}">
+            </div>
+            <div class="col-md-4">
+                <select class="form-select" name="filter">
+                    <option value="all" {{ 'selected' if filter_type == 'all' else '' }}>全部用户</option>
+                    <option value="verified" {{ 'selected' if filter_type == 'verified' else '' }}>已认证</option>
+                    <option value="unverified" {{ 'selected' if filter_type == 'unverified' else '' }}>未认证</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="fa-solid fa-search"></i>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 成员列表 -->
+<div class="card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>成员列表
+        <span class="badge bg-secondary ms-2">共 {{ pagination.total }} 人</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>用户</th>
+                        <th>积分</th>
+                        <th>等级</th>
+                        <th>认证状态</th>
+                        <th>最后活动</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for member in members %}
+                    <tr>
+                        <td>
+                            <div>
+                                <code>{{ member.user_id }}</code>
+                                {% if member.is_verified and member.profile_dict %}
+                                <div class="small text-muted">
+                                    {{ member.profile_dict.get('first_name', member.profile_dict.get('name', '')) }}
+                                    {{ member.profile_dict.get('last_name', '') }}
+                                    {% if member.profile_dict.get('username') %}
+                                    <br>@{{ member.profile_dict.get('username') }}
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <span class="badge bg-warning text-dark">
+                                💰 {{ member.points }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if member.level %}
+                            <span class="badge bg-info">
+                                {{ member.level.badge_emoji or '🏅' }} {{ member.level.level_name }}
+                            </span>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if member.is_verified %}
+                            <span class="verified-badge">✅ 已认证</span>
+                            {% if member.verified_user and member.verified_user.is_banned %}
+                            <br><span class="badge bg-danger mt-1">已封禁</span>
+                            {% elif member.verified_user and member.verified_user.expiration_date %}
+                                {% if member.verified_user.expiration_date > now %}
+                                <br><small class="text-success">到期: {{ member.verified_user.expiration_date.strftime('%m-%d') }}</small>
+                                {% else %}
+                                <br><small class="text-danger">已过期</small>
+                                {% endif %}
+                            {% endif %}
+                            {% else %}
+                            <span class="unverified-badge">❌ 未认证</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small class="text-muted">
+                                {{ member.updated_at.strftime('%m-%d %H:%M') if member.updated_at else '-' }}
+                            </small>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary btn-sm" onclick="viewUserDetail({{ member.user_id }})">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5">
+                            <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">暂无成员数据</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- 分页 -->
+    {% if pagination.pages > 1 %}
+    <div class="card-footer">
+        <nav>
+            <ul class="pagination justify-content-center mb-0">
+                {% if pagination.has_prev %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ pagination.prev_num }}&search={{ search }}&filter={{ filter_type }}">上一页</a>
+                </li>
+                {% endif %}
+                
+                {% for p in pagination.iter_pages() %}
+                    {% if p %}
+                    <li class="page-item {{ 'active' if p == pagination.page else '' }}">
+                        <a class="page-link" href="?page={{ p }}&search={{ search }}&filter={{ filter_type }}">{{ p }}</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if pagination.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ pagination.next_num }}&search={{ search }}&filter={{ filter_type }}">下一页</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+
+<!-- User Detail Modal -->
+<div class="modal fade" id="userDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="fa-solid fa-user me-2"></i>用户详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="userDetailContent">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewUserDetail(userId) {
+    const modal = new bootstrap.Modal(document.getElementById('userDetailModal'));
+    modal.show();
+    
+    showLoading('加载中...');
+    fetch(`/core/api/get_member_detail?group_id={{ group.id }}&user_id=${userId}`)
+    .then(res => res.json())
+    .then(data => {
+        hideLoading();
+        if (data.status === 'ok') {
+            const user = data.user;
+            let html = '<div class="user-info">';
+            html += '<table class="table table-bordered">';
+            html += '<tr><th>用户ID</th><td><code>' + user.user_id + '</code></td></tr>';
+            html += '<tr><th>积分</th><td><span class="badge bg-warning text-dark">💰 ' + user.points + '</span></td></tr>';
+            html += '<tr><th>认证状态</th><td>';
+            if (user.is_verified) {
+                html += '<span class="verified-badge">✅ 已认证</span>';
+                if (user.name) html += '<br><small>姓名: ' + user.name + '</small>';
+                if (user.username) html += '<br><small>@' + user.username + '</small>';
+                if (user.expiration_date) html += '<br><small>到期: ' + user.expiration_date.substring(0, 10) + '</small>';
+            } else {
+                html += '<span class="unverified-badge">❌ 未认证</span>';
+            }
+            html += '</td></tr>';
+            
+            if (user.recent_logs && user.recent_logs.length > 0) {
+                html += '<tr><th colspan="2" class="bg-light">最近积分记录</th></tr>';
+                for (const log of user.recent_logs.slice(0, 5)) {
+                    html += '<tr><td colspan="2">';
+                    html += '<small><b>' + (log.points_change > 0 ? '+' : '') + log.points_change + '</b> - ';
+                    html += log.reason + ' ';
+                    html += '<span class="text-muted">(' + log.created_at.substring(0, 16).replace('T', ' ') + ')</span>';
+                    html += '</small></td></tr>';
+                }
+            }
+            
+            html += '</table>';
+            html += '</div>';
+            
+            document.getElementById('userDetailContent').innerHTML = html;
+        } else {
+            showToast(data.msg || '获取失败', 'error');
+            document.getElementById('userDetailContent').innerHTML = '<div class="alert alert-danger">获取用户信息失败</div>';
+        }
+    })
+    .catch(err => {
+        hideLoading();
+        showToast('网络错误', 'error');
+        document.getElementById('userDetailContent').innerHTML = '<div class="alert alert-danger">网络错误</div>';
+    });
+}
+</script>
+{% endblock %}

@@ -243,6 +243,82 @@
     .config-section .form-text {
         color: var(--text-muted);
     }
+    
+    /* Custom buttons row-grouped styles */
+    .button-row-container {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .button-row-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    
+    .button-row-title {
+        font-weight: 600;
+        color: #495057;
+        font-size: 0.9rem;
+    }
+    
+    .button-buttons-display {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    
+    .button-badge {
+        display: inline-flex;
+        align-items: center;
+        background: #343a40;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .button-badge:hover {
+        background: #495057;
+    }
+    
+    .button-badge .btn-close {
+        margin-left: 8px;
+        font-size: 0.7rem;
+        opacity: 0.7;
+    }
+    
+    .button-badge .btn-close:hover {
+        opacity: 1;
+    }
+    
+    .add-button-to-row {
+        font-size: 0.875rem;
+        padding: 6px 12px;
+    }
+    
+    .add-row-button {
+        border: 2px dashed #6c757d;
+        background: transparent;
+        color: #6c757d;
+        padding: 12px;
+        border-radius: 8px;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    
+    .add-row-button:hover {
+        border-color: #0d6efd;
+        color: #0d6efd;
+        background: #f8f9fa;
+    }
 </style>
 
 <div class="settings-header">
@@ -416,12 +492,12 @@
         <div class="config-card card">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
                 <span class="fw-bold"><i class="fa-solid fa-square-plus me-2" style="color: #4facfe;"></i>自定义按钮 (列表底部)</span>
-                <button class="btn btn-outline-primary" onclick="addBtn()">
-                    <i class="fa-solid fa-plus me-2"></i>添加按钮
-                </button>
             </div>
             <div class="card-body">
-                <div id="btnContainer" class="row g-2"></div>
+                <div id="btnContainer"></div>
+                <button type="button" class="btn add-row-button" onclick="addBtnNewRow()">
+                    <i class="fa-solid fa-plus me-2"></i>新增一行按钮
+                </button>
                 <textarea id="custom_buttons" class="form-control d-none">{{ conf.custom_buttons }}</textarea>
             </div>
         </div>
@@ -533,6 +609,35 @@
     </div>
 </div>
 
+<!-- Button Edit Modal for Custom Buttons -->
+<div class="modal fade" id="btnEditModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="btnEditModalTitle">编辑按钮</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit_btn_row">
+                <input type="hidden" id="edit_btn_index">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">按钮文字</label>
+                    <input type="text" class="form-control" id="btn_text" placeholder="例如：访问官网" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">链接地址</label>
+                    <input type="text" class="form-control" id="btn_url" placeholder="https://example.com" required>
+                    <small class="text-muted">必须以 http://, https:// 开头</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveBtnEdit()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
     let msgs = {
         template: `{{ conf.template|safe }}`,
@@ -548,30 +653,212 @@
     
     const currentGroupId = {{ group.id }};
     let btnData = [];
-    try { btnData = JSON.parse(document.getElementById('custom_buttons').value || '[]'); } catch(e){}
+    let btnEditModal;
+    
+    try { 
+        const rawData = JSON.parse(document.getElementById('custom_buttons').value || '[]');
+        // Convert old format to new format with row and order
+        btnData = rawData.map((btn, idx) => {
+            if (btn.row === undefined) {
+                // Old format, assign row 0 and sequential order
+                return { text: btn.text || '', url: btn.url || '', row: 0, order: idx };
+            }
+            return btn;
+        });
+    } catch(e) { console.error('Error parsing custom buttons:', e); }
 
-    document.addEventListener('DOMContentLoaded', () => { loadMsg(); renderBtns(); });
+    document.addEventListener('DOMContentLoaded', () => { 
+        loadMsg(); 
+        renderBtns(); 
+        btnEditModal = new bootstrap.Modal(document.getElementById('btnEditModal'));
+    });
 
     function renderBtns() {
         const con = document.getElementById('btnContainer');
-        con.innerHTML = '';
-        btnData.forEach((b, i) => {
-            con.innerHTML += `
-                <div class="col-md-6">
-                    <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" placeholder="按钮文字" value="${b.text}" onchange="updateBtn(${i}, 'text', this.value)">
-                        <input type="text" class="form-control" placeholder="跳转链接" value="${b.url}" onchange="updateBtn(${i}, 'url', this.value)">
-                        <button class="btn btn-outline-danger" onclick="delBtn(${i})">×</button>
+        
+        if (btnData.length === 0) {
+            con.innerHTML = '<div class="text-muted small text-center py-3">暂无按钮，点击"新增一行按钮"开始添加</div>';
+            return;
+        }
+        
+        // Group buttons by row
+        const buttonsByRow = {};
+        btnData.forEach(button => {
+            if (!buttonsByRow[button.row]) {
+                buttonsByRow[button.row] = [];
+            }
+            buttonsByRow[button.row].push(button);
+        });
+        
+        // Sort buttons within each row by order
+        Object.keys(buttonsByRow).forEach(row => {
+            buttonsByRow[row].sort((a, b) => a.order - b.order);
+        });
+        
+        // Get sorted row indices
+        const rows = Object.keys(buttonsByRow).map(r => parseInt(r)).sort((a, b) => a - b);
+        
+        con.innerHTML = rows.map((rowIndex, displayIndex) => {
+            const buttonsHtml = buttonsByRow[rowIndex].map((btn, btnIdx) => {
+                return `
+                    <span class="button-badge" onclick="editBtn(${rowIndex}, ${btnIdx})">
+                        ${btn.text || '(未命名)'}
+                        <button type="button" class="btn-close btn-close-white" onclick="event.stopPropagation(); removeBtn(${rowIndex}, ${btnIdx})"></button>
+                    </span>
+                `;
+            }).join('');
+            
+            return `
+                <div class="button-row-container">
+                    <div class="button-row-header">
+                        <span class="button-row-title">第 ${displayIndex + 1} 行</span>
+                        <div class="d-flex gap-2 align-items-center">
+                            ${displayIndex > 0 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveBtnRowUp(${rowIndex})" title="上移"><i class="fa-solid fa-arrow-up"></i></button>` : ''}
+                            ${displayIndex < rows.length - 1 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveBtnRowDown(${rowIndex})" title="下移"><i class="fa-solid fa-arrow-down"></i></button>` : ''}
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteBtnRow(${rowIndex})" title="删除行"><i class="fa-solid fa-trash"></i></button>
+                        </div>
                     </div>
+                    <div class="button-buttons-display">
+                        ${buttonsHtml}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary add-button-to-row" onclick="addBtnToRow(${rowIndex})">
+                        <i class="fa-solid fa-plus me-1"></i>本行新增一个按钮
+                    </button>
                 </div>
             `;
-        });
-        if(btnData.length === 0) con.innerHTML = '<div class="text-muted small text-center w-100 my-2">暂无按钮，点击上方添加</div>';
+        }).join('');
     }
     
-    function addBtn() { btnData.push({text:'', url:''}); renderBtns(); }
-    function delBtn(i) { btnData.splice(i, 1); renderBtns(); }
-    function updateBtn(i, key, val) { btnData[i][key] = val; }
+    function addBtnNewRow() {
+        // Find the next available row index
+        const maxRow = btnData.length > 0 ? Math.max(...btnData.map(b => b.row)) : -1;
+        const newRow = maxRow + 1;
+        
+        // Open modal for new button in new row
+        addBtnToRow(newRow);
+    }
+    
+    function addBtnToRow(rowIndex) {
+        // Open modal to add new button to specific row
+        document.getElementById('btnEditModalTitle').textContent = `第 ${rowIndex + 1} 行新增按钮`;
+        document.getElementById('edit_btn_row').value = rowIndex;
+        document.getElementById('edit_btn_index').value = '-1'; // -1 means new button
+        document.getElementById('btn_text').value = '';
+        document.getElementById('btn_url').value = '';
+        
+        btnEditModal.show();
+    }
+    
+    function editBtn(rowIndex, buttonIndex) {
+        // Get buttons in this row
+        const buttonsInRow = btnData.filter(b => b.row === rowIndex);
+        const button = buttonsInRow[buttonIndex];
+        
+        document.getElementById('btnEditModalTitle').textContent = `第 ${rowIndex + 1} 行第 ${buttonIndex + 1} 个按钮`;
+        document.getElementById('edit_btn_row').value = rowIndex;
+        document.getElementById('edit_btn_index').value = buttonIndex;
+        document.getElementById('btn_text').value = button.text || '';
+        document.getElementById('btn_url').value = button.url || '';
+        
+        btnEditModal.show();
+    }
+    
+    function saveBtnEdit() {
+        const rowIndex = parseInt(document.getElementById('edit_btn_row').value);
+        const buttonIndex = parseInt(document.getElementById('edit_btn_index').value);
+        const text = document.getElementById('btn_text').value.trim();
+        const url = document.getElementById('btn_url').value.trim();
+        
+        // Validate
+        if (!text) {
+            alert('请输入按钮文字');
+            return;
+        }
+        if (!url) {
+            alert('请输入链接');
+            return;
+        }
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            alert('链接必须以 http:// 或 https:// 开头');
+            return;
+        }
+        
+        if (buttonIndex === -1) {
+            // Add new button to row
+            const buttonsInRow = btnData.filter(b => b.row === rowIndex);
+            const order = buttonsInRow.length;
+            btnData.push({ text, url, row: rowIndex, order });
+        } else {
+            // Edit existing button
+            const buttonsInRow = btnData.filter(b => b.row === rowIndex);
+            const actualButton = buttonsInRow[buttonIndex];
+            const actualIndex = btnData.indexOf(actualButton);
+            btnData[actualIndex] = { ...actualButton, text, url };
+        }
+        
+        renderBtns();
+        btnEditModal.hide();
+    }
+    
+    function removeBtn(rowIndex, buttonIndex) {
+        if (!confirm('确定要删除这个按钮吗？')) return;
+        
+        const buttonsInRow = btnData.filter(b => b.row === rowIndex);
+        const actualButton = buttonsInRow[buttonIndex];
+        const actualIndex = btnData.indexOf(actualButton);
+        
+        btnData.splice(actualIndex, 1);
+        
+        // Reorder buttons in this row
+        const remainingButtons = btnData.filter(b => b.row === rowIndex);
+        remainingButtons.forEach((btn, idx) => {
+            btn.order = idx;
+        });
+        
+        renderBtns();
+    }
+    
+    function deleteBtnRow(rowIndex) {
+        if (!confirm('确定要删除这一行的所有按钮吗？')) return;
+        
+        // Remove all buttons in this row
+        btnData = btnData.filter(b => b.row !== rowIndex);
+        
+        // Reindex rows
+        const uniqueRows = [...new Set(btnData.map(b => b.row))].sort((a, b) => a - b);
+        uniqueRows.forEach((oldRow, newRow) => {
+            btnData.forEach(btn => {
+                if (btn.row === oldRow) btn.row = newRow;
+            });
+        });
+        
+        renderBtns();
+    }
+    
+    function moveBtnRowUp(rowIndex) {
+        if (rowIndex === 0) return;
+        
+        // Swap row indices
+        btnData.forEach(btn => {
+            if (btn.row === rowIndex) btn.row = rowIndex - 1;
+            else if (btn.row === rowIndex - 1) btn.row = rowIndex;
+        });
+        
+        renderBtns();
+    }
+    
+    function moveBtnRowDown(rowIndex) {
+        const maxRow = Math.max(...btnData.map(b => b.row), -1);
+        if (rowIndex >= maxRow) return;
+        
+        // Swap row indices
+        btnData.forEach(btn => {
+            if (btn.row === rowIndex) btn.row = rowIndex + 1;
+            else if (btn.row === rowIndex + 1) btn.row = rowIndex;
+        });
+        
+        renderBtns();
+    }
 
     // Convert stored template (with \n) to contenteditable HTML format
     function templateToHtml(text) {

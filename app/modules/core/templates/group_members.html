@@ -167,9 +167,9 @@
                             <span class="badge bg-secondary">成员</span>
                             {% endif %}
                         </td>
-                        <td>💰 {{ member_info[member.user_id].points }}</td>
+                        <td>💰 {{ member_info.get(member.user_id, {}).get('points', 0) }}</td>
                         <td>
-                            {% if member_info[member.user_id].is_verified %}
+                            {% if member_info.get(member.user_id, {}).get('is_verified', False) %}
                             <span class="verified-badge">✅ 已认证</span>
                             {% else %}
                             <span class="unverified-badge">❌ 未认证</span>

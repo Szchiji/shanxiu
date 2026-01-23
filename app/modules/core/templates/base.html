@@ -738,7 +738,7 @@
                         
                         <!-- User Management -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'fields', 'settings'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'group_members', 'fields', 'settings'] %}active{% endif %}" 
                                id="managementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fa-solid fa-user-check"></i> 👥 用户管理
                             </a>
@@ -747,6 +747,12 @@
                                     <a href="/core/group/{{ current_group.id }}/users" class="dropdown-item {% if page == 'users' %}active{% endif %}">
                                         <i class="fa-solid fa-users"></i> 认证用户
                                         <span class="feature-desc">管理群组已认证的用户列表</span>
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/members" class="dropdown-item {% if page == 'group_members' %}active{% endif %}">
+                                        <i class="fa-solid fa-user-group"></i> 群成员列表
+                                        <span class="feature-desc">查看所有群组成员及其状态</span>
                                     </a>
                                 </li>
                                 <li>

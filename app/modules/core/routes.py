@@ -375,6 +375,61 @@ def page_users(gid):
     return render_template('users.html', page='users', group=group, users=users, fields=get_group_fields(group), 
                          current_page=page, total_pages=total_pages, per_page=per_page, total_users=total_users, search=search_query)
 
+@core_bp.route('/group/<int:gid>/members')
+def page_group_members(gid):
+    """群成员列表页面"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Pagination parameters
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
+    
+    # Search parameter
+    search_query = request.args.get('search', '').strip()
+    
+    # Build query with optional search filter
+    query = GroupUser.query.filter_by(group_id=gid)
+    if search_query:
+        # Search in tg_id and profile_data
+        query = query.filter(
+            or_(
+                cast(GroupUser.tg_id, String).contains(search_query),
+                GroupUser.profile_data.contains(search_query)
+            )
+        )
+    
+    # Get paginated members - use Flask-SQLAlchemy pagination
+    pagination = query.order_by(GroupUser.last_activity.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    members = pagination.items
+    
+    # Parse profile data for each member
+    for member in members:
+        try:
+            member.profile_dict = json.loads(member.profile_data) if member.profile_data else {}
+        except:
+            member.profile_dict = {}
+    
+    # Get member points
+    member_points = {}
+    for member in members:
+        points = UserPoints.query.filter_by(group_id=gid, user_id=member.tg_id).first()
+        member_points[member.tg_id] = points.points_balance if points else 0
+    
+    return render_template('group_members.html', 
+                         page='group_members', 
+                         group=group, 
+                         members=members,
+                         pagination=pagination,
+                         member_points=member_points,
+                         search=search_query,
+                         now=datetime.now())
+
 @core_bp.route('/group/<int:gid>/fields')
 def page_fields(gid):
     if not session.get('logged_in'): return redirect('/core')
@@ -1193,6 +1248,48 @@ def api_delete_user():
     GroupUser.query.filter_by(id=d['id']).delete()
     db.session.commit()
     return jsonify({'status':'ok'})
+
+@core_bp.route('/api/get_user_info')
+def api_get_user_info():
+    """获取用户详细信息"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    
+    group_id = safe_int(request.args.get('group_id'), 0)
+    user_id = safe_int(request.args.get('user_id'), 0)
+    
+    if not group_id or not user_id:
+        return jsonify({'status': 'error', 'msg': 'Missing parameters'})
+    
+    user = GroupUser.query.filter_by(id=user_id, group_id=group_id).first()
+    if not user:
+        return jsonify({'status': 'error', 'msg': 'User not found'})
+    
+    points = UserPoints.query.filter_by(group_id=group_id, user_id=user.tg_id).first()
+    
+    # Parse profile data
+    try:
+        profile_data = json.loads(user.profile_data) if user.profile_data else {}
+    except:
+        profile_data = {}
+    
+    return jsonify({
+        'status': 'ok',
+        'user': {
+            'tg_id': user.tg_id,
+            'username': profile_data.get('username'),
+            'first_name': profile_data.get('first_name') or profile_data.get('name'),
+            'last_name': profile_data.get('last_name'),
+            'is_banned': user.is_banned,
+            'online': user.online,
+            'points': points.points_balance if points else 0,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_activity': user.last_activity.isoformat() if user.last_activity else None,
+            'expiration_date': user.expiration_date.isoformat() if user.expiration_date else None,
+            'checkin_time': user.checkin_time.isoformat() if user.checkin_time else None,
+            'profile_data': profile_data
+        }
+    })
 
 @core_bp.route('/api/bulk_import_users', methods=['POST'])
 def api_bulk_import_users():

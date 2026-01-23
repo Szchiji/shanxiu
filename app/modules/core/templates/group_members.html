@@ -55,45 +55,66 @@
     <div class="d-flex justify-content-between align-items-center">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-users me-2"></i>群成员列表</h4>
-            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">显示所有有积分记录的群成员</p>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">显示从 Telegram 同步的实际群成员</p>
         </div>
     </div>
 </div>
 
 <!-- 统计卡片 -->
 <div class="row mb-3">
-    <div class="col-4">
+    <div class="col-md-3 col-6 mb-2">
         <div class="stats-card">
-            <div class="stats-number">{{ stats.total_users }}</div>
-            <div class="text-muted small">有积分用户</div>
+            <div class="stats-number">{{ stats.total }}</div>
+            <div class="text-muted small">总成员</div>
         </div>
     </div>
-    <div class="col-4">
+    <div class="col-md-3 col-6 mb-2">
         <div class="stats-card">
-            <div class="stats-number">{{ stats.total_verified }}</div>
-            <div class="text-muted small">已认证用户</div>
+            <div class="stats-number">{{ stats.admins }}</div>
+            <div class="text-muted small">管理员</div>
         </div>
     </div>
-    <div class="col-4">
+    <div class="col-md-3 col-6 mb-2">
         <div class="stats-card">
-            <div class="stats-number">{{ stats.total_points }}</div>
-            <div class="text-muted small">总积分</div>
+            <div class="stats-number">{{ stats.verified }}</div>
+            <div class="text-muted small">已认证</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6 mb-2">
+        <div class="stats-card">
+            <div class="stats-number">{{ stats.bots }}</div>
+            <div class="text-muted small">机器人</div>
         </div>
     </div>
 </div>
 
-<!-- 搜索和筛选 -->
+<!-- 同步按钮和搜索 -->
 <div class="card mb-3">
     <div class="card-body">
-        <form method="get" class="row g-2">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-3 mb-2">
+                <button class="btn btn-primary w-100" onclick="syncMembers()">
+                    <i class="fa-solid fa-sync me-1"></i>同步成员
+                </button>
+            </div>
+            <div class="col-md-3 mb-2">
+                {% if stats.last_sync %}
+                <small class="text-muted">上次同步: {{ stats.last_sync.synced_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                {% else %}
+                <small class="text-muted">尚未同步</small>
+                {% endif %}
+            </div>
+        </div>
+        <form method="get" class="row g-2 mt-2">
             <div class="col-md-6">
-                <input type="text" class="form-control" name="search" placeholder="搜索用户ID..." value="{{ search }}">
+                <input type="text" class="form-control" name="search" placeholder="搜索用户名、用户ID..." value="{{ search }}">
             </div>
             <div class="col-md-4">
                 <select class="form-select" name="filter">
-                    <option value="all" {{ 'selected' if filter_type == 'all' else '' }}>全部用户</option>
-                    <option value="verified" {{ 'selected' if filter_type == 'verified' else '' }}>已认证</option>
-                    <option value="unverified" {{ 'selected' if filter_type == 'unverified' else '' }}>未认证</option>
+                    <option value="all" {{ 'selected' if filter_type == 'all' else '' }}>全部成员</option>
+                    <option value="admin" {{ 'selected' if filter_type == 'admin' else '' }}>管理员</option>
+                    <option value="member" {{ 'selected' if filter_type == 'member' else '' }}>普通成员</option>
+                    <option value="bot" {{ 'selected' if filter_type == 'bot' else '' }}>机器人</option>
                 </select>
             </div>
             <div class="col-md-2">
@@ -117,78 +138,55 @@
                 <thead>
                     <tr>
                         <th>用户</th>
+                        <th>用户ID</th>
+                        <th>身份</th>
                         <th>积分</th>
-                        <th>等级</th>
-                        <th>认证状态</th>
-                        <th>最后活动</th>
-                        <th>操作</th>
+                        <th>认证</th>
+                        <th>同步时间</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for member in members %}
                     <tr>
                         <td>
-                            <div>
-                                <code>{{ member.user_id }}</code>
-                                {% if member.is_verified and member.profile_dict %}
-                                <div class="small text-muted">
-                                    {{ member.profile_dict.get('first_name', member.profile_dict.get('name', '')) }}
-                                    {{ member.profile_dict.get('last_name', '') }}
-                                    {% if member.profile_dict.get('username') %}
-                                    <br>@{{ member.profile_dict.get('username') }}
-                                    {% endif %}
-                                </div>
-                                {% endif %}
-                            </div>
+                            <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
+                            {% if member.username %}
+                            <small class="text-muted">@{{ member.username }}</small>
+                            {% endif %}
+                            {% if member.is_bot %}
+                            <span class="badge bg-info ms-1">🤖</span>
+                            {% endif %}
                         </td>
+                        <td><code>{{ member.user_id }}</code></td>
                         <td>
-                            <span class="badge bg-warning text-dark">
-                                💰 {{ member.points }}
-                            </span>
-                        </td>
-                        <td>
-                            {% if member.level %}
-                            <span class="badge bg-info">
-                                {{ member.level.badge_emoji or '🏅' }} {{ member.level.level_name }}
-                            </span>
+                            {% if member.status == 'creator' %}
+                            <span class="badge bg-danger">👑 群主</span>
+                            {% elif member.status == 'administrator' %}
+                            <span class="badge bg-warning text-dark">⚡ 管理员</span>
                             {% else %}
-                            <span class="text-muted">-</span>
+                            <span class="badge bg-secondary">成员</span>
                             {% endif %}
                         </td>
+                        <td>💰 {{ member_info[member.user_id].points }}</td>
                         <td>
-                            {% if member.is_verified %}
+                            {% if member_info[member.user_id].is_verified %}
                             <span class="verified-badge">✅ 已认证</span>
-                            {% if member.verified_user and member.verified_user.is_banned %}
-                            <br><span class="badge bg-danger mt-1">已封禁</span>
-                            {% elif member.verified_user and member.verified_user.expiration_date %}
-                                {% if member.verified_user.expiration_date > now %}
-                                <br><small class="text-success">到期: {{ member.verified_user.expiration_date.strftime('%m-%d') }}</small>
-                                {% else %}
-                                <br><small class="text-danger">已过期</small>
-                                {% endif %}
-                            {% endif %}
                             {% else %}
                             <span class="unverified-badge">❌ 未认证</span>
                             {% endif %}
                         </td>
                         <td>
-                            <small class="text-muted">
-                                {{ member.updated_at.strftime('%m-%d %H:%M') if member.updated_at else '-' }}
-                            </small>
-                        </td>
-                        <td>
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary btn-sm" onclick="viewUserDetail({{ member.user_id }})">
-                                    <i class="fa-solid fa-eye"></i>
-                                </button>
-                            </div>
+                            <small class="text-muted">{{ member.synced_at.strftime('%m-%d %H:%M') if member.synced_at else '-' }}</small>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
                         <td colspan="6" class="text-center py-5">
-                            <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                            <p class="text-muted">暂无成员数据</p>
+                            <i class="fa-solid fa-users-slash fa-3x text-muted mb-3"></i>
+                            <p class="text-muted mb-2">暂无成员数据</p>
+                            <button class="btn btn-primary btn-sm" onclick="syncMembers()">
+                                <i class="fa-solid fa-sync me-1"></i>立即同步
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -229,79 +227,27 @@
     {% endif %}
 </div>
 
-<!-- User Detail Modal -->
-<div class="modal fade" id="userDetailModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title fw-bold"><i class="fa-solid fa-user me-2"></i>用户详情</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="userDetailContent">
-                <div class="text-center">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">加载中...</span>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
-function viewUserDetail(userId) {
-    const modal = new bootstrap.Modal(document.getElementById('userDetailModal'));
-    modal.show();
-    
-    showLoading('加载中...');
-    fetch(`/core/api/get_member_detail?group_id={{ group.id }}&user_id=${userId}`)
+function syncMembers() {
+    showLoading('正在同步群成员...');
+    fetch('/core/api/sync_group_members', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: {{ group.id }}})
+    })
     .then(res => res.json())
     .then(data => {
         hideLoading();
         if (data.status === 'ok') {
-            const user = data.user;
-            let html = '<div class="user-info">';
-            html += '<table class="table table-bordered">';
-            html += '<tr><th>用户ID</th><td><code>' + user.user_id + '</code></td></tr>';
-            html += '<tr><th>积分</th><td><span class="badge bg-warning text-dark">💰 ' + user.points + '</span></td></tr>';
-            html += '<tr><th>认证状态</th><td>';
-            if (user.is_verified) {
-                html += '<span class="verified-badge">✅ 已认证</span>';
-                if (user.name) html += '<br><small>姓名: ' + user.name + '</small>';
-                if (user.username) html += '<br><small>@' + user.username + '</small>';
-                if (user.expiration_date) html += '<br><small>到期: ' + user.expiration_date.substring(0, 10) + '</small>';
-            } else {
-                html += '<span class="unverified-badge">❌ 未认证</span>';
-            }
-            html += '</td></tr>';
-            
-            if (user.recent_logs && user.recent_logs.length > 0) {
-                html += '<tr><th colspan="2" class="bg-light">最近积分记录</th></tr>';
-                for (const log of user.recent_logs.slice(0, 5)) {
-                    html += '<tr><td colspan="2">';
-                    html += '<small><b>' + (log.points_change > 0 ? '+' : '') + log.points_change + '</b> - ';
-                    html += log.reason + ' ';
-                    html += '<span class="text-muted">(' + log.created_at.substring(0, 16).replace('T', ' ') + ')</span>';
-                    html += '</small></td></tr>';
-                }
-            }
-            
-            html += '</table>';
-            html += '</div>';
-            
-            document.getElementById('userDetailContent').innerHTML = html;
+            showToast(data.msg, 'success');
+            setTimeout(() => location.reload(), 2000);
         } else {
-            showToast(data.msg || '获取失败', 'error');
-            document.getElementById('userDetailContent').innerHTML = '<div class="alert alert-danger">获取用户信息失败</div>';
+            showToast(data.msg || '同步失败', 'error');
         }
     })
     .catch(err => {
         hideLoading();
         showToast('网络错误', 'error');
-        document.getElementById('userDetailContent').innerHTML = '<div class="alert alert-danger">网络错误</div>';
     });
 }
 </script>

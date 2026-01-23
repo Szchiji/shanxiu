@@ -5,7 +5,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog)
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -377,7 +377,7 @@ def page_users(gid):
 
 @core_bp.route('/group/<int:gid>/members')
 def page_group_members(gid):
-    """群成员列表页面 - 显示所有有积分记录的用户（包括未认证用户）"""
+    """群成员列表页面 - 显示从 Telegram 同步的实际群成员"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
@@ -390,95 +390,74 @@ def page_group_members(gid):
     
     # Search and filter parameters
     search_query = request.args.get('search', '').strip()
-    filter_type = request.args.get('filter', 'all')  # all, verified, unverified
+    filter_type = request.args.get('filter', 'all')  # all, admin, member, bot
     
-    # 🆕 Query all users with points records (UserPoints table)
-    query = UserPoints.query.filter_by(group_id=gid)
+    # 从 GroupMember 表查询实际群成员
+    query = GroupMember.query.filter_by(group_id=gid)
     
-    # Apply search filter
+    # 搜索过滤
     if search_query:
-        # Search by user_id
-        query = query.filter(cast(UserPoints.user_id, String).contains(search_query))
+        query = query.filter(
+            db.or_(
+                cast(GroupMember.user_id, String).contains(search_query),
+                GroupMember.username.ilike(f'%{search_query}%'),
+                GroupMember.first_name.ilike(f'%{search_query}%')
+            )
+        )
     
-    # Apply filter type
-    if filter_type == 'verified':
-        # Only show users who are in GroupUser table
-        verified_user_ids = db.session.query(GroupUser.tg_id).filter_by(group_id=gid).subquery()
-        query = query.filter(UserPoints.user_id.in_(verified_user_ids))
-    elif filter_type == 'unverified':
-        # Only show users who are NOT in GroupUser table
-        verified_user_ids = db.session.query(GroupUser.tg_id).filter_by(group_id=gid).subquery()
-        query = query.filter(~UserPoints.user_id.in_(verified_user_ids))
+    # 身份过滤
+    if filter_type == 'admin':
+        query = query.filter(GroupMember.status.in_(['creator', 'administrator']))
+    elif filter_type == 'member':
+        query = query.filter(GroupMember.status == 'member')
+    elif filter_type == 'bot':
+        query = query.filter(GroupMember.is_bot == True)
     
-    # Sort by points balance descending
-    query = query.order_by(UserPoints.points_balance.desc())
+    # 分页
+    pagination = query.order_by(
+        db.case(
+            (GroupMember.status == 'creator', 1),
+            (GroupMember.status == 'administrator', 2),
+            else_=3
+        ),
+        GroupMember.first_name
+    ).paginate(page=page, per_page=per_page, error_out=False)
     
-    # Get paginated results
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-    user_points_list = pagination.items
+    members = pagination.items
     
-    # Get verified user information for these users
-    user_ids = [up.user_id for up in user_points_list]
-    verified_users = {}
-    if user_ids:
-        verified = GroupUser.query.filter(
-            GroupUser.group_id == gid,
-            GroupUser.tg_id.in_(user_ids)
-        ).all()
-        verified_users = {u.tg_id: u for u in verified}
-    
-    # Get member levels
-    levels = MemberLevel.query.filter_by(group_id=gid).order_by(MemberLevel.required_points.desc()).all()
-    
-    # Build member list with computed properties
-    members = []
-    for up in user_points_list:
-        verified_user = verified_users.get(up.user_id)
-        
-        # Calculate user level
-        user_level = None
-        for level in levels:
-            if up.points_balance >= level.required_points:
-                user_level = level
-                break
-        
-        # Parse profile data for verified users
-        profile_dict = {}
-        if verified_user:
-            try:
-                profile_dict = json.loads(verified_user.profile_data) if verified_user.profile_data else {}
-            except:
-                profile_dict = {}
-        
-        members.append({
-            'user_id': up.user_id,
-            'points': up.points_balance,
+    # 获取成员积分和认证状态
+    member_info = {}
+    for member in members:
+        points = UserPoints.query.filter_by(group_id=gid, user_id=member.user_id).first()
+        verified_user = GroupUser.query.filter_by(group_id=gid, tg_id=member.user_id).first()
+        member_info[member.user_id] = {
+            'points': points.points_balance if points else 0,
             'is_verified': verified_user is not None,
-            'verified_user': verified_user,
-            'profile_dict': profile_dict,
-            'level': user_level,
-            'updated_at': up.updated_at
-        })
+            'verified_user': verified_user
+        }
     
-    # Calculate statistics
-    total_users = UserPoints.query.filter_by(group_id=gid).count()
-    total_verified = GroupUser.query.filter_by(group_id=gid).count()
-    total_points = db.session.query(func.sum(UserPoints.points_balance)).filter(
-        UserPoints.group_id == gid
-    ).scalar() or 0
+    # 统计
+    stats = {
+        'total': GroupMember.query.filter_by(group_id=gid).count(),
+        'admins': GroupMember.query.filter_by(group_id=gid).filter(
+            GroupMember.status.in_(['creator', 'administrator'])
+        ).count(),
+        'bots': GroupMember.query.filter_by(group_id=gid, is_bot=True).count(),
+        'verified': GroupUser.query.filter_by(group_id=gid).count(),
+        'last_sync': GroupMember.query.filter_by(group_id=gid).order_by(
+            GroupMember.synced_at.desc()
+        ).first()
+    }
     
     return render_template('group_members.html', 
                          page='group_members', 
                          group=group, 
                          members=members,
                          pagination=pagination,
+                         member_info=member_info,
                          search=search_query,
                          filter_type=filter_type,
-                         stats={
-                             'total_users': total_users,
-                             'total_verified': total_verified,
-                             'total_points': total_points
-                         },
+                         stats=stats,
                          now=datetime.now())
 
 @core_bp.route('/group/<int:gid>/fields')
@@ -1224,6 +1203,33 @@ def api_toggle_group():
     
     db.session.commit()
     return jsonify({'status':'ok'})
+
+@core_bp.route('/api/sync_group_members', methods=['POST'])
+def api_sync_group_members():
+    """触发从 Telegram 同步群成员"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    
+    group_id = request.json.get('group_id')
+    if not group_id:
+        return jsonify({'status': 'error', 'msg': 'Missing group_id'})
+    
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    
+    # 触发同步 - 调用异步函数
+    try:
+        if global_ptb_app and global_bot_loop:
+            asyncio.run_coroutine_threadsafe(
+                sync_group_members_task(group),
+                global_bot_loop
+            )
+            return jsonify({'status': 'ok', 'msg': '同步请求已提交，请稍候刷新页面'})
+        else:
+            return jsonify({'status': 'error', 'msg': 'Bot not initialized'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 @core_bp.route('/api/save_fields', methods=['POST'])
 def api_save_fields():
@@ -3995,6 +4001,102 @@ async def track_user_name_change(update: Update, context):
                 
     except Exception as e:
         print(f"Error in track_user_name_change: {e}")
+
+async def sync_group_members_task(group):
+    """从 Telegram 同步群成员到数据库"""
+    if not global_ptb_app or not global_flask_app:
+        print("❌ Bot or Flask app not initialized")
+        return
+    
+    try:
+        chat_id = int(group.chat_id)
+        bot = global_ptb_app.bot
+        
+        # 获取群管理员
+        admins = await bot.get_chat_administrators(chat_id)
+        
+        # 获取群信息
+        chat = await bot.get_chat(chat_id)
+        member_count = chat.member_count if hasattr(chat, 'member_count') else 0
+        
+        with global_flask_app.app_context():
+            now = datetime.now()
+            synced_count = 0
+            
+            # 更新管理员
+            for admin in admins:
+                user = admin.user
+                member = GroupMember.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).first()
+                
+                if not member:
+                    member = GroupMember(
+                        group_id=group.id,
+                        user_id=user.id
+                    )
+                    db.session.add(member)
+                
+                member.username = user.username
+                member.first_name = user.first_name
+                member.last_name = user.last_name
+                member.status = admin.status
+                member.is_bot = user.is_bot
+                member.synced_at = now
+                synced_count += 1
+            
+            db.session.commit()
+            print(f"✅ 同步群 {group.title} 管理员成功: {synced_count} 人 (总成员约 {member_count} 人)")
+            
+    except Exception as e:
+        print(f"❌ 同步群成员失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def update_group_member(update: Update, context):
+    """在消息处理时自动记录/更新成员信息"""
+    if not global_flask_app:
+        return
+    
+    try:
+        msg = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or not user or chat.type not in ['group', 'supergroup']:
+            return
+        
+        def _update_member():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return
+                
+                member = GroupMember.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).first()
+                
+                if not member:
+                    member = GroupMember(
+                        group_id=group.id,
+                        user_id=user.id
+                    )
+                    db.session.add(member)
+                
+                member.username = user.username
+                member.first_name = user.first_name
+                member.last_name = user.last_name or ''
+                member.is_bot = user.is_bot
+                member.synced_at = datetime.now()
+                
+                db.session.commit()
+        
+        await asyncio.get_running_loop().run_in_executor(None, _update_member)
+        
+    except Exception as e:
+        print(f"Error in update_group_member: {e}")
 
 async def handle_sync_group_messages(update: Update, context):
     """Sync messages from source group to target groups - Enhanced to sync all message types"""
@@ -7263,6 +7365,9 @@ async def on_message(update: Update, context):
             
             # 🆕 Track user name changes
             await track_user_name_change(update, context)
+            
+            # 🆕 Record/update member info
+            await update_group_member(update, context)
             
             # 🆕 Sync messages to other groups
             await handle_sync_group_messages(update, context)

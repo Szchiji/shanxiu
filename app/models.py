@@ -640,6 +640,29 @@ class AdminActionLog(db.Model):
     group = db.relationship('BotGroup', backref='admin_action_logs', lazy=True)
 
 
+class GroupMember(db.Model):
+    """群内成员（从 Telegram 同步）"""
+    __tablename__ = 'group_members'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, nullable=False, index=True)  # Telegram user ID
+    username = db.Column(db.String(255), nullable=True)
+    first_name = db.Column(db.String(255), nullable=True)
+    last_name = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(50), default='member')  # creator, administrator, member, restricted, left, kicked
+    is_bot = db.Column(db.Boolean, default=False)
+    joined_at = db.Column(db.DateTime, nullable=True)  # 加入时间（如果可获取）
+    synced_at = db.Column(db.DateTime, default=datetime.now)  # 最后同步时间
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('group_id', 'user_id', name='_group_member_uc'),
+    )
+    
+    group = db.relationship('BotGroup', backref='group_members', lazy=True)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-from sqlalchemy import or_, cast, String
+from sqlalchemy import or_, cast, String, func
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback, random
 from datetime import datetime, timedelta
 import pytz
@@ -377,7 +377,7 @@ def page_users(gid):
 
 @core_bp.route('/group/<int:gid>/members')
 def page_group_members(gid):
-    """群成员列表页面"""
+    """群成员列表页面 - 显示所有有积分记录的用户（包括未认证用户）"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
@@ -388,46 +388,97 @@ def page_group_members(gid):
     if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
-    # Search parameter
+    # Search and filter parameters
     search_query = request.args.get('search', '').strip()
+    filter_type = request.args.get('filter', 'all')  # all, verified, unverified
     
-    # Build query with optional search filter
-    query = GroupUser.query.filter_by(group_id=gid)
+    # 🆕 Query all users with points records (UserPoints table)
+    query = UserPoints.query.filter_by(group_id=gid)
+    
+    # Apply search filter
     if search_query:
-        # Search in tg_id and profile_data
-        query = query.filter(
-            or_(
-                cast(GroupUser.tg_id, String).contains(search_query),
-                GroupUser.profile_data.contains(search_query)
-            )
-        )
+        # Search by user_id
+        query = query.filter(cast(UserPoints.user_id, String).contains(search_query))
     
-    # Get paginated members - use Flask-SQLAlchemy pagination
-    pagination = query.order_by(GroupUser.last_activity.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    members = pagination.items
+    # Apply filter type
+    if filter_type == 'verified':
+        # Only show users who are in GroupUser table
+        verified_user_ids = db.session.query(GroupUser.tg_id).filter_by(group_id=gid).subquery()
+        query = query.filter(UserPoints.user_id.in_(verified_user_ids))
+    elif filter_type == 'unverified':
+        # Only show users who are NOT in GroupUser table
+        verified_user_ids = db.session.query(GroupUser.tg_id).filter_by(group_id=gid).subquery()
+        query = query.filter(~UserPoints.user_id.in_(verified_user_ids))
     
-    # Parse profile data for each member
-    for member in members:
-        try:
-            member.profile_dict = json.loads(member.profile_data) if member.profile_data else {}
-        except:
-            member.profile_dict = {}
+    # Sort by points balance descending
+    query = query.order_by(UserPoints.points_balance.desc())
     
-    # Get member points
-    member_points = {}
-    for member in members:
-        points = UserPoints.query.filter_by(group_id=gid, user_id=member.tg_id).first()
-        member_points[member.tg_id] = points.points_balance if points else 0
+    # Get paginated results
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    user_points_list = pagination.items
+    
+    # Get verified user information for these users
+    user_ids = [up.user_id for up in user_points_list]
+    verified_users = {}
+    if user_ids:
+        verified = GroupUser.query.filter(
+            GroupUser.group_id == gid,
+            GroupUser.tg_id.in_(user_ids)
+        ).all()
+        verified_users = {u.tg_id: u for u in verified}
+    
+    # Get member levels
+    levels = MemberLevel.query.filter_by(group_id=gid).order_by(MemberLevel.required_points.desc()).all()
+    
+    # Build member list with computed properties
+    members = []
+    for up in user_points_list:
+        verified_user = verified_users.get(up.user_id)
+        
+        # Calculate user level
+        user_level = None
+        for level in levels:
+            if up.points_balance >= level.required_points:
+                user_level = level
+                break
+        
+        # Parse profile data for verified users
+        profile_dict = {}
+        if verified_user:
+            try:
+                profile_dict = json.loads(verified_user.profile_data) if verified_user.profile_data else {}
+            except:
+                profile_dict = {}
+        
+        members.append({
+            'user_id': up.user_id,
+            'points': up.points_balance,
+            'is_verified': verified_user is not None,
+            'verified_user': verified_user,
+            'profile_dict': profile_dict,
+            'level': user_level,
+            'updated_at': up.updated_at
+        })
+    
+    # Calculate statistics
+    total_users = UserPoints.query.filter_by(group_id=gid).count()
+    total_verified = GroupUser.query.filter_by(group_id=gid).count()
+    total_points = db.session.query(func.sum(UserPoints.points_balance)).filter(
+        UserPoints.group_id == gid
+    ).scalar() or 0
     
     return render_template('group_members.html', 
                          page='group_members', 
                          group=group, 
                          members=members,
                          pagination=pagination,
-                         member_points=member_points,
                          search=search_query,
+                         filter_type=filter_type,
+                         stats={
+                             'total_users': total_users,
+                             'total_verified': total_verified,
+                             'total_points': total_points
+                         },
                          now=datetime.now())
 
 @core_bp.route('/group/<int:gid>/fields')
@@ -3186,6 +3237,57 @@ def api_check_auth_status():
         return jsonify({'status': 'pending'})
     else:
         return jsonify({'status': 'verified', 'redirect_url': '/core/select_group'})
+
+
+@core_bp.route('/api/get_member_detail')
+def api_get_member_detail():
+    """获取成员详细信息（支持认证和未认证用户）"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    
+    group_id = safe_int(request.args.get('group_id'), 0)
+    user_id = safe_int(request.args.get('user_id'), 0)
+    
+    if not group_id or not user_id:
+        return jsonify({'status': 'error', 'msg': 'Missing parameters'})
+    
+    # 获取积分信息
+    user_points = UserPoints.query.filter_by(group_id=group_id, user_id=user_id).first()
+    
+    # 获取认证用户信息（如果存在）
+    verified_user = GroupUser.query.filter_by(group_id=group_id, tg_id=user_id).first()
+    
+    # 获取积分日志
+    logs = PointsLog.query.filter_by(
+        group_id=group_id, user_id=user_id
+    ).order_by(PointsLog.created_at.desc()).limit(10).all()
+    
+    result = {
+        'user_id': user_id,
+        'points': user_points.points_balance if user_points else 0,
+        'is_verified': verified_user is not None,
+        'recent_logs': [{
+            'points_change': log.points_change,
+            'reason': log.reason,
+            'created_at': log.created_at.isoformat() if log.created_at else None
+        } for log in logs]
+    }
+    
+    if verified_user:
+        try:
+            profile_data = json.loads(verified_user.profile_data) if verified_user.profile_data else {}
+        except:
+            profile_data = {}
+        
+        result.update({
+            'name': profile_data.get('name') or profile_data.get('first_name'),
+            'username': profile_data.get('username'),
+            'expiration_date': verified_user.expiration_date.isoformat() if verified_user.expiration_date else None,
+            'is_banned': verified_user.is_banned,
+            'checkin_time': verified_user.checkin_time.isoformat() if verified_user.checkin_time else None
+        })
+    
+    return jsonify({'status': 'ok', 'user': result})
 
 
 @core_bp.route('/logout')
@@ -7308,6 +7410,7 @@ async def on_message(update: Update, context):
                         db.session.commit()
             
             # 🆕 Track messages for active lotteries (optimized for large groups)
+            # ✅ Track ALL group members, not just verified users (unverified users can participate)
             if chat.type in ['group', 'supergroup']:
                 # Track for both message_count and message_rank lotteries
                 # Limit to 10 concurrent active lotteries to prevent performance issues in large groups
@@ -7316,39 +7419,37 @@ async def on_message(update: Update, context):
                     status='active'
                 ).filter(GroupLottery.lottery_type.in_(['message_count', 'message_rank'])).limit(10).all()
                 
-                # Batch check: only process if user is registered (avoid unnecessary queries)
+                # Track for ALL users (verified and unverified)
                 if active_lotteries:
-                    db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
-                    if db_user:
-                        now = get_beijing_now()
-                        for lottery in active_lotteries:
-                            # Only track if lottery is still within its time window
-                            if lottery.start_time and lottery.end_time:
-                                if lottery.start_time <= now <= lottery.end_time:
-                                    # Get or create message count record
-                                    msg_count = LotteryMessageCount.query.filter_by(
+                    now = get_beijing_now()
+                    for lottery in active_lotteries:
+                        # Only track if lottery is still within its time window
+                        if lottery.start_time and lottery.end_time:
+                            if lottery.start_time <= now <= lottery.end_time:
+                                # Get or create message count record
+                                msg_count = LotteryMessageCount.query.filter_by(
+                                    lottery_id=lottery.id,
+                                    user_id=user.id
+                                ).first()
+                                
+                                if not msg_count:
+                                    msg_count = LotteryMessageCount(
                                         lottery_id=lottery.id,
-                                        user_id=user.id
-                                    ).first()
-                                    
-                                    if not msg_count:
-                                        msg_count = LotteryMessageCount(
-                                            lottery_id=lottery.id,
-                                            group_id=group.id,
-                                            user_id=user.id,
-                                            message_count=0
-                                        )
-                                        db.session.add(msg_count)
-                                    
-                                    msg_count.message_count += 1
-                                    msg_count.updated_at = now
-                        
-                        # Batch commit all lottery tracking updates
-                        try:
-                            db.session.commit()
-                        except Exception as e:
-                            print(f"Error committing lottery tracking: {e}")
-                            db.session.rollback()
+                                        group_id=group.id,
+                                        user_id=user.id,
+                                        message_count=0
+                                    )
+                                    db.session.add(msg_count)
+                                
+                                msg_count.message_count += 1
+                                msg_count.updated_at = now
+                    
+                    # Batch commit all lottery tracking updates
+                    try:
+                        db.session.commit()
+                    except Exception as e:
+                        print(f"Error committing lottery tracking: {e}")
+                        db.session.rollback()
             
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
+    }
+    
+    .log-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        transition: all 0.3s ease;
+    }
+    
+    .log-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        transform: translateY(-2px);
+    }
+    
+    .log-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    
+    .action-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+    
+    .action-kick { background: #fee2e2; color: #991b1b; }
+    .action-ban { background: #fecaca; color: #7f1d1d; }
+    .action-mute { background: #fed7aa; color: #9a3412; }
+    .action-settings { background: #dbeafe; color: #1e40af; }
+    .action-other { background: #e5e7eb; color: #374151; }
+    
+    .log-time {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+    }
+    
+    .log-details {
+        font-size: 0.9rem;
+        color: var(--text-color);
+    }
+    
+    .pagination {
+        display: flex;
+        justify-content: center;
+        gap: 0.5rem;
+        margin-top: 1.5rem;
+    }
+    
+    .pagination a, .pagination span {
+        padding: 0.5rem 1rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        text-decoration: none;
+        color: var(--text-color);
+    }
+    
+    .pagination .active {
+        background: var(--primary-gradient);
+        color: white;
+        border-color: transparent;
+    }
+</style>
+
+<div class="page-header">
+    <h4 class="mb-0">🔍 管理员操作日志</h4>
+    <p class="mb-0 mt-1 opacity-90">查看所有管理员操作记录</p>
+</div>
+
+{% if logs %}
+    {% for log in logs %}
+    <div class="log-card">
+        <div class="log-header">
+            <div>
+                <span class="action-badge action-{{ log.action_type|e }}">
+                    {{ log.action_type|e }}
+                </span>
+                <strong>{{ log.admin_name|e or 'Admin #' + log.admin_id|string }}</strong>
+            </div>
+            <span class="log-time">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+        </div>
+        <div class="log-details">
+            {% if log.target_user_name %}
+                <div>目标用户: <strong>{{ log.target_user_name|e }}</strong></div>
+            {% endif %}
+            {% if log.details %}
+                <div class="mt-1">详情: {{ log.details|e }}</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        {% if pagination.has_prev %}
+            <a href="?page={{ pagination.prev_num }}">« 上一页</a>
+        {% endif %}
+        
+        {% for page_num in pagination.iter_pages() %}
+            {% if page_num %}
+                {% if page_num == pagination.page %}
+                    <span class="active">{{ page_num }}</span>
+                {% else %}
+                    <a href="?page={{ page_num }}">{{ page_num }}</a>
+                {% endif %}
+            {% else %}
+                <span>...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+            <a href="?page={{ pagination.next_num }}">下一页 »</a>
+        {% endif %}
+    </div>
+    {% endif %}
+{% else %}
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> 暂无操作日志
+    </div>
+{% endif %}
+
+{% endblock %}

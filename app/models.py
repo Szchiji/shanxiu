@@ -622,6 +622,22 @@ class RedPacketClaim(db.Model):
     packet = db.relationship('RedPacket', backref='red_packet_claims', lazy=True)
 
 
+class AdminActionLog(db.Model):
+    """管理员操作日志"""
+    __tablename__ = 'admin_action_log'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    admin_id = db.Column(db.BigInteger, nullable=False)
+    admin_name = db.Column(db.String(255))
+    action_type = db.Column(db.String(50), nullable=False)  # kick, ban, mute, settings_change, etc.
+    target_user_id = db.Column(db.BigInteger, nullable=True)
+    target_user_name = db.Column(db.String(255), nullable=True)
+    details = db.Column(db.Text, nullable=True)  # JSON 格式的详细信息
+    created_at = db.Column(db.DateTime, default=datetime.now, index=True)
+    
+    group = db.relationship('BotGroup', backref='admin_action_logs', lazy=True)
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

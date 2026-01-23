@@ -22,18 +22,79 @@
         margin-bottom: 1.5rem;
     }
     
-    .button-item {
-        border-bottom: 1px solid #eee;
-        padding: 1rem;
-        transition: background-color 0.2s;
+    .button-row-container {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+        border: 1px solid #e0e0e0;
     }
     
-    .button-item:last-child {
-        border-bottom: none;
+    .button-row-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
     }
     
-    .button-item:hover {
-        background-color: #f8f9fa;
+    .button-row-title {
+        font-weight: 600;
+        color: #495057;
+        font-size: 0.9rem;
+    }
+    
+    .button-buttons-display {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    
+    .button-badge {
+        display: inline-flex;
+        align-items: center;
+        background: #343a40;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .button-badge:hover {
+        background: #495057;
+    }
+    
+    .button-badge .btn-close {
+        margin-left: 8px;
+        font-size: 0.7rem;
+        opacity: 0.7;
+    }
+    
+    .button-badge .btn-close:hover {
+        opacity: 1;
+    }
+    
+    .add-button-to-row {
+        font-size: 0.875rem;
+        padding: 6px 12px;
+    }
+    
+    .add-row-button {
+        border: 2px dashed #6c757d;
+        background: transparent;
+        color: #6c757d;
+        padding: 12px;
+        border-radius: 8px;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    
+    .add-row-button:hover {
+        border-color: #0d6efd;
+        color: #0d6efd;
+        background: #f8f9fa;
     }
 </style>
 
@@ -47,9 +108,6 @@
             <button class="btn btn-success fw-bold" onclick="pushButtonsToGroup(event)" title="将按钮菜单推送到群组，所有群成员立即可见">
                 <i class="fa-solid fa-paper-plane me-2"></i>推送到群组
             </button>
-            <button class="btn btn-light fw-bold" onclick="showAddModal()">
-                <i class="fa-solid fa-plus me-2"></i>添加按钮
-            </button>
         </div>
     </div>
 </div>
@@ -59,7 +117,7 @@
     <h6 class="fw-bold mb-2"><i class="fa-solid fa-info-circle me-2"></i>功能说明</h6>
     <ul class="mb-0 small">
         <li><strong>群底部按钮：</strong>为群组设置自定义菜单按钮，方便群成员快速访问常用功能</li>
-        <li><strong>按钮排列：</strong>通过设置"行号"和"列顺序"可以实现多个按钮在一行并排显示</li>
+        <li><strong>按钮排列：</strong>按行分组显示，每行可包含多个按钮并排显示</li>
         <li><strong>输入提示：</strong>可以为按钮设置输入框提示文案，点击按钮后会在群输入框显示</li>
         <li><strong>使用方法：</strong>配置完成后点击"推送到群组"，菜单键盘将立即显示给所有群成员</li>
     </ul>
@@ -71,48 +129,11 @@
             <div class="card-header bg-white fw-bold py-3">
                 <i class="fa-solid fa-list me-2 text-primary"></i>按钮列表
             </div>
-            <div class="card-body p-0">
-                {% if buttons %}
-                    {% for button in buttons %}
-                    <div class="button-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ button.button_text }}</h6>
-                                <small class="text-muted">
-                                    行: {{ button.row_position }} | 列: {{ button.button_order }}
-                                    {% if button.input_field_placeholder %} | 提示: {{ button.input_field_placeholder }}{% endif %}
-                                </small>
-                                <span class="badge {{ 'bg-success' if button.is_active else 'bg-secondary' }} ms-2">
-                                    {{ '启用' if button.is_active else '禁用' }}
-                                </span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                {% if not loop.first %}
-                                <button class="btn btn-sm btn-secondary" onclick="moveButton({{ button.id }}, 'up')" title="上移">
-                                    <i class="fa-solid fa-arrow-up"></i>
-                                </button>
-                                {% endif %}
-                                {% if not loop.last %}
-                                <button class="btn btn-sm btn-secondary" onclick="moveButton({{ button.id }}, 'down')" title="下移">
-                                    <i class="fa-solid fa-arrow-down"></i>
-                                </button>
-                                {% endif %}
-                                <button class="btn btn-sm btn-primary" onclick='editButton({{ button.id }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteButton({{ button.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无按钮设置</p>
-                    </div>
-                {% endif %}
+            <div class="card-body">
+                <div id="buttonsContainer"></div>
+                <button type="button" class="btn add-row-button" onclick="addNewRow()">
+                    <i class="fa-solid fa-plus me-2"></i>新增一行按钮
+                </button>
             </div>
         </div>
     </div>
@@ -128,31 +149,21 @@
             </div>
             <div class="modal-body">
                 <input type="hidden" id="button_id">
+                <input type="hidden" id="row_position">
+                <input type="hidden" id="button_order">
                 <div class="mb-3">
-                    <label class="form-label">按钮文本</label>
+                    <label class="form-label fw-bold">按钮文字</label>
                     <input type="text" class="form-control" id="button_text" placeholder="例如：访问官网" required>
                     <small class="text-muted">用户在群组键盘上看到的按钮文字</small>
                 </div>
-                <div class="row">
-                    <div class="col-6 mb-3">
-                        <label class="form-label">行号</label>
-                        <input type="number" class="form-control" id="row_position" value="0" min="0">
-                        <small class="text-muted">同一行的按钮会并排显示</small>
-                    </div>
-                    <div class="col-6 mb-3">
-                        <label class="form-label">列顺序</label>
-                        <input type="number" class="form-control" id="button_order" value="0" min="0">
-                        <small class="text-muted">同行内的显示顺序</small>
-                    </div>
-                </div>
                 <div class="mb-3">
-                    <label class="form-label">输入框提示文案</label>
+                    <label class="form-label fw-bold">输入框提示文案 <span class="text-muted">(可选)</span></label>
                     <input type="text" class="form-control" id="input_field_placeholder" placeholder="例如：请输入您的问题...">
-                    <small class="text-muted">点击按钮后在群输入框显示的提示文字（可选）</small>
+                    <small class="text-muted">点击按钮后在群输入框显示的提示文字</small>
                 </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="is_active" checked>
-                    <label class="form-check-label">启用按钮</label>
+                    <label class="form-check-label fw-bold">启用按钮</label>
                 </div>
             </div>
             <div class="modal-footer">
@@ -165,20 +176,97 @@
 
 <script>
 let buttonModal;
-const buttonsData = {{ buttons_json|safe }};
+let buttonsData = {{ buttons_json|safe }};
 
 document.addEventListener('DOMContentLoaded', function() {
     buttonModal = new bootstrap.Modal(document.getElementById('buttonModal'));
+    renderButtons();
 });
 
-function showAddModal() {
-    document.getElementById('modalTitle').textContent = '添加按钮';
+function renderButtons() {
+    const container = document.getElementById('buttonsContainer');
+    
+    if (buttonsData.length === 0) {
+        container.innerHTML = '<div class="text-muted small text-center py-3">暂无按钮，点击"新增一行按钮"开始添加</div>';
+        return;
+    }
+    
+    // Group buttons by row
+    const buttonsByRow = {};
+    buttonsData.forEach(button => {
+        if (!buttonsByRow[button.row_position]) {
+            buttonsByRow[button.row_position] = [];
+        }
+        buttonsByRow[button.row_position].push(button);
+    });
+    
+    // Sort buttons within each row by order
+    Object.keys(buttonsByRow).forEach(row => {
+        buttonsByRow[row].sort((a, b) => a.button_order - b.button_order);
+    });
+    
+    // Get sorted row indices
+    const rows = Object.keys(buttonsByRow).map(r => parseInt(r)).sort((a, b) => a - b);
+    
+    container.innerHTML = rows.map((rowIndex, displayIndex) => {
+        const buttonsHtml = buttonsByRow[rowIndex].map((btn, btnIdx) => {
+            const statusBadge = btn.is_active ? '<i class="fa-solid fa-check-circle text-success ms-1" title="已启用"></i>' : '<i class="fa-solid fa-times-circle text-secondary ms-1" title="已禁用"></i>';
+            const placeholder = btn.input_field_placeholder ? `<i class="fa-solid fa-comment-dots ms-1" title="输入提示: ${btn.input_field_placeholder}"></i>` : '';
+            return `
+                <span class="button-badge" onclick="editButton(${btn.id})">
+                    ${btn.button_text || '(未命名)'}
+                    ${statusBadge}
+                    ${placeholder}
+                    <button type="button" class="btn-close btn-close-white" onclick="event.stopPropagation(); deleteButton(${btn.id})"></button>
+                </span>
+            `;
+        }).join('');
+        
+        return `
+            <div class="button-row-container">
+                <div class="button-row-header">
+                    <span class="button-row-title">第 ${displayIndex + 1} 行</span>
+                    <div class="d-flex gap-2 align-items-center">
+                        ${displayIndex > 0 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveRowUp(${rowIndex})" title="上移"><i class="fa-solid fa-arrow-up"></i></button>` : ''}
+                        ${displayIndex < rows.length - 1 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveRowDown(${rowIndex})" title="下移"><i class="fa-solid fa-arrow-down"></i></button>` : ''}
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteRow(${rowIndex})" title="删除行"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+                <div class="button-buttons-display">
+                    ${buttonsHtml}
+                </div>
+                <button type="button" class="btn btn-sm btn-primary add-button-to-row" onclick="addButtonToRow(${rowIndex})">
+                    <i class="fa-solid fa-plus me-1"></i>本行新增一个按钮
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+function addNewRow() {
+    // Find the next available row index
+    const maxRow = buttonsData.length > 0 ? Math.max(...buttonsData.map(b => b.row_position)) : -1;
+    const newRow = maxRow + 1;
+    
+    // Open modal for new button in new row
+    addButtonToRow(newRow);
+}
+
+function addButtonToRow(rowIndex) {
+    // Open modal to add new button to specific row
+    document.getElementById('modalTitle').textContent = `第 ${rowIndex + 1} 行新增按钮`;
     document.getElementById('button_id').value = '';
     document.getElementById('button_text').value = '';
-    document.getElementById('row_position').value = '0';
-    document.getElementById('button_order').value = '0';
     document.getElementById('input_field_placeholder').value = '';
     document.getElementById('is_active').checked = true;
+    
+    // Calculate button order for this row
+    const buttonsInRow = buttonsData.filter(b => b.row_position === rowIndex);
+    const buttonOrder = buttonsInRow.length;
+    
+    document.getElementById('row_position').value = rowIndex;
+    document.getElementById('button_order').value = buttonOrder;
+    
     buttonModal.show();
 }
 
@@ -189,21 +277,29 @@ function editButton(id) {
     document.getElementById('modalTitle').textContent = '编辑按钮';
     document.getElementById('button_id').value = id;
     document.getElementById('button_text').value = button.button_text || '';
-    document.getElementById('row_position').value = button.row_position || 0;
-    document.getElementById('button_order').value = button.button_order || 0;
     document.getElementById('input_field_placeholder').value = button.input_field_placeholder || '';
     document.getElementById('is_active').checked = button.is_active;
+    document.getElementById('row_position').value = button.row_position || 0;
+    document.getElementById('button_order').value = button.button_order || 0;
+    
     buttonModal.show();
 }
 
 function saveButton() {
+    const buttonText = document.getElementById('button_text').value.trim();
+    
+    if (!buttonText) {
+        alert('请输入按钮文字');
+        return;
+    }
+    
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('button_id').value || null,
-        button_text: document.getElementById('button_text').value,
+        button_text: buttonText,
         row_position: parseInt(document.getElementById('row_position').value) || 0,
         button_order: parseInt(document.getElementById('button_order').value) || 0,
-        input_field_placeholder: document.getElementById('input_field_placeholder').value,
+        input_field_placeholder: document.getElementById('input_field_placeholder').value.trim() || null,
         is_active: document.getElementById('is_active').checked
     };
     
@@ -216,7 +312,7 @@ function saveButton() {
     .then(result => {
         if (result.status === 'ok') {
             showToast('保存成功！', 'success');
-                setTimeout(() => location.reload(), 1000);
+            setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '保存失败'));
         }
@@ -239,7 +335,7 @@ function deleteButton(id) {
     .then(result => {
         if (result.status === 'ok') {
             showToast('删除成功！', 'success');
-                setTimeout(() => location.reload(), 1000);
+            setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '删除失败'));
         }
@@ -250,20 +346,116 @@ function deleteButton(id) {
     });
 }
 
-function moveButton(id, direction) {
-    fetch('/core/api/move_group_bottom_button', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: id, direction: direction})
+function deleteRow(rowIndex) {
+    if (!confirm('确定要删除这一行的所有按钮吗？')) return;
+    
+    const buttonsInRow = buttonsData.filter(b => b.row_position === rowIndex);
+    
+    // Delete all buttons in this row
+    Promise.all(buttonsInRow.map(btn => 
+        fetch('/core/api/delete_group_bottom_button', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id: btn.id})
+        })
+    ))
+    .then(() => {
+        showToast('删除成功！', 'success');
+        setTimeout(() => location.reload(), 1000);
     })
-    .then(res => res.json())
-    .then(result => {
-        if (result.status === 'ok') {
-            location.reload();
-        } else {
-            alert('❌ ' + (result.msg || '移动失败'));
-        }
-    })
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+
+function moveRowUp(rowIndex) {
+    if (rowIndex === 0) return;
+    
+    const buttonsInCurrentRow = buttonsData.filter(b => b.row_position === rowIndex);
+    const buttonsInPrevRow = buttonsData.filter(b => b.row_position === rowIndex - 1);
+    
+    // Swap row positions
+    Promise.all([
+        ...buttonsInCurrentRow.map(btn => 
+            fetch('/core/api/save_group_bottom_button', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    group_id: {{ group.id }},
+                    id: btn.id,
+                    button_text: btn.button_text,
+                    row_position: rowIndex - 1,
+                    button_order: btn.button_order,
+                    input_field_placeholder: btn.input_field_placeholder,
+                    is_active: btn.is_active
+                })
+            })
+        ),
+        ...buttonsInPrevRow.map(btn => 
+            fetch('/core/api/save_group_bottom_button', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    group_id: {{ group.id }},
+                    id: btn.id,
+                    button_text: btn.button_text,
+                    row_position: rowIndex,
+                    button_order: btn.button_order,
+                    input_field_placeholder: btn.input_field_placeholder,
+                    is_active: btn.is_active
+                })
+            })
+        )
+    ])
+    .then(() => location.reload())
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+
+function moveRowDown(rowIndex) {
+    const maxRow = Math.max(...buttonsData.map(b => b.row_position), -1);
+    if (rowIndex >= maxRow) return;
+    
+    const buttonsInCurrentRow = buttonsData.filter(b => b.row_position === rowIndex);
+    const buttonsInNextRow = buttonsData.filter(b => b.row_position === rowIndex + 1);
+    
+    // Swap row positions
+    Promise.all([
+        ...buttonsInCurrentRow.map(btn => 
+            fetch('/core/api/save_group_bottom_button', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    group_id: {{ group.id }},
+                    id: btn.id,
+                    button_text: btn.button_text,
+                    row_position: rowIndex + 1,
+                    button_order: btn.button_order,
+                    input_field_placeholder: btn.input_field_placeholder,
+                    is_active: btn.is_active
+                })
+            })
+        ),
+        ...buttonsInNextRow.map(btn => 
+            fetch('/core/api/save_group_bottom_button', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    group_id: {{ group.id }},
+                    id: btn.id,
+                    button_text: btn.button_text,
+                    row_position: rowIndex,
+                    button_order: btn.button_order,
+                    input_field_placeholder: btn.input_field_placeholder,
+                    is_active: btn.is_active
+                })
+            })
+        )
+    ])
+    .then(() => location.reload())
     .catch(err => {
         console.error(err);
         showToast('网络错误', 'error');

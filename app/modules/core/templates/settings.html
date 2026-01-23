@@ -332,14 +332,9 @@
                         <label class="fw-bold">自动回复模块</label>
                     </div>
                     
-                    <div class="form-check form-switch mb-3">
+                    <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" id="scheduled_msg_open" {{ 'checked' if conf.get('scheduled_msg_open', True) }}>
                         <label class="fw-bold">定时消息模块</label>
-                    </div>
-                    
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="start_msg_open" {{ 'checked' if conf.get('start_msg_open', True) }}>
-                        <label class="fw-bold">/start 消息模块</label>
                     </div>
                 </div>
 
@@ -381,7 +376,6 @@
                     <option value="msg_checkin_success">✅ 打卡成功消息</option>
                     <option value="msg_not_registered">⚠️ 未认证提示</option>
                     <option value="msg_repeat_checkin">🔄 重复打卡提示</option>
-                    <option value="msg_private_start">💬 私聊/start消息</option>
                 </select>
             </div>
             <div class="card-body p-0">
@@ -665,7 +659,6 @@
                 
                 auto_reply_open: document.getElementById('auto_reply_open').checked,
                 scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,
-                start_msg_open: document.getElementById('start_msg_open').checked,
 
                 push_channel_id: document.getElementById('push_channel_id').value,
                 custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 

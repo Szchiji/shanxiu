@@ -146,29 +146,85 @@
         }
     }
     
-    .link-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
-        padding: 8px;
+    .link-row-container {
         background: #f8f9fa;
         border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .link-row-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    
+    .link-row-title {
+        font-weight: 600;
+        color: #495057;
+        font-size: 0.9rem;
+    }
+    
+    .link-buttons-display {
+        display: flex;
         flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
     }
     
-    @media (min-width: 768px) {
-        .link-item {
-            gap: 10px;
-            margin-bottom: 10px;
-            padding: 10px;
-            flex-wrap: nowrap;
-        }
+    .link-button-badge {
+        display: inline-flex;
+        align-items: center;
+        background: #343a40;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.2s;
     }
     
-    .link-item input {
-        flex: 1;
-        min-width: 120px;
+    .link-button-badge:hover {
+        background: #495057;
+    }
+    
+    .link-button-badge .btn-close {
+        margin-left: 8px;
+        font-size: 0.7rem;
+        opacity: 0.7;
+    }
+    
+    .link-button-badge .btn-close:hover {
+        opacity: 1;
+    }
+    
+    .add-button-to-row {
+        font-size: 0.875rem;
+        padding: 6px 12px;
+    }
+    
+    .add-row-button {
+        border: 2px dashed #6c757d;
+        background: transparent;
+        color: #6c757d;
+        padding: 12px;
+        border-radius: 8px;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    
+    .add-row-button:hover {
+        border-color: #0d6efd;
+        color: #0d6efd;
+        background: #f8f9fa;
+    }
+    
+    .drag-handle {
+        cursor: move;
+        color: #6c757d;
+        font-size: 1.2rem;
     }
     
     .media-type-btn {
@@ -560,14 +616,11 @@
                     
                     <!-- 额外链接按钮 -->
                     <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <label class="form-label fw-bold mb-0">链接按钮</label>
-                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLinkButton()">
-                                <i class="fa-solid fa-plus me-1"></i>添加
-                            </button>
-                        </div>
+                        <label class="form-label fw-bold mb-2">链接按钮</label>
                         <div id="linksContainer"></div>
-                        <div class="form-text">链接会以按钮形式显示在消息下方。设置相同"行号"可实现多个按钮并排显示，"列顺序"控制同行内排列顺序</div>
+                        <button type="button" class="btn add-row-button" onclick="addNewRow()">
+                            <i class="fa-solid fa-plus me-2"></i>新增一行按钮
+                        </button>
                     </div>
                     
                     <!-- 删除上一条设置 -->
@@ -610,6 +663,37 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Button Edit Modal -->
+<div class="modal fade" id="buttonEditModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="buttonEditModalTitle">编辑按钮</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit_row_index">
+                <input type="hidden" id="edit_button_index">
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">按钮文字 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="button_text" placeholder="请输入按钮文字" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">链接 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="button_url" placeholder="http:// 或 https:// 或 tg://" required>
+                    <div class="form-text">支持 http://, https:// 或 tg 开头的链接</div>
+                </div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveButtonEdit()">确定</button>
             </div>
         </div>
     </div>
@@ -691,12 +775,153 @@
     
     // Links management
     function addLinkButton() {
-        currentLinks.push({ text: '', url: '', row: 0, order: 0 });
+        // Deprecated - use addNewRow() instead
+        addNewRow();
+    }
+    
+    function addNewRow() {
+        // Find the next available row index
+        const maxRow = currentLinks.length > 0 ? Math.max(...currentLinks.map(l => l.row)) : -1;
+        const newRow = maxRow + 1;
+        
+        // Add a button to the new row to make it visible
+        currentLinks.push({ text: '', url: '', row: newRow, order: 0 });
+        
+        renderLinksContainer();
+        
+        // Auto-open edit modal for the first button in new row
+        setTimeout(() => {
+            addButtonToRow(newRow);
+        }, 100);
+    }
+    
+    function addButtonToRow(rowIndex) {
+        // Open modal to add new button to specific row
+        document.getElementById('buttonEditModalTitle').textContent = `第 ${rowIndex + 1} 行新增按钮`;
+        document.getElementById('edit_row_index').value = rowIndex;
+        document.getElementById('edit_button_index').value = '-1'; // -1 means new button
+        document.getElementById('button_text').value = '';
+        document.getElementById('button_url').value = '';
+        
+        const modal = new bootstrap.Modal(document.getElementById('buttonEditModal'));
+        modal.show();
+    }
+    
+    function editButton(rowIndex, buttonIndex) {
+        // Get buttons in this row
+        const buttonsInRow = currentLinks.filter(link => link.row === rowIndex);
+        const button = buttonsInRow[buttonIndex];
+        
+        document.getElementById('buttonEditModalTitle').textContent = `第 ${rowIndex + 1} 行第 ${buttonIndex + 1} 个按钮`;
+        document.getElementById('edit_row_index').value = rowIndex;
+        document.getElementById('edit_button_index').value = buttonIndex;
+        document.getElementById('button_text').value = button.text;
+        document.getElementById('button_url').value = button.url;
+        
+        const modal = new bootstrap.Modal(document.getElementById('buttonEditModal'));
+        modal.show();
+    }
+    
+    function saveButtonEdit() {
+        const rowIndex = parseInt(document.getElementById('edit_row_index').value);
+        const buttonIndex = parseInt(document.getElementById('edit_button_index').value);
+        const text = document.getElementById('button_text').value.trim();
+        const url = document.getElementById('button_url').value.trim();
+        
+        // Validate
+        if (!text) {
+            alert('请输入按钮文字');
+            return;
+        }
+        if (!url) {
+            alert('请输入链接');
+            return;
+        }
+        if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('tg')) {
+            alert('链接必须以 http://, https:// 或 tg 开头');
+            return;
+        }
+        
+        if (buttonIndex === -1) {
+            // Add new button to row
+            const buttonsInRow = currentLinks.filter(link => link.row === rowIndex);
+            const order = buttonsInRow.length;
+            currentLinks.push({ text, url, row: rowIndex, order });
+        } else {
+            // Edit existing button
+            const buttonsInRow = currentLinks.filter(link => link.row === rowIndex);
+            const actualButton = buttonsInRow[buttonIndex];
+            const actualIndex = currentLinks.indexOf(actualButton);
+            currentLinks[actualIndex] = { ...actualButton, text, url };
+        }
+        
+        renderLinksContainer();
+        bootstrap.Modal.getInstance(document.getElementById('buttonEditModal')).hide();
+    }
+    
+    function removeButton(rowIndex, buttonIndex) {
+        if (!confirm('确定要删除这个按钮吗？')) return;
+        
+        const buttonsInRow = currentLinks.filter(link => link.row === rowIndex);
+        const actualButton = buttonsInRow[buttonIndex];
+        const actualIndex = currentLinks.indexOf(actualButton);
+        
+        currentLinks.splice(actualIndex, 1);
+        
+        // Reorder buttons in this row
+        const remainingButtons = currentLinks.filter(link => link.row === rowIndex);
+        remainingButtons.forEach((btn, idx) => {
+            btn.order = idx;
+        });
+        
         renderLinksContainer();
     }
     
     function removeLinkButton(index) {
+        // Deprecated - use removeButton instead
         currentLinks.splice(index, 1);
+        renderLinksContainer();
+    }
+    
+    function moveRowUp(rowIndex) {
+        if (rowIndex === 0) return;
+        
+        // Swap row indices
+        currentLinks.forEach(link => {
+            if (link.row === rowIndex) link.row = rowIndex - 1;
+            else if (link.row === rowIndex - 1) link.row = rowIndex;
+        });
+        
+        renderLinksContainer();
+    }
+    
+    function moveRowDown(rowIndex) {
+        const maxRow = Math.max(...currentLinks.map(l => l.row), -1);
+        if (rowIndex >= maxRow) return;
+        
+        // Swap row indices
+        currentLinks.forEach(link => {
+            if (link.row === rowIndex) link.row = rowIndex + 1;
+            else if (link.row === rowIndex + 1) link.row = rowIndex;
+        });
+        
+        renderLinksContainer();
+    }
+    
+    function deleteRow(rowIndex) {
+        if (!confirm('确定要删除这一行的所有按钮吗？')) return;
+        
+        // Remove all buttons in this row
+        currentLinks = currentLinks.filter(link => link.row !== rowIndex);
+        
+        // Reindex rows
+        const uniqueRows = [...new Set(currentLinks.map(l => l.row))].sort((a, b) => a - b);
+        uniqueRows.forEach((oldRow, newRow) => {
+            currentLinks.forEach(link => {
+                if (link.row === oldRow) link.row = newRow;
+            });
+        });
+        
         renderLinksContainer();
     }
     
@@ -706,22 +931,57 @@
     
     function renderLinksContainer() {
         const container = document.getElementById('linksContainer');
+        
         if (currentLinks.length === 0) {
-            container.innerHTML = '<div class="text-muted small text-center py-2">暂无链接按钮</div>';
+            container.innerHTML = '<div class="text-muted small text-center py-3">暂无按钮，点击下方添加新的一行</div>';
             return;
         }
         
-        container.innerHTML = currentLinks.map((link, i) => `
-            <div class="link-item">
-                <input type="text" class="form-control form-control-sm" placeholder="按钮文字" value="${link.text || ''}" onchange="updateLinkButton(${i}, 'text', this.value)" style="flex: 1 1 30%;">
-                <input type="url" class="form-control form-control-sm" placeholder="链接URL" value="${link.url || ''}" onchange="updateLinkButton(${i}, 'url', this.value)" style="flex: 1 1 40%;">
-                <input type="number" class="form-control form-control-sm" placeholder="行号" value="${link.row || 0}" onchange="updateLinkButton(${i}, 'row', this.value)" min="0" style="flex: 0 0 60px;">
-                <input type="number" class="form-control form-control-sm" placeholder="列" value="${link.order || 0}" onchange="updateLinkButton(${i}, 'order', this.value)" min="0" style="flex: 0 0 60px;">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLinkButton(${i})">
-                    <i class="fa-solid fa-times"></i>
-                </button>
-            </div>
-        `).join('');
+        // Group buttons by row
+        const buttonsByRow = {};
+        currentLinks.forEach(link => {
+            if (!buttonsByRow[link.row]) {
+                buttonsByRow[link.row] = [];
+            }
+            buttonsByRow[link.row].push(link);
+        });
+        
+        // Sort buttons within each row by order
+        Object.keys(buttonsByRow).forEach(row => {
+            buttonsByRow[row].sort((a, b) => a.order - b.order);
+        });
+        
+        // Get sorted row indices
+        const rows = Object.keys(buttonsByRow).map(r => parseInt(r)).sort((a, b) => a - b);
+        
+        container.innerHTML = rows.map((rowIndex, displayIndex) => {
+            const buttons = buttonsByRow[rowIndex];
+            const buttonsHtml = buttons.map((btn, btnIdx) => `
+                <span class="link-button-badge" onclick="editButton(${rowIndex}, ${btnIdx})">
+                    ${btn.text || '(未命名)'}
+                    <button type="button" class="btn-close btn-close-white" onclick="event.stopPropagation(); removeButton(${rowIndex}, ${btnIdx})"></button>
+                </span>
+            `).join('');
+            
+            return `
+                <div class="link-row-container">
+                    <div class="link-row-header">
+                        <span class="link-row-title">第 ${displayIndex + 1} 行</span>
+                        <div class="d-flex gap-2 align-items-center">
+                            ${displayIndex > 0 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveRowUp(${rowIndex})" title="上移"><i class="fa-solid fa-arrow-up"></i></button>` : ''}
+                            ${displayIndex < rows.length - 1 ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="moveRowDown(${rowIndex})" title="下移"><i class="fa-solid fa-arrow-down"></i></button>` : ''}
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteRow(${rowIndex})" title="删除行"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                    <div class="link-buttons-display">
+                        ${buttonsHtml}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary add-button-to-row" onclick="addButtonToRow(${rowIndex})">
+                        <i class="fa-solid fa-plus me-1"></i>本行新增一个按钮
+                    </button>
+                </div>
+            `;
+        }).join('');
     }
     
     // Convert HTML to template format

@@ -964,12 +964,80 @@ def api_import_config(gid):
     try:
         config = request.get_json()
         
+        # Validate config structure
+        if not isinstance(config, dict):
+            return jsonify({'error': '配置格式错误'}), 400
+        
         # Update group config
-        if 'config' in config:
+        if 'config' in config and isinstance(config['config'], dict):
             group.config = json.dumps(config['config'], ensure_ascii=False)
         
-        if 'fields_config' in config:
+        if 'fields_config' in config and isinstance(config['fields_config'], list):
             group.fields_config = json.dumps(config['fields_config'], ensure_ascii=False)
+        
+        # Import auto_replies (optional: user can choose to import or not)
+        if 'auto_replies' in config and isinstance(config['auto_replies'], list):
+            for ar_data in config['auto_replies']:
+                if not isinstance(ar_data, dict):
+                    continue
+                # Check if auto reply with same keyword exists
+                existing = AutoReply.query.filter_by(
+                    group_id=gid,
+                    trigger_keyword=ar_data.get('trigger_keyword', '')
+                ).first()
+                if not existing:
+                    ar = AutoReply(
+                        group_id=gid,
+                        trigger_keyword=ar_data.get('trigger_keyword', ''),
+                        media_type=ar_data.get('media_type', 'text'),
+                        media_url=ar_data.get('media_url'),
+                        content=ar_data.get('content'),
+                        links=json.dumps(ar_data.get('links', []), ensure_ascii=False),
+                        delete_after=ar_data.get('delete_after', 0),
+                        remark=ar_data.get('remark'),
+                        is_active=ar_data.get('is_active', True)
+                    )
+                    db.session.add(ar)
+        
+        # Import points_rules (optional)
+        if 'points_rules' in config and isinstance(config['points_rules'], list):
+            for pr_data in config['points_rules']:
+                if not isinstance(pr_data, dict):
+                    continue
+                # Check if rule with same name exists
+                existing = PointsRule.query.filter_by(
+                    group_id=gid,
+                    rule_name=pr_data.get('rule_name', '')
+                ).first()
+                if not existing:
+                    pr = PointsRule(
+                        group_id=gid,
+                        rule_name=pr_data.get('rule_name', ''),
+                        rule_type=pr_data.get('rule_type', 'custom'),
+                        points_amount=pr_data.get('points_amount', 1),
+                        is_active=pr_data.get('is_active', True)
+                    )
+                    db.session.add(pr)
+        
+        # Import member_levels (optional)
+        if 'member_levels' in config and isinstance(config['member_levels'], list):
+            for ml_data in config['member_levels']:
+                if not isinstance(ml_data, dict):
+                    continue
+                # Check if level with same name exists
+                existing = MemberLevel.query.filter_by(
+                    group_id=gid,
+                    level_name=ml_data.get('level_name', '')
+                ).first()
+                if not existing:
+                    ml = MemberLevel(
+                        group_id=gid,
+                        level_name=ml_data.get('level_name', ''),
+                        required_points=ml_data.get('required_points', 0),
+                        permissions=json.dumps(ml_data.get('permissions', {}), ensure_ascii=False),
+                        badge_emoji=ml_data.get('badge_emoji')
+                    )
+                    db.session.add(ml)
         
         db.session.commit()
         
@@ -981,33 +1049,43 @@ def api_import_config(gid):
 
 @core_bp.route('/health')
 def health_check():
-    """健康检查端点"""
+    """健康检查端点 - 需要认证或仅返回基本信息"""
+    # Check if authenticated for detailed information
+    is_authenticated = session.get('logged_in', False)
+    
     try:
         # Check database connection
         db.session.execute(db.text('SELECT 1'))
         db_status = 'ok'
     except Exception as e:
-        db_status = f'error: {str(e)}'
+        db_status = 'error'
     
     # Check bot status
     bot_status = 'running' if global_ptb_app else 'not_started'
     
-    # Get last message time (from MessageStatistics)
-    try:
-        last_stat = MessageStatistics.query.order_by(
-            MessageStatistics.updated_at.desc()
-        ).first()
-        last_message_time = last_stat.updated_at.isoformat() if last_stat else None
-    except:
-        last_message_time = None
-    
-    return jsonify({
+    # Basic health status (always available)
+    result = {
         'status': 'healthy' if db_status == 'ok' and bot_status == 'running' else 'degraded',
-        'timestamp': datetime.now().isoformat(),
-        'database': db_status,
-        'bot': bot_status,
-        'last_message_time': last_message_time
-    })
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    # Detailed information (only when authenticated)
+    if is_authenticated:
+        try:
+            last_stat = MessageStatistics.query.order_by(
+                MessageStatistics.updated_at.desc()
+            ).first()
+            last_message_time = last_stat.updated_at.isoformat() if last_stat else None
+        except Exception:
+            last_message_time = None
+        
+        result.update({
+            'database': db_status,
+            'bot': bot_status,
+            'last_message_time': last_message_time
+        })
+    
+    return jsonify(result)
 
 
 # --- API Routes ---
@@ -5023,7 +5101,7 @@ async def cmd_rank(update: Update, context):
                 try:
                     profile = json.loads(group_user.profile_data) if group_user.profile_data else {}
                     name = profile.get('name', f'User_{user_points.user_id}')
-                except:
+                except Exception:
                     name = f'User_{user_points.user_id}'
                 
                 results.append({
@@ -5115,7 +5193,7 @@ async def cmd_active(update: Update, context):
                 try:
                     profile = json.loads(group_user.profile_data) if group_user.profile_data else {}
                     name = profile.get('name', f'User_{user_id}')
-                except:
+                except Exception:
                     name = f'User_{user_id}'
                 
                 results.append({
@@ -6585,7 +6663,7 @@ async def show_vote_results(query, user, chat, vote_id):
             total_votes = 0
             
             records = VoteRecord.query.filter_by(vote_id=vote_id).all()
-            for record:
+            for record in records:
                 choices = json.loads(record.choices)
                 for choice in choices:
                     if 0 <= choice < len(options):

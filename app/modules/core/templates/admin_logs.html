@@ -87,19 +87,19 @@
     <div class="log-card">
         <div class="log-header">
             <div>
-                <span class="action-badge action-{{ log.action_type }}">
-                    {{ log.action_type }}
+                <span class="action-badge action-{{ log.action_type|e }}">
+                    {{ log.action_type|e }}
                 </span>
-                <strong>{{ log.admin_name or 'Admin #' + log.admin_id|string }}</strong>
+                <strong>{{ log.admin_name|e or 'Admin #' + log.admin_id|string }}</strong>
             </div>
             <span class="log-time">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
         </div>
         <div class="log-details">
             {% if log.target_user_name %}
-                <div>目标用户: <strong>{{ log.target_user_name }}</strong></div>
+                <div>目标用户: <strong>{{ log.target_user_name|e }}</strong></div>
             {% endif %}
             {% if log.details %}
-                <div class="mt-1">详情: {{ log.details }}</div>
+                <div class="mt-1">详情: {{ log.details|e }}</div>
             {% endif %}
         </div>
     </div>

@@ -425,16 +425,34 @@ def page_group_members(gid):
     
     members = pagination.items
     
-    # 获取成员积分和认证状态
+    # 获取成员积分和认证状态（批量查询避免N+1问题）
     member_info = {}
-    for member in members:
-        points = UserPoints.query.filter_by(group_id=gid, user_id=member.user_id).first()
-        verified_user = GroupUser.query.filter_by(group_id=gid, tg_id=member.user_id).first()
-        member_info[member.user_id] = {
-            'points': points.points_balance if points else 0,
-            'is_verified': verified_user is not None,
-            'verified_user': verified_user
-        }
+    if members:
+        user_ids = [member.user_id for member in members]
+        
+        # 批量查询积分
+        points_list = UserPoints.query.filter(
+            UserPoints.group_id == gid,
+            UserPoints.user_id.in_(user_ids)
+        ).all()
+        points_dict = {p.user_id: p for p in points_list}
+        
+        # 批量查询认证用户
+        verified_list = GroupUser.query.filter(
+            GroupUser.group_id == gid,
+            GroupUser.tg_id.in_(user_ids)
+        ).all()
+        verified_dict = {u.tg_id: u for u in verified_list}
+        
+        # 构建成员信息字典
+        for member in members:
+            points = points_dict.get(member.user_id)
+            verified_user = verified_dict.get(member.user_id)
+            member_info[member.user_id] = {
+                'points': points.points_balance if points else 0,
+                'is_verified': verified_user is not None,
+                'verified_user': verified_user
+            }
     
     # 统计
     stats = {
@@ -4002,6 +4020,30 @@ async def track_user_name_change(update: Update, context):
     except Exception as e:
         print(f"Error in track_user_name_change: {e}")
 
+def update_or_create_group_member(group_id, user_id, username=None, first_name=None, last_name=None, status='member', is_bot=False):
+    """Helper function to update or create a group member record"""
+    member = GroupMember.query.filter_by(
+        group_id=group_id,
+        user_id=user_id
+    ).first()
+    
+    if not member:
+        member = GroupMember(
+            group_id=group_id,
+            user_id=user_id
+        )
+        db.session.add(member)
+    
+    # 统一处理 None 值，避免数据库不一致
+    member.username = username or ''
+    member.first_name = first_name or ''
+    member.last_name = last_name or ''
+    member.status = status
+    member.is_bot = is_bot
+    member.synced_at = datetime.now()
+    
+    return member
+
 async def sync_group_members_task(group):
     """从 Telegram 同步群成员到数据库"""
     if not global_ptb_app or not global_flask_app:
@@ -4026,24 +4068,15 @@ async def sync_group_members_task(group):
             # 更新管理员
             for admin in admins:
                 user = admin.user
-                member = GroupMember.query.filter_by(
+                update_or_create_group_member(
                     group_id=group.id,
-                    user_id=user.id
-                ).first()
-                
-                if not member:
-                    member = GroupMember(
-                        group_id=group.id,
-                        user_id=user.id
-                    )
-                    db.session.add(member)
-                
-                member.username = user.username
-                member.first_name = user.first_name
-                member.last_name = user.last_name
-                member.status = admin.status
-                member.is_bot = user.is_bot
-                member.synced_at = now
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    status=admin.status,
+                    is_bot=user.is_bot
+                )
                 synced_count += 1
             
             db.session.commit()
@@ -4073,23 +4106,15 @@ async def update_group_member(update: Update, context):
                 if not group:
                     return
                 
-                member = GroupMember.query.filter_by(
+                update_or_create_group_member(
                     group_id=group.id,
-                    user_id=user.id
-                ).first()
-                
-                if not member:
-                    member = GroupMember(
-                        group_id=group.id,
-                        user_id=user.id
-                    )
-                    db.session.add(member)
-                
-                member.username = user.username
-                member.first_name = user.first_name
-                member.last_name = user.last_name or ''
-                member.is_bot = user.is_bot
-                member.synced_at = datetime.now()
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    status='member',  # 默认为普通成员，管理员由sync_group_members_task更新
+                    is_bot=user.is_bot
+                )
                 
                 db.session.commit()
         

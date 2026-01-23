@@ -11,7 +11,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPer
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_, cast, String
-import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
+import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback, random
 from datetime import datetime, timedelta
 import pytz
 from openpyxl import Workbook, load_workbook
@@ -32,6 +32,9 @@ MAX_CONCURRENT_BANS = 5  # Maximum concurrent ban operations to avoid rate limit
 EXPIRED_USERS_BATCH_SIZE = 100  # Process expired users in batches to avoid memory issues
 AUTH_SESSION_EXPIRY_MINUTES = 5  # Authentication session expiry time
 SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # Check scheduled messages every minute (in seconds)
+MAX_LOTTERY_PARTICIPANTS = 100  # Maximum participants to consider in lottery fallback
+MAX_LOTTERY_MESSAGE_COUNT_RECORDS = 10000  # Maximum message count records to load for lottery
+MAX_AUCTION_WINNERS = 100  # Maximum winners in auction/lottery ranking
 
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -5489,7 +5492,6 @@ async def cmd_lottery_draw(update: Update, context):
                 
                 # Perform the draw
                 winners = []
-                import random
                 
                 if lottery.lottery_type == 'message_count':
                     # Weighted random based on message count
@@ -5497,7 +5499,7 @@ async def cmd_lottery_draw(update: Update, context):
                         lottery_id=lottery.id
                     ).filter(LotteryMessageCount.message_count > 0).order_by(
                         LotteryMessageCount.message_count.desc()
-                    ).limit(10000).all()
+                    ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
                     
                     if message_counts:
                         participants = [(mc.user_id, mc.message_count) for mc in message_counts]
@@ -5513,7 +5515,7 @@ async def cmd_lottery_draw(update: Update, context):
                                     break
                     else:
                         # Fallback to random group user
-                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
                         if eligible_users:
                             winner = random.choice(eligible_users)
                             winners = [winner.tg_id]
@@ -5523,7 +5525,7 @@ async def cmd_lottery_draw(update: Update, context):
                     top_senders = LotteryMessageCount.query.filter_by(
                         lottery_id=lottery.id
                     ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                        min(lottery.top_n_winners or 1, 100)
+                        min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                     ).all()
                     
                     winners = [mc.user_id for mc in top_senders]
@@ -5531,7 +5533,7 @@ async def cmd_lottery_draw(update: Update, context):
                     if not winners:
                         # Fallback
                         top_users = GroupUser.query.filter_by(group_id=group.id).limit(
-                            min(lottery.top_n_winners or 1, 100)
+                            min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                         ).all()
                         winners = [u.tg_id for u in top_users]
                 
@@ -5619,8 +5621,8 @@ async def cmd_lottery_history(update: Update, context):
                 message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
                 if len(winner_ids) > 5:
                     message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
-        except:
-            pass
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            print(f"Error parsing winner_ids for lottery history: {e}")
     
     await update.message.reply_text("\n".join(message_lines), parse_mode='HTML')
 

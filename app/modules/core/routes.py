@@ -3314,6 +3314,76 @@ def api_get_member_detail():
     return jsonify({'status': 'ok', 'user': result})
 
 
+@core_bp.route('/api/adjust_points', methods=['POST'])
+def api_adjust_points():
+    """后台调整用户积分（增加或减少）"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': '需要登录'})
+    
+    data = request.get_json()
+    group_id = safe_int(data.get('group_id'), 0)
+    user_id = safe_int(data.get('user_id'), 0)
+    points_change = safe_int(data.get('points_change'), 0)
+    reason = data.get('reason', '后台调整').strip()
+    
+    if not group_id or not user_id:
+        return jsonify({'status': 'error', 'msg': '缺少必要参数'})
+    
+    if points_change == 0:
+        return jsonify({'status': 'error', 'msg': '积分变动不能为0'})
+    
+    # 验证群组是否存在
+    group = BotGroup.query.get(group_id)
+    if not group:
+        return jsonify({'status': 'error', 'msg': '群组不存在'})
+    
+    # 获取或创建用户积分记录
+    user_points = UserPoints.query.filter_by(
+        group_id=group_id,
+        user_id=user_id
+    ).first()
+    
+    if not user_points:
+        user_points = UserPoints(
+            group_id=group_id,
+            user_id=user_id,
+            points_balance=0
+        )
+        db.session.add(user_points)
+    
+    # 检查积分是否会变为负数
+    new_balance = user_points.points_balance + points_change
+    if new_balance < 0:
+        return jsonify({
+            'status': 'error', 
+            'msg': f'积分不足，当前积分: {user_points.points_balance}，无法减少 {abs(points_change)}'
+        })
+    
+    # 更新积分
+    user_points.points_balance = new_balance
+    
+    # 记录积分日志
+    points_log = PointsLog(
+        group_id=group_id,
+        user_id=user_id,
+        points_change=points_change,
+        reason=reason,
+        balance_after=new_balance
+    )
+    db.session.add(points_log)
+    
+    try:
+        db.session.commit()
+        return jsonify({
+            'status': 'ok', 
+            'msg': f'积分调整成功',
+            'new_balance': new_balance
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'msg': f'操作失败: {str(e)}'})
+
+
 @core_bp.route('/logout')
 def logout():
     session.clear()
@@ -3660,6 +3730,18 @@ async def handle_new_chat_member(update: Update, context):
                 if new_member.is_bot:
                     continue
                 
+                # 记录新成员加入（包含joined_at时间）
+                update_or_create_group_member(
+                    group_id=group.id,
+                    user_id=new_member.id,
+                    username=new_member.username,
+                    first_name=new_member.first_name,
+                    last_name=new_member.last_name,
+                    status='member',
+                    is_bot=new_member.is_bot
+                )
+                db.session.commit()
+                
                 # Entry verification
                 if settings.entry_verification_enabled and settings.verification_question:
                     try:
@@ -3743,7 +3825,7 @@ async def handle_new_chat_member(update: Update, context):
         print(f"Error in handle_new_chat_member: {e}")
 
 async def handle_left_chat_member(update: Update, context):
-    """Handle members leaving the group - Exit ban functionality"""
+    """Handle members leaving the group - Exit ban functionality and record deletion"""
     if not global_flask_app or not update.message or not update.message.left_chat_member:
         return
     
@@ -3760,6 +3842,26 @@ async def handle_left_chat_member(update: Update, context):
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
             if not group or not group.is_active:
                 return
+            
+            # 删除群成员记录
+            member = GroupMember.query.filter_by(
+                group_id=group.id,
+                user_id=left_member.id
+            ).first()
+            if member:
+                db.session.delete(member)
+                print(f"删除群成员记录: user_id={left_member.id}, group_id={group.id}")
+            
+            # 可选：删除用户积分记录
+            user_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=left_member.id
+            ).first()
+            if user_points:
+                db.session.delete(user_points)
+                print(f"删除用户积分记录: user_id={left_member.id}, group_id={group.id}")
+            
+            db.session.commit()
             
             settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
             if not settings or not settings.exit_ban_enabled:
@@ -4027,10 +4129,12 @@ def update_or_create_group_member(group_id, user_id, username=None, first_name=N
         user_id=user_id
     ).first()
     
-    if not member:
+    is_new_member = not member
+    if is_new_member:
         member = GroupMember(
             group_id=group_id,
-            user_id=user_id
+            user_id=user_id,
+            joined_at=datetime.now()  # 记录进群时间
         )
         db.session.add(member)
     

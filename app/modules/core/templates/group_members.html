@@ -142,7 +142,8 @@
                         <th>身份</th>
                         <th>积分</th>
                         <th>认证</th>
-                        <th>同步时间</th>
+                        <th>进群时间</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -176,12 +177,17 @@
                             {% endif %}
                         </td>
                         <td>
-                            <small class="text-muted">{{ member.synced_at.strftime('%m-%d %H:%M') if member.synced_at else '-' }}</small>
+                            <small class="text-muted">{{ member.joined_at.strftime('%m-%d %H:%M') if member.joined_at else '-' }}</small>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="showAdjustPointsModal({{ member.user_id }}, '{{ member.first_name }}')">
+                                <i class="fa-solid fa-coins me-1"></i>调整积分
+                            </button>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="6" class="text-center py-5">
+                        <td colspan="7" class="text-center py-5">
                             <i class="fa-solid fa-users-slash fa-3x text-muted mb-3"></i>
                             <p class="text-muted mb-2">暂无成员数据</p>
                             <button class="btn btn-primary btn-sm" onclick="syncMembers()">
@@ -227,7 +233,90 @@
     {% endif %}
 </div>
 
+<!-- 调整积分模态框 -->
+<div class="modal fade" id="adjustPointsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-coins me-2"></i>调整积分</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">用户</label>
+                    <p id="adjustUserName" class="text-muted"></p>
+                </div>
+                <div class="mb-3">
+                    <label for="pointsChange" class="form-label fw-bold">积分变动</label>
+                    <input type="number" class="form-control" id="pointsChange" placeholder="正数增加，负数减少" required>
+                    <small class="text-muted">例如：输入 100 增加积分，输入 -50 减少积分</small>
+                </div>
+                <div class="mb-3">
+                    <label for="adjustReason" class="form-label fw-bold">变动原因（可选）</label>
+                    <input type="text" class="form-control" id="adjustReason" placeholder="例如：活动奖励、违规扣分等">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="confirmAdjustPoints()">确认调整</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+let currentAdjustUserId = null;
+
+function showAdjustPointsModal(userId, userName) {
+    currentAdjustUserId = userId;
+    document.getElementById('adjustUserName').textContent = userName + ' (ID: ' + userId + ')';
+    document.getElementById('pointsChange').value = '';
+    document.getElementById('adjustReason').value = '';
+    
+    const modal = new bootstrap.Modal(document.getElementById('adjustPointsModal'));
+    modal.show();
+}
+
+function confirmAdjustPoints() {
+    const pointsChange = parseInt(document.getElementById('pointsChange').value);
+    const reason = document.getElementById('adjustReason').value.trim() || '后台调整';
+    
+    if (isNaN(pointsChange) || pointsChange === 0) {
+        showToast('请输入有效的积分变动数值', 'error');
+        return;
+    }
+    
+    showLoading('正在调整积分...');
+    
+    fetch('/core/api/adjust_points', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            group_id: {{ group.id }},
+            user_id: currentAdjustUserId,
+            points_change: pointsChange,
+            reason: reason
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        hideLoading();
+        if (data.status === 'ok') {
+            showToast(`积分调整成功！新余额: ${data.new_balance}`, 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('adjustPointsModal'));
+            modal.hide();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast(data.msg || '调整失败', 'error');
+        }
+    })
+    .catch(err => {
+        hideLoading();
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+
 function syncMembers() {
     showLoading('正在同步群成员...');
     fetch('/core/api/sync_group_members', {

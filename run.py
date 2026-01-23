@@ -79,6 +79,8 @@ def fix_database_schema(app):
             # User points table columns - add current_level_id to track member levels
             # Column is nullable, so existing records will have NULL until update_member_levels runs
             "ALTER TABLE user_points ADD COLUMN current_level_id INTEGER REFERENCES member_level(id)",
+            # GroupMember: Set joined_at for existing records if NULL (use created_at as fallback)
+            "UPDATE group_members SET joined_at = COALESCE(created_at, synced_at) WHERE joined_at IS NULL",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

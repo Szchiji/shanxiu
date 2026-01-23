@@ -437,7 +437,15 @@
             </thead>
             <tbody id="dataTable">
                 {% for item in auto_replies %}
-                <tr data-id="{{ item.id }}">
+                <tr data-id="{{ item.id }}" 
+                    data-trigger-keyword="{{ item.trigger_keyword }}"
+                    data-media-type="{{ item.media_type }}"
+                    data-media-url="{{ item.media_url or '' }}"
+                    data-content="{{ item.content or '' }}"
+                    data-links="{{ item.links or '[]' }}"
+                    data-delete-after="{{ item.delete_after or 0 }}"
+                    data-remark="{{ item.remark or '' }}"
+                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
                     <td>
@@ -609,21 +617,11 @@
 
 <script>
     const groupId = {{ group.id }};
-    let itemsData = {{ auto_replies_json|safe }};
     let currentLinks = [];
-    
-    // Pagination state
-    let currentPage = 1;
-    const itemsPerPage = 10;
-    let filteredItems = [];
-    let searchQuery = '';
     
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         renderLinksContainer();
-        filteredItems = [...itemsData];
-        updateTableDisplay();
-        updatePagination();
         
         // Enter key for search
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
@@ -633,81 +631,25 @@
     
     // Search functionality
     function searchItems() {
-        searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
-        if (searchQuery) {
-            filteredItems = itemsData.filter(item => 
-                (item.trigger_keyword && item.trigger_keyword.toLowerCase().includes(searchQuery)) ||
-                (item.remark && item.remark.toLowerCase().includes(searchQuery))
-            );
+        const query = document.getElementById('searchInput').value.trim();
+        // Navigate to first page with search parameter
+        const params = new URLSearchParams(window.location.search);
+        if (query) {
+            params.set('search', query);
         } else {
-            filteredItems = [...itemsData];
+            params.delete('search');
         }
-        currentPage = 1;
-        updateTableDisplay();
-        updatePagination();
+        params.set('page', 1);
+        window.location.search = params.toString();
     }
     
     function clearSearch() {
-        document.getElementById('searchInput').value = '';
-        searchQuery = '';
-        filteredItems = [...itemsData];
-        currentPage = 1;
-        updateTableDisplay();
-        updatePagination();
+        // Clear search parameter but preserve other parameters
+        const params = new URLSearchParams(window.location.search);
+        params.delete('search');
+        params.set('page', 1);
+        window.location.search = params.toString();
     }
-    
-    // Pagination functionality
-    function updatePagination() {
-        const totalItems = filteredItems.length;
-        const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
-        
-        document.getElementById('totalCount').textContent = totalItems;
-        document.getElementById('currentPage').textContent = currentPage;
-        document.getElementById('totalPages').textContent = totalPages;
-        
-        const startIdx = (currentPage - 1) * itemsPerPage + 1;
-        const endIdx = Math.min(currentPage * itemsPerPage, totalItems);
-        document.getElementById('showingRange').textContent = totalItems > 0 ? `${startIdx}-${endIdx}` : '0-0';
-        
-        document.getElementById('prevBtn').disabled = currentPage <= 1;
-        document.getElementById('nextBtn').disabled = currentPage >= totalPages;
-    }
-    
-    function updateTableDisplay() {
-        const rows = document.querySelectorAll('#dataTable tr[data-id]');
-        const emptyRow = document.getElementById('emptyRow');
-        
-        // Hide all rows first
-        rows.forEach(row => row.style.display = 'none');
-        
-        if (filteredItems.length === 0) {
-            if (emptyRow) emptyRow.style.display = '';
-            return;
-        }
-        
-        if (emptyRow) emptyRow.style.display = 'none';
-        
-        // Show items for current page
-        const startIdx = (currentPage - 1) * itemsPerPage;
-        const endIdx = startIdx + itemsPerPage;
-        const pageItems = filteredItems.slice(startIdx, endIdx);
-        
-        pageItems.forEach(item => {
-            const row = document.querySelector(`#dataTable tr[data-id="${item.id}"]`);
-            if (row) row.style.display = '';
-        });
-    }
-    
-    function prevPage() {
-        if (currentPage > 1) {
-            currentPage--;
-            updateTableDisplay();
-            updatePagination();
-        }
-    }
-    
-    function nextPage() {
-        const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
         if (currentPage < totalPages) {
             currentPage++;
             updateTableDisplay();
@@ -819,20 +761,32 @@
     }
     
     function openEditModal(id) {
-        const item = itemsData.find(i => i.id === id);
-        if (!item) return alert('未找到数据');
+        const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
+        if (!row) return alert('未找到数据');
+        
+        // Get data from row attributes
+        const item = {
+            id: id,
+            trigger_keyword: row.dataset.triggerKeyword || '',
+            media_type: row.dataset.mediaType || 'text',
+            media_url: row.dataset.mediaUrl || '',
+            content: row.dataset.content || '',
+            links: row.dataset.links || '[]',
+            delete_after: row.dataset.deleteAfter || 0,
+            remark: row.dataset.remark || ''
+        };
         
         document.getElementById('modalTitle').textContent = '编辑自动回复';
         document.getElementById('itemId').value = item.id;
-        document.getElementById('triggerKeyword').value = item.trigger_keyword || '';
-        selectMediaType(item.media_type || 'text');
-        document.getElementById('mediaUrl').value = item.media_url || '';
-        document.getElementById('editor').innerHTML = templateToHtml(item.content || '');
-        document.getElementById('deleteAfter').value = item.delete_after || 0;
-        document.getElementById('remark').value = item.remark || '';
+        document.getElementById('triggerKeyword').value = item.trigger_keyword;
+        selectMediaType(item.media_type);
+        document.getElementById('mediaUrl').value = item.media_url;
+        document.getElementById('editor').innerHTML = templateToHtml(item.content);
+        document.getElementById('deleteAfter').value = item.delete_after;
+        document.getElementById('remark').value = item.remark;
         
         try {
-            currentLinks = JSON.parse(item.links || '[]');
+            currentLinks = JSON.parse(item.links);
         } catch (e) {
             currentLinks = [];
         }
@@ -952,30 +906,8 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                // Remove from local data
-                const index = itemsData.findIndex(item => item.id === id);
-                if (index > -1) {
-                    itemsData.splice(index, 1);
-                }
-                
-                // Update filtered items
-                const filteredIndex = filteredItems.findIndex(item => item.id === id);
-                if (filteredIndex > -1) {
-                    filteredItems.splice(filteredIndex, 1);
-                }
-                
-                // Remove row from table
-                const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
-                if (row) {
-                    row.remove();
-                }
-                
-                // Update pagination
-                updatePagination();
-                updateTableDisplay();
-                
-                // Show success message
-                alert('删除成功');
+                // Reload page to reflect changes
+                location.reload();
             } else {
                 alert(result.msg || '删除失败');
             }

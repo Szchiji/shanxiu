@@ -490,7 +490,17 @@
             </thead>
             <tbody id="dataTable">
                 {% for item in scheduled_messages %}
-                <tr data-id="{{ item.id }}">
+                <tr data-id="{{ item.id }}"
+                    data-media-type="{{ item.media_type }}"
+                    data-media-url="{{ item.media_url or '' }}"
+                    data-content="{{ item.content or '' }}"
+                    data-links="{{ item.links or '[]' }}"
+                    data-repeat-interval="{{ item.repeat_interval or 0 }}"
+                    data-delete-previous="{{ 'true' if item.delete_previous else 'false' }}"
+                    data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
+                    data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
+                    data-remark="{{ item.remark or '' }}"
+                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td>
                         {% if item.media_type == 'text' %}
@@ -545,23 +555,8 @@
 </div>
 
 <!-- Pagination Controls -->
-<div class="pagination-container" id="paginationContainer">
-    <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2">
-        <div class="pagination-info">
-            <span>共 <strong id="totalCount">{{ scheduled_messages|length }}</strong> 条记录</span>
-            <span class="ms-2">显示 <strong id="showingRange">1-{{ scheduled_messages|length }}</strong></span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-            <span class="pagination-info">第 <strong id="currentPage">1</strong>/<strong id="totalPages">1</strong> 页</span>
-            <button class="btn btn-outline-primary btn-page" id="prevBtn" onclick="prevPage()" disabled>
-                <i class="fa-solid fa-chevron-left me-1"></i>上一页
-            </button>
-            <button class="btn btn-outline-primary btn-page" id="nextBtn" onclick="nextPage()" disabled>
-                下一页<i class="fa-solid fa-chevron-right ms-1"></i>
-            </button>
-        </div>
-    </div>
-</div>
+{% from 'pagination.html' import pagination %}
+{{ pagination(current_page, total_pages, per_page, total_items) }}
 
 <!-- Add/Edit Modal -->
 <div class="modal fade" id="itemModal" tabindex="-1">
@@ -702,21 +697,11 @@
 
 <script>
     const groupId = {{ group.id }};
-    let itemsData = {{ scheduled_messages_json|safe }};
     let currentLinks = [];
-    
-    // Pagination state
-    let currentPage = 1;
-    const itemsPerPage = 10;
-    let filteredItems = [];
-    let searchQuery = '';
     
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         renderLinksContainer();
-        filteredItems = [...itemsData];
-        updateTableDisplay();
-        updatePagination();
         
         // Enter key for search
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
@@ -726,86 +711,24 @@
     
     // Search functionality
     function searchItems() {
-        searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
-        if (searchQuery) {
-            filteredItems = itemsData.filter(item => 
-                (item.remark && item.remark.toLowerCase().includes(searchQuery)) ||
-                (item.content && item.content.toLowerCase().includes(searchQuery))
-            );
+        const query = document.getElementById('searchInput').value.trim();
+        // Navigate to first page with search parameter
+        const params = new URLSearchParams(window.location.search);
+        if (query) {
+            params.set('search', query);
         } else {
-            filteredItems = [...itemsData];
+            params.delete('search');
         }
-        currentPage = 1;
-        updateTableDisplay();
-        updatePagination();
+        params.set('page', 1);
+        window.location.search = params.toString();
     }
     
     function clearSearch() {
-        document.getElementById('searchInput').value = '';
-        searchQuery = '';
-        filteredItems = [...itemsData];
-        currentPage = 1;
-        updateTableDisplay();
-        updatePagination();
-    }
-    
-    // Pagination functionality
-    function updatePagination() {
-        const totalItems = filteredItems.length;
-        const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
-        
-        document.getElementById('totalCount').textContent = totalItems;
-        document.getElementById('currentPage').textContent = currentPage;
-        document.getElementById('totalPages').textContent = totalPages;
-        
-        const startIdx = (currentPage - 1) * itemsPerPage + 1;
-        const endIdx = Math.min(currentPage * itemsPerPage, totalItems);
-        document.getElementById('showingRange').textContent = totalItems > 0 ? `${startIdx}-${endIdx}` : '0-0';
-        
-        document.getElementById('prevBtn').disabled = currentPage <= 1;
-        document.getElementById('nextBtn').disabled = currentPage >= totalPages;
-    }
-    
-    function updateTableDisplay() {
-        const rows = document.querySelectorAll('#dataTable tr[data-id]');
-        const emptyRow = document.getElementById('emptyRow');
-        
-        // Hide all rows first
-        rows.forEach(row => row.style.display = 'none');
-        
-        if (filteredItems.length === 0) {
-            if (emptyRow) emptyRow.style.display = '';
-            return;
-        }
-        
-        if (emptyRow) emptyRow.style.display = 'none';
-        
-        // Show items for current page
-        const startIdx = (currentPage - 1) * itemsPerPage;
-        const endIdx = startIdx + itemsPerPage;
-        const pageItems = filteredItems.slice(startIdx, endIdx);
-        
-        pageItems.forEach(item => {
-            const row = document.querySelector(`#dataTable tr[data-id="${item.id}"]`);
-            if (row) row.style.display = '';
-        });
-    }
-    
-    function prevPage() {
-        if (currentPage > 1) {
-            currentPage--;
-            updateTableDisplay();
-            updatePagination();
-        }
-    }
-    
-    function nextPage() {
-        const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
-        if (currentPage < totalPages) {
-            currentPage++;
-            updateTableDisplay();
-            updatePagination();
-        }
+        // Clear search parameter but preserve other parameters
+        const params = new URLSearchParams(window.location.search);
+        params.delete('search');
+        params.set('page', 1);
+        window.location.search = params.toString();
     }
     
     // Media type selection
@@ -922,22 +845,36 @@
     }
     
     function openEditModal(id) {
-        const item = itemsData.find(i => i.id === id);
-        if (!item) return alert('未找到数据');
+        const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
+        if (!row) return alert('未找到数据');
+        
+        // Get data from row attributes
+        const item = {
+            id: id,
+            media_type: row.dataset.mediaType || 'text',
+            media_url: row.dataset.mediaUrl || '',
+            content: row.dataset.content || '',
+            links: row.dataset.links || '[]',
+            repeat_interval: row.dataset.repeatInterval || 0,
+            delete_previous: row.dataset.deletePrevious === 'true',
+            start_time: row.dataset.startTime || '',
+            stop_time: row.dataset.stopTime || '',
+            remark: row.dataset.remark || ''
+        };
         
         document.getElementById('modalTitle').textContent = '编辑定时消息';
         document.getElementById('itemId').value = item.id;
-        selectMediaType(item.media_type || 'text');
-        document.getElementById('mediaUrl').value = item.media_url || '';
-        document.getElementById('editor').innerHTML = templateToHtml(item.content || '');
-        document.getElementById('repeatInterval').value = item.repeat_interval || 0;
-        document.getElementById('deletePrevious').checked = item.delete_previous || false;
+        selectMediaType(item.media_type);
+        document.getElementById('mediaUrl').value = item.media_url;
+        document.getElementById('editor').innerHTML = templateToHtml(item.content);
+        document.getElementById('repeatInterval').value = item.repeat_interval;
+        document.getElementById('deletePrevious').checked = item.delete_previous;
         document.getElementById('startTime').value = formatDatetimeLocal(item.start_time);
         document.getElementById('stopTime').value = formatDatetimeLocal(item.stop_time);
-        document.getElementById('remark').value = item.remark || '';
+        document.getElementById('remark').value = item.remark;
         
         try {
-            currentLinks = JSON.parse(item.links || '[]');
+            currentLinks = JSON.parse(item.links);
         } catch (e) {
             currentLinks = [];
         }
@@ -1054,30 +991,8 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                // Remove from local data
-                const index = itemsData.findIndex(item => item.id === id);
-                if (index > -1) {
-                    itemsData.splice(index, 1);
-                }
-                
-                // Update filtered items
-                const filteredIndex = filteredItems.findIndex(item => item.id === id);
-                if (filteredIndex > -1) {
-                    filteredItems.splice(filteredIndex, 1);
-                }
-                
-                // Remove row from table
-                const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
-                if (row) {
-                    row.remove();
-                }
-                
-                // Update pagination
-                updatePagination();
-                updateTableDisplay();
-                
-                // Show success message
-                alert('删除成功');
+                // Reload page to reflect changes
+                location.reload();
             } else {
                 alert(result.msg || '删除失败');
             }

@@ -113,7 +113,7 @@
                             <span class="badge bg-info">永久</span>
                             {% endif %}
                         </td>
-                        <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at and hasattr(member, 'created_at') else '-' }}</td>
+                        <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</td>
                         <td>{{ member.last_activity.strftime('%Y-%m-%d %H:%M') if member.last_activity else '-' }}</td>
                         <td>
                             <div class="btn-group btn-group-sm">
@@ -191,6 +191,18 @@
 </div>
 
 <script>
+// HTML escape function to prevent XSS
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
 function viewUserInfo(userId, tgId) {
     const modal = new bootstrap.Modal(document.getElementById('userInfoModal'));
     modal.show();
@@ -206,11 +218,13 @@ function viewUserInfo(userId, tgId) {
             html += '<table class="table table-bordered">';
             html += '<tr><th>用户ID</th><td><code>' + user.tg_id + '</code></td></tr>';
             
-            if (user.username) {
-                html += '<tr><th>用户名</th><td>@' + user.username + '</td></tr>';
+            if user.username:
+                html += '<tr><th>用户名</th><td>' + escapeHtml(user.username) + '</td></tr>';
             }
             if (user.first_name) {
-                html += '<tr><th>姓名</th><td>' + user.first_name + (user.last_name ? ' ' + user.last_name : '') + '</td></tr>';
+                html += '<tr><th>姓名</th><td>' + escapeHtml(user.first_name);
+                if (user.last_name) html += ' ' + escapeHtml(user.last_name);
+                html += '</td></tr>';
             }
             
             html += '<tr><th>状态</th><td>';
@@ -241,7 +255,7 @@ function viewUserInfo(userId, tgId) {
                 html += '<tr><th colspan="2" class="bg-light">个人资料</th></tr>';
                 for (const [key, value] of Object.entries(user.profile_data)) {
                     if (key !== 'username' && key !== 'first_name' && key !== 'last_name') {
-                        html += '<tr><th>' + key + '</th><td>' + (value || '-') + '</td></tr>';
+                        html += '<tr><th>' + escapeHtml(key) + '</th><td>' + escapeHtml(String(value || '-')) + '</td></tr>';
                     }
                 }
             }

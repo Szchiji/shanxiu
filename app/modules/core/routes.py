@@ -414,10 +414,6 @@ def page_group_members(gid):
             member.profile_dict = json.loads(member.profile_data) if member.profile_data else {}
         except:
             member.profile_dict = {}
-        
-        # Add created_at if not exists (for older records)
-        if not hasattr(member, 'created_at'):
-            member.created_at = None
     
     # Get member points
     member_points = {}
@@ -1287,7 +1283,7 @@ def api_get_user_info():
             'is_banned': user.is_banned,
             'online': user.online,
             'points': points.points_balance if points else 0,
-            'created_at': user.created_at.isoformat() if hasattr(user, 'created_at') and user.created_at else None,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
             'last_activity': user.last_activity.isoformat() if user.last_activity else None,
             'expiration_date': user.expiration_date.isoformat() if user.expiration_date else None,
             'checkin_time': user.checkin_time.isoformat() if user.checkin_time else None,

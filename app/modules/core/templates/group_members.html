@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .page-header {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: white;
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
+    }
+    
+    @media (max-width: 767px) {
+        .page-header {
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+        }
+        .page-header h4 {
+            font-size: 1.1rem;
+        }
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-users me-2"></i>群成员列表</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看和管理群组成员</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-light fw-bold" onclick="location.reload()">
+                <i class="fa-solid fa-sync me-2"></i>刷新
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- 搜索栏 -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="get" class="d-flex gap-2">
+            <input type="text" class="form-control" name="search" placeholder="搜索用户名或ID..." value="{{ search }}">
+            <button type="submit" class="btn btn-primary">
+                <i class="fa-solid fa-search"></i>
+            </button>
+            {% if search %}
+            <a href="?" class="btn btn-outline-secondary">
+                <i class="fa-solid fa-times"></i>
+            </a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- 成员列表 -->
+<div class="card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>成员列表
+        <span class="badge bg-secondary ms-2">共 {{ pagination.total }} 人</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>用户</th>
+                        <th>用户ID</th>
+                        <th>积分</th>
+                        <th>状态</th>
+                        <th>加入时间</th>
+                        <th>最后活跃</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for member in members %}
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div>
+                                    {% set profile = member.profile_dict %}
+                                    <div class="fw-bold">
+                                        {{ profile.get('first_name', profile.get('name', '用户' + member.tg_id|string)) }}
+                                        {{ profile.get('last_name', '') }}
+                                    </div>
+                                    {% if profile.get('username') %}
+                                    <small class="text-muted">@{{ profile.get('username') }}</small>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        <td><code>{{ member.tg_id }}</code></td>
+                        <td>
+                            <span class="badge bg-warning text-dark">
+                                💰 {{ member_points.get(member.tg_id, 0) }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if member.is_banned %}
+                            <span class="badge bg-danger">已封禁</span>
+                            {% elif member.expiration_date %}
+                                {% if member.expiration_date > now %}
+                                <span class="badge bg-success">正常</span>
+                                {% else %}
+                                <span class="badge bg-warning">已过期</span>
+                                {% endif %}
+                            {% else %}
+                            <span class="badge bg-info">永久</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at and hasattr(member, 'created_at') else '-' }}</td>
+                        <td>{{ member.last_activity.strftime('%Y-%m-%d %H:%M') if member.last_activity else '-' }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="viewUserInfo({{ member.id }}, '{{ member.tg_id }}')" title="查看详情">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5">
+                            <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">暂无成员数据</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- 分页 -->
+    {% if pagination.pages > 1 %}
+    <div class="card-footer">
+        <nav>
+            <ul class="pagination justify-content-center mb-0">
+                {% if pagination.has_prev %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ pagination.prev_num }}&search={{ search }}">上一页</a>
+                </li>
+                {% endif %}
+                
+                {% for p in pagination.iter_pages() %}
+                    {% if p %}
+                    <li class="page-item {{ 'active' if p == pagination.page else '' }}">
+                        <a class="page-link" href="?page={{ p }}&search={{ search }}">{{ p }}</a>
+                    </li>
+                    {% else %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if pagination.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ pagination.next_num }}&search={{ search }}">下一页</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+
+<!-- User Info Modal -->
+<div class="modal fade" id="userInfoModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="fa-solid fa-user me-2"></i>用户详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="userInfoContent">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function viewUserInfo(userId, tgId) {
+    const modal = new bootstrap.Modal(document.getElementById('userInfoModal'));
+    modal.show();
+    
+    showLoading('加载中...');
+    fetch(`/core/api/get_user_info?group_id={{ group.id }}&user_id=${userId}`)
+    .then(res => res.json())
+    .then(data => {
+        hideLoading();
+        if (data.status === 'ok') {
+            const user = data.user;
+            let html = '<div class="user-info">';
+            html += '<table class="table table-bordered">';
+            html += '<tr><th>用户ID</th><td><code>' + user.tg_id + '</code></td></tr>';
+            
+            if (user.username) {
+                html += '<tr><th>用户名</th><td>@' + user.username + '</td></tr>';
+            }
+            if (user.first_name) {
+                html += '<tr><th>姓名</th><td>' + user.first_name + (user.last_name ? ' ' + user.last_name : '') + '</td></tr>';
+            }
+            
+            html += '<tr><th>状态</th><td>';
+            if (user.is_banned) {
+                html += '<span class="badge bg-danger">已封禁</span>';
+            } else if (user.expiration_date) {
+                html += '<span class="badge bg-success">正常</span>';
+                html += '<br><small class="text-muted">到期: ' + user.expiration_date + '</small>';
+            } else {
+                html += '<span class="badge bg-info">永久</span>';
+            }
+            html += '</td></tr>';
+            
+            html += '<tr><th>积分</th><td><span class="badge bg-warning text-dark">💰 ' + (user.points || 0) + '</span></td></tr>';
+            
+            if (user.created_at) {
+                html += '<tr><th>加入时间</th><td>' + new Date(user.created_at).toLocaleString('zh-CN') + '</td></tr>';
+            }
+            if (user.last_activity) {
+                html += '<tr><th>最后活跃</th><td>' + new Date(user.last_activity).toLocaleString('zh-CN') + '</td></tr>';
+            }
+            if (user.checkin_time) {
+                html += '<tr><th>最后打卡</th><td>' + new Date(user.checkin_time).toLocaleString('zh-CN') + '</td></tr>';
+            }
+            
+            // Display profile data
+            if (user.profile_data && Object.keys(user.profile_data).length > 0) {
+                html += '<tr><th colspan="2" class="bg-light">个人资料</th></tr>';
+                for (const [key, value] of Object.entries(user.profile_data)) {
+                    if (key !== 'username' && key !== 'first_name' && key !== 'last_name') {
+                        html += '<tr><th>' + key + '</th><td>' + (value || '-') + '</td></tr>';
+                    }
+                }
+            }
+            
+            html += '</table>';
+            html += '</div>';
+            
+            document.getElementById('userInfoContent').innerHTML = html;
+        } else {
+            showToast(data.msg || '获取失败', 'error');
+            document.getElementById('userInfoContent').innerHTML = '<div class="alert alert-danger">获取用户信息失败</div>';
+        }
+    })
+    .catch(err => {
+        hideLoading();
+        showToast('网络错误', 'error');
+        document.getElementById('userInfoContent').innerHTML = '<div class="alert alert-danger">网络错误</div>';
+    });
+}
+</script>
+{% endblock %}

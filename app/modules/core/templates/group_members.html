@@ -278,7 +278,7 @@ function showAdjustPointsModal(userId, userName) {
 }
 
 function confirmAdjustPoints() {
-    const pointsChange = parseInt(document.getElementById('pointsChange').value);
+    const pointsChange = parseInt(document.getElementById('pointsChange').value, 10);
     const reason = document.getElementById('adjustReason').value.trim() || '后台调整';
     
     if (isNaN(pointsChange) || pointsChange === 0) {

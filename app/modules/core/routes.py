@@ -3740,7 +3740,6 @@ async def handle_new_chat_member(update: Update, context):
                     status='member',
                     is_bot=new_member.is_bot
                 )
-                db.session.commit()
                 
                 # Entry verification
                 if settings.entry_verification_enabled and settings.verification_question:
@@ -3819,7 +3818,9 @@ async def handle_new_chat_member(update: Update, context):
                             balance_after=user_points.points_balance
                         )
                         db.session.add(points_log)
-                        db.session.commit()
+                
+                # Commit all changes for this member (including member record and optional invitation points)
+                db.session.commit()
                         
     except Exception as e:
         print(f"Error in handle_new_chat_member: {e}")
@@ -3852,7 +3853,7 @@ async def handle_left_chat_member(update: Update, context):
                 db.session.delete(member)
                 print(f"删除群成员记录: user_id={left_member.id}, group_id={group.id}")
             
-            # 可选：删除用户积分记录
+            # 删除用户积分记录
             user_points = UserPoints.query.filter_by(
                 group_id=group.id,
                 user_id=left_member.id

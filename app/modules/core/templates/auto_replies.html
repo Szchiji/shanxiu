@@ -702,9 +702,15 @@
 <script>
     const groupId = {{ group.id }};
     let currentLinks = [];
+    let itemModal;
+    let buttonEditModal;
     
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize modals
+        itemModal = new bootstrap.Modal(document.getElementById('itemModal'));
+        buttonEditModal = new bootstrap.Modal(document.getElementById('buttonEditModal'));
+        
         renderLinksContainer();
         
         // Enter key for search
@@ -797,8 +803,9 @@
         document.getElementById('button_text').value = '';
         document.getElementById('button_url').value = '';
         
-        const modal = new bootstrap.Modal(document.getElementById('buttonEditModal'));
-        modal.show();
+        if (buttonEditModal) {
+            buttonEditModal.show();
+        }
     }
     
     function editButton(rowIndex, buttonIndex) {
@@ -812,8 +819,9 @@
         document.getElementById('button_text').value = button.text;
         document.getElementById('button_url').value = button.url;
         
-        const modal = new bootstrap.Modal(document.getElementById('buttonEditModal'));
-        modal.show();
+        if (buttonEditModal) {
+            buttonEditModal.show();
+        }
     }
     
     function saveButtonEdit() {
@@ -852,10 +860,8 @@
         renderLinksContainer();
         
         // Close modal
-        const modalElement = document.getElementById('buttonEditModal');
-        const modalInstance = bootstrap.Modal.getInstance(modalElement);
-        if (modalInstance) {
-            modalInstance.hide();
+        if (buttonEditModal) {
+            buttonEditModal.hide();
         }
     }
     
@@ -1010,8 +1016,11 @@
         currentLinks = [];
         renderLinksContainer();
         
-        const modal = new bootstrap.Modal(document.getElementById('itemModal'));
-        modal.show();
+        if (itemModal) {
+            itemModal.show();
+        } else {
+            console.error('Modal not initialized');
+        }
     }
     
     function openEditModal(id) {
@@ -1046,8 +1055,9 @@
         }
         renderLinksContainer();
         
-        const modal = new bootstrap.Modal(document.getElementById('itemModal'));
-        modal.show();
+        if (itemModal) {
+            itemModal.show();
+        }
     }
     
     // Preview

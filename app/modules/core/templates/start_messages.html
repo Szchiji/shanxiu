@@ -471,25 +471,13 @@
         }
     }
     
-    function addLink() {
-        // Deprecated - use addNewRow() instead
-        addNewRow();
-    }
-    
     function addNewRow() {
         // Find the next available row index
         const maxRow = currentLinks.length > 0 ? Math.max(...currentLinks.map(l => l.row)) : -1;
         const newRow = maxRow + 1;
         
-        // Add a button to the new row to make it visible
-        currentLinks.push({ text: '', url: '', row: newRow, order: 0 });
-        
-        renderLinks();
-        
-        // Auto-open edit modal for the first button in new row
-        setTimeout(() => {
-            addButtonToRow(newRow);
-        }, 100);
+        // Open edit modal for new button in new row (don't create empty button yet)
+        addButtonToRow(newRow);
     }
     
     function addButtonToRow(rowIndex) {
@@ -553,7 +541,13 @@
         }
         
         renderLinks();
-        bootstrap.Modal.getInstance(document.getElementById('buttonEditModal')).hide();
+        
+        // Close modal
+        const modalElement = document.getElementById('buttonEditModal');
+        const modalInstance = bootstrap.Modal.getInstance(modalElement);
+        if (modalInstance) {
+            modalInstance.hide();
+        }
     }
     
     function removeButton(rowIndex, buttonIndex) {
@@ -571,12 +565,6 @@
             btn.order = idx;
         });
         
-        renderLinks();
-    }
-    
-    function removeLink(index) {
-        // Deprecated - use removeButton instead
-        currentLinks.splice(index, 1);
         renderLinks();
     }
     

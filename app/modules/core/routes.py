@@ -4751,6 +4751,8 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("vote", cmd_vote))
     app.add_handler(CommandHandler("quiz", cmd_quiz))
     app.add_handler(CommandHandler("redpacket", cmd_redpacket))
+    app.add_handler(CommandHandler("lottery_draw", cmd_lottery_draw))
+    app.add_handler(CommandHandler("lottery_history", cmd_lottery_history))
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -4760,6 +4762,8 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
     app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
     app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
+    app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
+    app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)  # 🆕 Check red packet expiration every 5 minutes
     
     await app.initialize()
     await app.start()
@@ -5431,6 +5435,321 @@ async def handle_channel_pin(update: Update, context):
                     
     except Exception as e:
         print(f"Error in handle_channel_pin: {e}")
+
+async def cmd_lottery_draw(update: Update, context):
+    """手动开奖命令 /lottery_draw <lottery_id>"""
+    chat = update.effective_chat
+    user = update.effective_user
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Check if user is admin
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        await update.message.reply_text("❌ 只有管理员才能手动开奖")
+        return
+    
+    # Parse lottery_id
+    if len(context.args) < 1:
+        await update.message.reply_text("❌ 用法: /lottery_draw <抽奖ID>\n例如: /lottery_draw 1")
+        return
+    
+    try:
+        lottery_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ 无效的抽奖ID，请输入数字")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _draw_lottery():
+        with global_flask_app.app_context():
+            try:
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if not group:
+                    return "error", "群组未找到"
+                
+                lottery = GroupLottery.query.filter_by(
+                    id=lottery_id,
+                    group_id=group.id
+                ).first()
+                
+                if not lottery:
+                    return "error", "抽奖不存在"
+                
+                if lottery.status == 'ended':
+                    return "error", "抽奖已经结束"
+                
+                if lottery.status != 'active':
+                    return "error", "抽奖未激活"
+                
+                # Perform the draw
+                winners = []
+                import random
+                
+                if lottery.lottery_type == 'message_count':
+                    # Weighted random based on message count
+                    message_counts = LotteryMessageCount.query.filter_by(
+                        lottery_id=lottery.id
+                    ).filter(LotteryMessageCount.message_count > 0).order_by(
+                        LotteryMessageCount.message_count.desc()
+                    ).limit(10000).all()
+                    
+                    if message_counts:
+                        participants = [(mc.user_id, mc.message_count) for mc in message_counts]
+                        total_messages = sum(count for _, count in participants)
+                        
+                        if total_messages > 0:
+                            rand_val = random.uniform(0, total_messages)
+                            cumulative = 0
+                            for uid, count in participants:
+                                cumulative += count
+                                if cumulative >= rand_val:
+                                    winners = [uid]
+                                    break
+                    else:
+                        # Fallback to random group user
+                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                        if eligible_users:
+                            winner = random.choice(eligible_users)
+                            winners = [winner.tg_id]
+                
+                elif lottery.lottery_type == 'message_rank':
+                    # Top N senders
+                    top_senders = LotteryMessageCount.query.filter_by(
+                        lottery_id=lottery.id
+                    ).order_by(LotteryMessageCount.message_count.desc()).limit(
+                        min(lottery.top_n_winners or 1, 100)
+                    ).all()
+                    
+                    winners = [mc.user_id for mc in top_senders]
+                    
+                    if not winners:
+                        # Fallback
+                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(
+                            min(lottery.top_n_winners or 1, 100)
+                        ).all()
+                        winners = [u.tg_id for u in top_users]
+                
+                # Update lottery
+                lottery.winner_ids = json.dumps(winners)
+                lottery.status = 'ended'
+                db.session.commit()
+                
+                return "success", winners, lottery.lottery_name, lottery.prize_description
+            
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error drawing lottery: {e}")
+                traceback.print_exc()
+                return "error", f"开奖失败: {str(e)}"
+    
+    result = await asyncio.get_running_loop().run_in_executor(None, _draw_lottery)
+    
+    if result[0] == "error":
+        await update.message.reply_text(f"❌ {result[1]}")
+    else:
+        _, winners, lottery_name, prize_desc = result
+        
+        if winners:
+            winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winners]
+            message = f"🎉 <b>抽奖结束！</b>\n\n"
+            message += f"活动：{lottery_name}\n"
+            message += f"获奖者：{', '.join(winner_mentions)}\n"
+            if prize_desc:
+                message += f"奖品：{prize_desc}\n"
+            
+            await update.message.reply_text(message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("⚠️ 开奖完成，但未找到符合条件的获奖者")
+
+
+async def cmd_lottery_history(update: Update, context):
+    """查看抽奖历史命令 /lottery_history"""
+    chat = update.effective_chat
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _get_lottery_history():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return []
+            
+            # Get recent ended lotteries
+            lotteries = GroupLottery.query.filter_by(
+                group_id=group.id,
+                status='ended'
+            ).order_by(GroupLottery.end_time.desc()).limit(10).all()
+            
+            return lotteries
+    
+    lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_lottery_history)
+    
+    if not lotteries:
+        await update.message.reply_text("📭 暂无抽奖历史记录")
+        return
+    
+    message_lines = ["🏆 抽奖历史记录\n"]
+    message_lines.append("━━━━━━━━━━━━━━━━")
+    
+    for lottery in lotteries:
+        message_lines.append(f"\n📌 {lottery.lottery_name}")
+        message_lines.append(f"   类型: {'消息数量抽奖' if lottery.lottery_type == 'message_count' else '消息排名抽奖'}")
+        if lottery.prize_description:
+            message_lines.append(f"   奖品: {lottery.prize_description}")
+        if lottery.end_time:
+            message_lines.append(f"   结束时间: {lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        # Parse winners
+        try:
+            winner_ids = json.loads(lottery.winner_ids or '[]')
+            if winner_ids:
+                winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winner_ids[:5]]
+                message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
+                if len(winner_ids) > 5:
+                    message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
+        except:
+            pass
+    
+    await update.message.reply_text("\n".join(message_lines), parse_mode='HTML')
+
+
+async def check_auction_expiration(context):
+    """Background task to check and notify auction expiration"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_expired_auctions():
+            with global_flask_app.app_context():
+                now = get_beijing_now()
+                # Find active auctions that have expired
+                return PointsAuction.query.filter(
+                    PointsAuction.status == 'active',
+                    PointsAuction.auction_end <= now
+                ).all()
+        
+        auctions = await asyncio.get_running_loop().run_in_executor(None, _get_expired_auctions)
+        
+        for auction in auctions:
+            try:
+                with global_flask_app.app_context():
+                    group = BotGroup.query.get(auction.group_id)
+                    if not group:
+                        continue
+                    
+                    chat_id = int(group.chat_id)
+                    
+                    # Update auction status
+                    auction.status = 'ended'
+                    db.session.commit()
+                    
+                    # Notify winner
+                    if auction.current_bidder_id and auction.current_bid > 0:
+                        message = (
+                            f"🎉 <b>竞拍结束！</b>\n\n"
+                            f"📦 物品: {auction.item_name}\n"
+                            f"💰 成交价: {auction.current_bid} 积分\n"
+                            f"👤 获胜者: <a href='tg://user?id={auction.current_bidder_id}'>用户{auction.current_bidder_id}</a>\n\n"
+                        )
+                        if auction.item_description:
+                            message += f"📝 描述: {auction.item_description}\n"
+                        message += "请获胜者联系管理员领取物品！"
+                    else:
+                        message = (
+                            f"📭 <b>竞拍结束</b>\n\n"
+                            f"📦 物品: {auction.item_name}\n"
+                            f"⚠️ 无人出价，流拍"
+                        )
+                    
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode='HTML'
+                    )
+                    
+            except Exception as e:
+                print(f"Error notifying auction end {auction.id}: {e}")
+                traceback.print_exc()
+                
+    except Exception as e:
+        print(f"Error in check_auction_expiration: {e}")
+        traceback.print_exc()
+
+
+async def check_redpacket_expiration(context):
+    """Background task to check and expire red packets"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _get_expired_packets():
+            with global_flask_app.app_context():
+                now = get_beijing_now()
+                # Find active red packets that have expired
+                return RedPacket.query.filter(
+                    RedPacket.status == 'active',
+                    RedPacket.expire_time <= now
+                ).all()
+        
+        packets = await asyncio.get_running_loop().run_in_executor(None, _get_expired_packets)
+        
+        for packet in packets:
+            try:
+                with global_flask_app.app_context():
+                    # Refund remaining points to creator
+                    if packet.remaining_points > 0:
+                        group = BotGroup.query.get(packet.group_id)
+                        if group:
+                            user_points = UserPoints.query.filter_by(
+                                group_id=group.id,
+                                user_id=packet.creator_id
+                            ).first()
+                            
+                            if not user_points:
+                                user_points = UserPoints(
+                                    group_id=group.id,
+                                    user_id=packet.creator_id,
+                                    points_balance=0
+                                )
+                                db.session.add(user_points)
+                            
+                            user_points.points_balance += packet.remaining_points
+                            
+                            # Log the refund
+                            log = PointsLog(
+                                group_id=group.id,
+                                user_id=packet.creator_id,
+                                points_change=packet.remaining_points,
+                                reason="红包过期退款",
+                                balance_after=user_points.points_balance
+                            )
+                            db.session.add(log)
+                    
+                    # Update packet status
+                    packet.status = 'expired'
+                    db.session.commit()
+                    
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error expiring red packet {packet.id}: {e}")
+                traceback.print_exc()
+                
+    except Exception as e:
+        print(f"Error in check_redpacket_expiration: {e}")
+        traceback.print_exc()
+
 
 async def quiz_answer_callback(update: Update, context):
     """处理问答答案选择"""

@@ -157,6 +157,16 @@
             params.set('{{ page_name }}', 1); // Reset to first page
             window.location.search = params.toString();
         };
+        
+        // Initialize search input from URL parameter
+        window.addEventListener('DOMContentLoaded', function() {
+            const params = new URLSearchParams(window.location.search);
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                const searchValue = params.get('search') || '';
+                searchInput.value = searchValue;
+            }
+        });
     })();
 </script>
 {% endmacro %}

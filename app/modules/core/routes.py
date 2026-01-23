@@ -10,6 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
 from datetime import datetime, timedelta
 import pytz
@@ -312,18 +313,32 @@ def page_users(gid):
     if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
+    # Search parameter
+    search_query = request.args.get('search', '').strip()
+    
+    # Build query with optional search filter
+    query = GroupUser.query.filter_by(group_id=gid)
+    if search_query:
+        # Search in tg_id and profile_data
+        query = query.filter(
+            or_(
+                GroupUser.tg_id.contains(search_query),
+                GroupUser.profile_data.contains(search_query)
+            )
+        )
+    
     # Get total count and paginated users
-    total_users = GroupUser.query.filter_by(group_id=gid).count()
+    total_users = query.count()
     total_pages = math.ceil(total_users / per_page) if total_users > 0 else 1
     if page > total_pages: page = total_pages
     
-    users = GroupUser.query.filter_by(group_id=gid).order_by(GroupUser.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    users = query.order_by(GroupUser.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     for u in users:
         try: u.profile_dict = json.loads(u.profile_data) if u.profile_data else {}
         except: u.profile_dict = {}
     
     return render_template('users.html', page='users', group=group, users=users, fields=get_group_fields(group), 
-                         current_page=page, total_pages=total_pages, per_page=per_page, total_users=total_users)
+                         current_page=page, total_pages=total_pages, per_page=per_page, total_users=total_users, search=search_query)
 
 @core_bp.route('/group/<int:gid>/fields')
 def page_fields(gid):
@@ -353,29 +368,30 @@ def page_auto_replies(gid):
     if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
     if page < 1: page = 1
     
+    # Search parameter
+    search_query = request.args.get('search', '').strip()
+    
+    # Build query with optional search filter
+    query = AutoReply.query.filter_by(group_id=gid)
+    if search_query:
+        # Search in trigger_keyword and remark
+        query = query.filter(
+            or_(
+                AutoReply.trigger_keyword.contains(search_query),
+                AutoReply.remark.contains(search_query)
+            )
+        )
+    
     # Get total count and paginated results
-    total_items = AutoReply.query.filter_by(group_id=gid).count()
+    total_items = query.count()
     total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
     if page > total_pages: page = total_pages
     
-    auto_replies = AutoReply.query.filter_by(group_id=gid).order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
-    
-    # 转换为JSON供前端使用
-    auto_replies_json = json.dumps([{
-        'id': ar.id,
-        'trigger_keyword': ar.trigger_keyword,
-        'media_type': ar.media_type,
-        'media_url': ar.media_url,
-        'content': ar.content,
-        'links': ar.links,
-        'delete_after': ar.delete_after,
-        'remark': ar.remark,
-        'is_active': ar.is_active
-    } for ar in auto_replies], ensure_ascii=False)
+    auto_replies = query.order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     return render_template('auto_replies.html', page='auto_replies', group=group, 
-                          auto_replies=auto_replies, auto_replies_json=auto_replies_json,
-                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+                          auto_replies=auto_replies,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items, search=search_query)
 
 @core_bp.route('/group/<int:gid>/scheduled_messages')
 def page_scheduled_messages(gid):
@@ -384,27 +400,37 @@ def page_scheduled_messages(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     
-    # Get ALL scheduled messages (no server-side pagination, template uses client-side pagination)
-    scheduled_messages = ScheduledMessage.query.filter_by(group_id=gid).order_by(ScheduledMessage.id.desc()).all()
+    # Pagination parameters with enhanced options
+    page = safe_int(request.args.get('page', 1), 1)
+    per_page = safe_int(request.args.get('per_page', 20), 20)
+    # Support larger page sizes including 100
+    if per_page not in [10, 20, 50, 100] or per_page <= 0: per_page = 20
+    if page < 1: page = 1
     
-    # 转换为JSON供前端使用
-    scheduled_messages_json = json.dumps([{
-        'id': sm.id,
-        'media_type': sm.media_type,
-        'media_url': sm.media_url,
-        'content': sm.content,
-        'links': sm.links,
-        'repeat_interval': sm.repeat_interval,
-        'delete_previous': sm.delete_previous,
-        'start_time': sm.start_time.isoformat() if sm.start_time else None,
-        'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
-        'remark': sm.remark,
-        'is_active': sm.is_active,
-        'last_sent_at': sm.last_sent_at.isoformat() if sm.last_sent_at else None
-    } for sm in scheduled_messages], ensure_ascii=False)
+    # Search parameter
+    search_query = request.args.get('search', '').strip()
+    
+    # Build query with optional search filter
+    query = ScheduledMessage.query.filter_by(group_id=gid)
+    if search_query:
+        # Search in content and remark
+        query = query.filter(
+            or_(
+                ScheduledMessage.content.contains(search_query),
+                ScheduledMessage.remark.contains(search_query)
+            )
+        )
+    
+    # Get total count and paginated results
+    total_items = query.count()
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 1
+    if page > total_pages: page = total_pages
+    
+    scheduled_messages = query.order_by(ScheduledMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
-                          scheduled_messages=scheduled_messages, scheduled_messages_json=scheduled_messages_json)
+                          scheduled_messages=scheduled_messages,
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items, search=search_query)
 
 @core_bp.route('/group/<int:gid>/start_messages')
 def page_start_messages(gid):

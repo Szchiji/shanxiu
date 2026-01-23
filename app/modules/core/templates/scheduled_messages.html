@@ -849,7 +849,8 @@
     
     // Links management
     function addLinkButton() {
-        // Keep for backward compatibility but use new function
+        // Legacy function: previously added empty button objects directly
+        // Now delegates to modal-based flow for better UX
         addNewRow();
     }
     
@@ -1000,7 +1001,7 @@
         const container = document.getElementById('linksContainer');
         
         if (currentLinks.length === 0) {
-            container.innerHTML = '<div class="text-muted small text-center py-3">暂无按钮，点击下方添加新的一行</div>';
+            container.innerHTML = '<div class="text-muted small text-center py-3">暂无按钮，点击"新增一行按钮"开始添加</div>';
             return;
         }
         

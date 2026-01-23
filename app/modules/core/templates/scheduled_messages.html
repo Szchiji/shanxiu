@@ -493,13 +493,13 @@
                 <tr data-id="{{ item.id }}"
                     data-media-type="{{ item.media_type }}"
                     data-media-url="{{ item.media_url or '' }}"
-                    data-content="{{ item.content or '' }}"
-                    data-links="{{ item.links or '[]' }}"
+                    data-content="{{ item.content or ''|e }}"
+                    data-links="{{ item.links or '[]'|e }}"
                     data-repeat-interval="{{ item.repeat_interval or 0 }}"
                     data-delete-previous="{{ 'true' if item.delete_previous else 'false' }}"
                     data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
                     data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
-                    data-remark="{{ item.remark or '' }}"
+                    data-remark="{{ item.remark or ''|e }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td>

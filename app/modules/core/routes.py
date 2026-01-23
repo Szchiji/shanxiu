@@ -10,6 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback
 from datetime import datetime, timedelta
 import pytz
@@ -320,7 +321,7 @@ def page_users(gid):
     if search_query:
         # Search in tg_id and profile_data
         query = query.filter(
-            db.or_(
+            or_(
                 GroupUser.tg_id.contains(search_query),
                 GroupUser.profile_data.contains(search_query)
             )
@@ -375,7 +376,7 @@ def page_auto_replies(gid):
     if search_query:
         # Search in trigger_keyword and remark
         query = query.filter(
-            db.or_(
+            or_(
                 AutoReply.trigger_keyword.contains(search_query),
                 AutoReply.remark.contains(search_query)
             )
@@ -414,7 +415,7 @@ def page_scheduled_messages(gid):
     if search_query:
         # Search in content and remark
         query = query.filter(
-            db.or_(
+            or_(
                 ScheduledMessage.content.contains(search_query),
                 ScheduledMessage.remark.contains(search_query)
             )

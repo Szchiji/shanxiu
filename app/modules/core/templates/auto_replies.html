@@ -438,13 +438,13 @@
             <tbody id="dataTable">
                 {% for item in auto_replies %}
                 <tr data-id="{{ item.id }}" 
-                    data-trigger-keyword="{{ item.trigger_keyword }}"
+                    data-trigger-keyword="{{ item.trigger_keyword|e }}"
                     data-media-type="{{ item.media_type }}"
                     data-media-url="{{ item.media_url or '' }}"
-                    data-content="{{ item.content or '' }}"
-                    data-links="{{ item.links or '[]' }}"
+                    data-content="{{ item.content or ''|e }}"
+                    data-links="{{ item.links or '[]'|e }}"
                     data-delete-after="{{ item.delete_after or 0 }}"
-                    data-remark="{{ item.remark or '' }}"
+                    data-remark="{{ item.remark or ''|e }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>

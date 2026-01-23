@@ -3922,17 +3922,16 @@ async def run_lottery_draws(context):
                     if lottery.lottery_type == 'message_count':
                         # 🆕 Use actual message tracking data
                         # Get participants who sent at least one message
-                        # Limit to top 10000 participants for performance in very large groups
+                        # Limit to top MAX_LOTTERY_MESSAGE_COUNT_RECORDS participants for performance in very large groups
                         message_counts = LotteryMessageCount.query.filter_by(
                             lottery_id=lottery.id
                         ).filter(LotteryMessageCount.message_count > 0).order_by(
                             LotteryMessageCount.message_count.desc()
-                        ).limit(10000).all()
+                        ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
                         
                         if message_counts:
                             # Create weighted random selection based on message counts
                             # Users with more messages have higher chance to win
-                            import random
                             participants = [(mc.user_id, mc.message_count) for mc in message_counts]
                             
                             # Weighted random selection
@@ -3947,9 +3946,8 @@ async def run_lottery_draws(context):
                                         break
                         else:
                             # Fallback: if no one sent messages, pick from group users (limited sample)
-                            eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(100).all()
+                            eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
                             if eligible_users:
-                                import random
                                 winner = random.choice(eligible_users)
                                 winners = [winner.tg_id]
                     
@@ -3959,7 +3957,7 @@ async def run_lottery_draws(context):
                         top_senders = LotteryMessageCount.query.filter_by(
                             lottery_id=lottery.id
                         ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                            min(lottery.top_n_winners or 1, 100)  # Cap at 100 winners for performance
+                            min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)  # Cap at MAX_AUCTION_WINNERS for performance
                         ).all()
                         
                         winners = [mc.user_id for mc in top_senders]
@@ -3967,7 +3965,7 @@ async def run_lottery_draws(context):
                         if not winners:
                             # Fallback: if no tracking data, use group users (limited sample)
                             top_users = GroupUser.query.filter_by(group_id=group.id).limit(
-                                min(lottery.top_n_winners or 1, 100)
+                                min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                             ).all()
                             winners = [u.tg_id for u in top_users]
                     

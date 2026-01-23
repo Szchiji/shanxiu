@@ -10,7 +10,7 @@ from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
-from sqlalchemy import or_, cast, String, func
+from sqlalchemy import or_, cast, String, func, case
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback, random
 from datetime import datetime, timedelta
 import pytz
@@ -415,7 +415,7 @@ def page_group_members(gid):
     
     # 分页
     pagination = query.order_by(
-        db.case(
+        case(
             (GroupMember.status == 'creator', 1),
             (GroupMember.status == 'administrator', 2),
             else_=3

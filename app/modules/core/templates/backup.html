@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
+    }
+    
+    .backup-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .backup-section h5 {
+        color: var(--primary);
+        margin-bottom: 1rem;
+        font-size: 1.1rem;
+    }
+    
+    .btn-action {
+        padding: 0.75rem 2rem;
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-export {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+    }
+    
+    .btn-export:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-import {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        border: none;
+    }
+    
+    .btn-import:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(245, 87, 108, 0.4);
+    }
+    
+    .info-text {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+    }
+    
+    .file-upload {
+        border: 2px dashed var(--border-color);
+        border-radius: 8px;
+        padding: 2rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .file-upload:hover {
+        border-color: var(--primary);
+        background: rgba(102, 126, 234, 0.05);
+    }
+    
+    .file-upload.dragover {
+        border-color: var(--primary);
+        background: rgba(102, 126, 234, 0.1);
+    }
+</style>
+
+<div class="page-header">
+    <h4 class="mb-0">💾 配置备份与恢复</h4>
+    <p class="mb-0 mt-1 opacity-90">导出和导入群组配置</p>
+</div>
+
+<div class="backup-section">
+    <h5><i class="bi bi-download"></i> 导出配置</h5>
+    <p>导出当前群组的所有配置为 JSON 文件，包括自动回复、定时消息、积分规则、会员等级等。</p>
+    <button class="btn btn-export" onclick="exportConfig()">
+        <i class="bi bi-file-earmark-arrow-down"></i> 导出配置
+    </button>
+    <div class="info-text">
+        <i class="bi bi-info-circle"></i> 导出的文件可用于备份或迁移到其他群组
+    </div>
+</div>
+
+<div class="backup-section">
+    <h5><i class="bi bi-upload"></i> 导入配置</h5>
+    <p>从 JSON 文件导入配置。注意：导入会覆盖当前的部分配置。</p>
+    
+    <div class="file-upload" id="fileUpload">
+        <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--primary);"></i>
+        <p class="mt-3 mb-0">点击选择文件或拖拽文件到此处</p>
+        <input type="file" id="fileInput" accept=".json" style="display: none;">
+    </div>
+    
+    <div class="info-text mt-3">
+        <i class="bi bi-exclamation-triangle"></i> 请谨慎操作，导入前建议先导出当前配置作为备份
+    </div>
+</div>
+
+<script>
+function exportConfig() {
+    fetch('/core/group/{{ group.id }}/backup/export')
+        .then(response => response.json())
+        .then(data => {
+            // Create download link
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `group_${data.group_info.chat_id}_config_${new Date().getTime()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            alert('✅ 配置导出成功！');
+        })
+        .catch(error => {
+            console.error('Export error:', error);
+            alert('❌ 导出失败: ' + error.message);
+        });
+}
+
+function importConfig(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const config = JSON.parse(e.target.result);
+            
+            if (!confirm('确定要导入此配置吗？这将覆盖部分现有配置。')) {
+                return;
+            }
+            
+            fetch('/core/group/{{ group.id }}/backup/import', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    location.reload();
+                } else {
+                    alert('❌ 导入失败: ' + (data.error || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('Import error:', error);
+                alert('❌ 导入失败: ' + error.message);
+            });
+        } catch (error) {
+            alert('❌ 文件格式错误: ' + error.message);
+        }
+    };
+    reader.readAsText(file);
+}
+
+// File upload handlers
+const fileUpload = document.getElementById('fileUpload');
+const fileInput = document.getElementById('fileInput');
+
+fileUpload.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+        importConfig(e.target.files[0]);
+    }
+});
+
+// Drag and drop
+fileUpload.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    fileUpload.classList.add('dragover');
+});
+
+fileUpload.addEventListener('dragleave', () => {
+    fileUpload.classList.remove('dragover');
+});
+
+fileUpload.addEventListener('drop', (e) => {
+    e.preventDefault();
+    fileUpload.classList.remove('dragover');
+    
+    if (e.dataTransfer.files.length > 0) {
+        importConfig(e.dataTransfer.files[0]);
+    }
+});
+</script>
+
+{% endblock %}

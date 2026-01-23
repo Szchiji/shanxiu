@@ -5,7 +5,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim)
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog)
 from app.services import sanitize_html_for_telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -128,6 +128,38 @@ def get_unrestricted_permissions():
         can_send_other_messages=True,
         can_add_web_page_previews=True
     )
+
+def log_admin_action(group_id, admin_id, admin_name, action_type, target_user_id=None, target_user_name=None, details=None):
+    """记录管理员操作到数据库
+    
+    Args:
+        group_id: 群组ID (数据库ID)
+        admin_id: 管理员Telegram ID
+        admin_name: 管理员名称
+        action_type: 操作类型 (kick, ban, mute, unmute, etc.)
+        target_user_id: 目标用户Telegram ID (可选)
+        target_user_name: 目标用户名称 (可选)
+        details: 详细信息 (可选)
+    """
+    if not global_flask_app:
+        return
+    
+    try:
+        with global_flask_app.app_context():
+            log = AdminActionLog(
+                group_id=group_id,
+                admin_id=admin_id,
+                admin_name=admin_name,
+                action_type=action_type,
+                target_user_id=target_user_id,
+                target_user_name=target_user_name,
+                details=details
+            )
+            db.session.add(log)
+            db.session.commit()
+    except Exception as e:
+        print(f"Error logging admin action: {e}")
+
 
 def convert_chat_id_to_int(chat_id, group_id=None, group_title=None):
     """Helper function to convert chat_id to integer for Telegram API.
@@ -817,6 +849,166 @@ def page_red_packet_settings(gid):
     
     return render_template('red_packet_settings.html', page='red_packet_settings', 
                          group=group, packets=packets)
+
+
+@core_bp.route('/group/<int:gid>/admin_logs')
+def page_admin_logs(gid):
+    """管理员操作日志页面"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Get pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    
+    # Get admin logs
+    pagination = AdminActionLog.query.filter_by(
+        group_id=gid
+    ).order_by(
+        AdminActionLog.created_at.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
+    
+    logs = pagination.items
+    
+    return render_template('admin_logs.html', page='admin_logs', 
+                          group=group, logs=logs, pagination=pagination)
+
+
+@core_bp.route('/group/<int:gid>/backup')
+def page_backup(gid):
+    """配置备份页面"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    return render_template('backup.html', page='backup', group=group)
+
+
+@core_bp.route('/group/<int:gid>/backup/export')
+def api_export_config(gid):
+    """导出群组配置为 JSON"""
+    if not session.get('logged_in'): 
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    group = BotGroup.query.get_or_404(gid)
+    
+    # Build configuration object
+    config = {
+        'group_info': {
+            'title': group.title,
+            'chat_id': group.chat_id,
+            'type': group.type
+        },
+        'config': json.loads(group.config) if group.config else {},
+        'fields_config': json.loads(group.fields_config) if group.fields_config else [],
+        'auto_replies': [
+            {
+                'trigger_keyword': ar.trigger_keyword,
+                'media_type': ar.media_type,
+                'media_url': ar.media_url,
+                'content': ar.content,
+                'links': json.loads(ar.links) if ar.links else [],
+                'delete_after': ar.delete_after,
+                'remark': ar.remark,
+                'is_active': ar.is_active
+            }
+            for ar in AutoReply.query.filter_by(group_id=gid).all()
+        ],
+        'scheduled_messages': [
+            {
+                'media_type': sm.media_type,
+                'media_url': sm.media_url,
+                'content': sm.content,
+                'links': json.loads(sm.links) if sm.links else [],
+                'repeat_interval': sm.repeat_interval,
+                'delete_previous': sm.delete_previous,
+                'start_time': sm.start_time.isoformat() if sm.start_time else None,
+                'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
+                'remark': sm.remark,
+                'is_active': sm.is_active
+            }
+            for sm in ScheduledMessage.query.filter_by(group_id=gid).all()
+        ],
+        'points_rules': [
+            {
+                'rule_name': pr.rule_name,
+                'rule_type': pr.rule_type,
+                'points_amount': pr.points_amount,
+                'is_active': pr.is_active
+            }
+            for pr in PointsRule.query.filter_by(group_id=gid).all()
+        ],
+        'member_levels': [
+            {
+                'level_name': ml.level_name,
+                'required_points': ml.required_points,
+                'permissions': json.loads(ml.permissions) if ml.permissions else {},
+                'badge_emoji': ml.badge_emoji
+            }
+            for ml in MemberLevel.query.filter_by(group_id=gid).all()
+        ],
+        'export_time': datetime.now().isoformat()
+    }
+    
+    return jsonify(config)
+
+
+@core_bp.route('/group/<int:gid>/backup/import', methods=['POST'])
+def api_import_config(gid):
+    """导入群组配置"""
+    if not session.get('logged_in'): 
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    group = BotGroup.query.get_or_404(gid)
+    
+    try:
+        config = request.get_json()
+        
+        # Update group config
+        if 'config' in config:
+            group.config = json.dumps(config['config'], ensure_ascii=False)
+        
+        if 'fields_config' in config:
+            group.fields_config = json.dumps(config['fields_config'], ensure_ascii=False)
+        
+        db.session.commit()
+        
+        return jsonify({'success': True, 'message': '配置导入成功'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@core_bp.route('/health')
+def health_check():
+    """健康检查端点"""
+    try:
+        # Check database connection
+        db.session.execute(db.text('SELECT 1'))
+        db_status = 'ok'
+    except Exception as e:
+        db_status = f'error: {str(e)}'
+    
+    # Check bot status
+    bot_status = 'running' if global_ptb_app else 'not_started'
+    
+    # Get last message time (from MessageStatistics)
+    try:
+        last_stat = MessageStatistics.query.order_by(
+            MessageStatistics.updated_at.desc()
+        ).first()
+        last_message_time = last_stat.updated_at.isoformat() if last_stat else None
+    except:
+        last_message_time = None
+    
+    return jsonify({
+        'status': 'healthy' if db_status == 'ok' and bot_status == 'running' else 'degraded',
+        'timestamp': datetime.now().isoformat(),
+        'database': db_status,
+        'bot': bot_status,
+        'last_message_time': last_message_time
+    })
+
 
 # --- API Routes ---
 @core_bp.route('/api/toggle_group', methods=['POST'])
@@ -4471,7 +4663,7 @@ async def check_and_mute_expired_user(update: Update, context):
 
 
 async def cmd_vote(update: Update, context):
-    """创建投票命令 /vote"""
+    """创建投票命令 /vote 标题|选项1|选项2|..."""
     chat = update.effective_chat
     user = update.effective_user
     
@@ -4484,12 +4676,101 @@ async def cmd_vote(update: Update, context):
         await update.message.reply_text("❌ 只有管理员才能创建投票")
         return
     
-    await update.message.reply_text(
-        "📊 <b>创建投票</b>\n\n"
-        "格式：/vote 标题|选项1|选项2|选项3...\n\n"
-        "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
+    # Parse vote content
+    if not context.args:
+        await update.message.reply_text(
+            "📊 <b>创建投票</b>\n\n"
+            "格式：/vote 标题|选项1|选项2|选项3...\n\n"
+            "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
+            parse_mode='HTML'
+        )
+        return
+    
+    content = ' '.join(context.args)
+    parts = content.split('|')
+    
+    if len(parts) < 3:
+        await update.message.reply_text("❌ 至少需要标题和两个选项")
+        return
+    
+    title = parts[0].strip()
+    options = [opt.strip() for opt in parts[1:] if opt.strip()]
+    
+    if len(options) < 2:
+        await update.message.reply_text("❌ 至少需要两个选项")
+        return
+    
+    if len(options) > 10:
+        await update.message.reply_text("❌ 选项最多10个")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _create_vote():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # Create vote
+            vote = GroupVote(
+                group_id=group.id,
+                title=title,
+                options=json.dumps(options, ensure_ascii=False),
+                vote_type='single',
+                max_choices=1,
+                is_anonymous=False,
+                allow_revote=True,
+                start_time=get_beijing_now(),
+                end_time=get_beijing_now() + timedelta(days=7),  # Default 7 days
+                status='active',
+                created_by=user.id
+            )
+            db.session.add(vote)
+            db.session.commit()
+            return vote.id, None
+    
+    vote_id, error = await asyncio.get_running_loop().run_in_executor(None, _create_vote)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    # Create inline keyboard with vote options
+    buttons = []
+    for idx, option in enumerate(options):
+        buttons.append([InlineKeyboardButton(
+            f"{option}",
+            callback_data=f"vote_{vote_id}_{idx}"
+        )])
+    
+    # Add result button
+    buttons.append([InlineKeyboardButton(
+        "📊 查看结果",
+        callback_data=f"vote_result_{vote_id}"
+    )])
+    
+    keyboard = InlineKeyboardMarkup(buttons)
+    
+    message = await update.message.reply_text(
+        f"📊 <b>投票：{title}</b>\n\n"
+        f"👆 点击下方按钮投票\n"
+        f"⏰ 截止时间：7天后\n"
+        f"✅ 允许改投",
+        reply_markup=keyboard,
         parse_mode='HTML'
     )
+    
+    # Update vote with message_id
+    def _update_message_id():
+        with global_flask_app.app_context():
+            vote = GroupVote.query.get(vote_id)
+            if vote:
+                vote.message_id = message.message_id
+                db.session.commit()
+    
+    await asyncio.get_running_loop().run_in_executor(None, _update_message_id)
 
 
 async def cmd_quiz(update: Update, context):
@@ -4685,6 +4966,187 @@ async def cmd_redpacket(update: Update, context):
     )
 
 
+async def cmd_rank(update: Update, context):
+    """积分排行榜命令 /rank [数量]"""
+    chat = update.effective_chat
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Parse limit (default 10, max 50)
+    limit = 10
+    if context.args:
+        try:
+            limit = int(context.args[0])
+            if limit < 1 or limit > 50:
+                limit = 10
+        except ValueError:
+            pass
+    
+    if not global_flask_app:
+        return
+    
+    def _get_rankings():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # Get top users by points
+            rankings = db.session.query(
+                UserPoints,
+                GroupUser
+            ).join(
+                GroupUser,
+                db.and_(
+                    UserPoints.group_id == GroupUser.group_id,
+                    UserPoints.user_id == GroupUser.tg_id
+                )
+            ).filter(
+                UserPoints.group_id == group.id,
+                UserPoints.points_balance > 0
+            ).order_by(
+                UserPoints.points_balance.desc()
+            ).limit(limit).all()
+            
+            results = []
+            for user_points, group_user in rankings:
+                # Get user's level badge
+                level_badge = ""
+                if user_points.current_level:
+                    level = MemberLevel.query.get(user_points.current_level_id)
+                    if level and level.badge_emoji:
+                        level_badge = level.badge_emoji
+                
+                # Get user profile data
+                try:
+                    profile = json.loads(group_user.profile_data) if group_user.profile_data else {}
+                    name = profile.get('name', f'User_{user_points.user_id}')
+                except:
+                    name = f'User_{user_points.user_id}'
+                
+                results.append({
+                    'name': name,
+                    'points': user_points.points_balance,
+                    'badge': level_badge,
+                    'user_id': user_points.user_id
+                })
+            
+            return results, None
+    
+    results, error = await asyncio.get_running_loop().run_in_executor(None, _get_rankings)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    if not results:
+        await update.message.reply_text("📊 暂无积分排行数据")
+        return
+    
+    # Build ranking message
+    msg = f"🏆 <b>积分排行榜 TOP {len(results)}</b>\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    for idx, user_data in enumerate(results):
+        rank_icon = medals[idx] if idx < 3 else f"{idx + 1}."
+        badge = user_data['badge'] + " " if user_data['badge'] else ""
+        msg += f"{rank_icon} {badge}{user_data['name']} - {user_data['points']} 积分\n"
+    
+    await update.message.reply_text(msg, parse_mode='HTML')
+
+
+async def cmd_active(update: Update, context):
+    """活跃排行榜命令 /active [period]"""
+    chat = update.effective_chat
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Parse period (week/month, default week)
+    period = 'week'
+    if context.args and context.args[0].lower() in ['week', 'month']:
+        period = context.args[0].lower()
+    
+    if not global_flask_app:
+        return
+    
+    def _get_active_rankings():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # Calculate date range
+            now = get_beijing_now()
+            if period == 'week':
+                start_date = (now - timedelta(days=7)).date()
+                period_label = "本周"
+            else:
+                start_date = (now - timedelta(days=30)).date()
+                period_label = "本月"
+            
+            # Get message statistics
+            rankings = db.session.query(
+                MessageStatistics.user_id,
+                db.func.sum(MessageStatistics.message_count).label('total_messages'),
+                GroupUser
+            ).join(
+                GroupUser,
+                db.and_(
+                    MessageStatistics.group_id == GroupUser.group_id,
+                    MessageStatistics.user_id == GroupUser.tg_id
+                )
+            ).filter(
+                MessageStatistics.group_id == group.id,
+                MessageStatistics.date >= start_date
+            ).group_by(
+                MessageStatistics.user_id,
+                GroupUser.id
+            ).order_by(
+                db.text('total_messages DESC')
+            ).limit(20).all()
+            
+            results = []
+            for user_id, total_messages, group_user in rankings:
+                # Get user profile data
+                try:
+                    profile = json.loads(group_user.profile_data) if group_user.profile_data else {}
+                    name = profile.get('name', f'User_{user_id}')
+                except:
+                    name = f'User_{user_id}'
+                
+                results.append({
+                    'name': name,
+                    'messages': int(total_messages),
+                    'user_id': user_id
+                })
+            
+            return {'results': results, 'period_label': period_label}, None
+    
+    data, error = await asyncio.get_running_loop().run_in_executor(None, _get_active_rankings)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    if not data['results']:
+        await update.message.reply_text(f"📊 暂无{data['period_label']}活跃数据")
+        return
+    
+    # Build ranking message
+    msg = f"📈 <b>{data['period_label']}活跃排行榜 TOP {len(data['results'])}</b>\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    for idx, user_data in enumerate(data['results']):
+        rank_icon = medals[idx] if idx < 3 else f"{idx + 1}."
+        msg += f"{rank_icon} {user_data['name']} - {user_data['messages']} 条消息\n"
+    
+    await update.message.reply_text(msg, parse_mode='HTML')
+
+
 
 async def run_bot(app_instance):
     """
@@ -4754,6 +5216,9 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("redpacket", cmd_redpacket))
     app.add_handler(CommandHandler("lottery_draw", cmd_lottery_draw))
     app.add_handler(CommandHandler("lottery_history", cmd_lottery_history))
+    app.add_handler(CommandHandler("rank", cmd_rank))
+    app.add_handler(CommandHandler("top", cmd_rank))  # alias for rank
+    app.add_handler(CommandHandler("active", cmd_active))
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -4827,6 +5292,23 @@ async def cmd_kick(update: Update, context):
         await context.bot.ban_chat_member(chat.id, target_user.id)
         await context.bot.unban_chat_member(chat.id, target_user.id)
         await update.message.reply_text(f"✅ 已将 {target_user.first_name} 踢出群组")
+        
+        # Log admin action
+        def _log():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if group:
+                    log_admin_action(
+                        group.id,
+                        user.id,
+                        user.first_name + (f" {user.last_name}" if user.last_name else ""),
+                        'kick',
+                        target_user.id,
+                        target_user.first_name + (f" {target_user.last_name}" if target_user.last_name else "")
+                    )
+        
+        if global_flask_app:
+            await asyncio.get_running_loop().run_in_executor(None, _log)
     except Exception as e:
         await update.message.reply_text(f"❌ 操作失败: {str(e)}")
 
@@ -4855,6 +5337,23 @@ async def cmd_ban(update: Update, context):
     try:
         await context.bot.ban_chat_member(chat.id, target_user.id)
         await update.message.reply_text(f"✅ 已将 {target_user.first_name} 封禁")
+        
+        # Log admin action
+        def _log():
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                if group:
+                    log_admin_action(
+                        group.id,
+                        user.id,
+                        user.first_name + (f" {user.last_name}" if user.last_name else ""),
+                        'ban',
+                        target_user.id,
+                        target_user.first_name + (f" {target_user.last_name}" if target_user.last_name else "")
+                    )
+        
+        if global_flask_app:
+            await asyncio.get_running_loop().run_in_executor(None, _log)
     except Exception as e:
         await update.message.reply_text(f"❌ 操作失败: {str(e)}")
 
@@ -5986,9 +6485,142 @@ async def redpacket_claim_callback(update: Update, context):
     )
 
 async def vote_callback(update: Update, context):
-    """处理投票回调 - 简化版本，建议使用Telegram原生投票"""
+    """处理投票回调"""
     query = update.callback_query
-    await query.answer("⚠️ 投票功能建议使用Telegram原生投票功能")
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    # Parse callback data: vote_{vote_id}_{option_idx} or vote_result_{vote_id}
+    try:
+        parts = query.data.split('_')
+        if parts[1] == 'result':
+            # Show vote results
+            vote_id = int(parts[2])
+            return await show_vote_results(query, user, chat, vote_id)
+        else:
+            # Cast vote
+            vote_id = int(parts[1])
+            option_idx = int(parts[2])
+            return await cast_vote(query, user, chat, vote_id, option_idx)
+    except (IndexError, ValueError):
+        await query.answer("❌ 无效的投票数据")
+        return
+
+
+async def cast_vote(query, user, chat, vote_id, option_idx):
+    """处理用户投票"""
+    if not global_flask_app:
+        return
+    
+    def _process_vote():
+        with global_flask_app.app_context():
+            # Get vote
+            vote = GroupVote.query.get(vote_id)
+            if not vote:
+                return None, "投票不存在"
+            
+            if vote.status != 'active':
+                return None, "投票已结束"
+            
+            # Check if vote ended
+            if vote.end_time and get_beijing_now() > vote.end_time:
+                vote.status = 'ended'
+                db.session.commit()
+                return None, "投票已结束"
+            
+            # Get options
+            options = json.loads(vote.options)
+            if option_idx < 0 or option_idx >= len(options):
+                return None, "无效的选项"
+            
+            # Check if user already voted
+            existing = VoteRecord.query.filter_by(
+                vote_id=vote_id,
+                user_id=user.id
+            ).first()
+            
+            if existing:
+                if not vote.allow_revote:
+                    return None, "您已经投过票了"
+                # Update existing vote
+                existing.choices = json.dumps([option_idx])
+                existing.updated_at = get_beijing_now()
+            else:
+                # Create new vote record
+                record = VoteRecord(
+                    vote_id=vote_id,
+                    user_id=user.id,
+                    choices=json.dumps([option_idx])
+                )
+                db.session.add(record)
+            
+            db.session.commit()
+            return {'option': options[option_idx], 'updated': existing is not None}, None
+    
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _process_vote)
+    
+    if error:
+        await query.answer(f"❌ {error}")
+        return
+    
+    action = "已改投" if result['updated'] else "投票成功"
+    await query.answer(f"✅ {action}：{result['option']}")
+
+
+async def show_vote_results(query, user, chat, vote_id):
+    """显示投票结果"""
+    if not global_flask_app:
+        return
+    
+    def _get_results():
+        with global_flask_app.app_context():
+            vote = GroupVote.query.get(vote_id)
+            if not vote:
+                return None, "投票不存在"
+            
+            options = json.loads(vote.options)
+            
+            # Count votes for each option
+            vote_counts = [0] * len(options)
+            total_votes = 0
+            
+            records = VoteRecord.query.filter_by(vote_id=vote_id).all()
+            for record:
+                choices = json.loads(record.choices)
+                for choice in choices:
+                    if 0 <= choice < len(options):
+                        vote_counts[choice] += 1
+                        total_votes += 1
+            
+            return {
+                'title': vote.title,
+                'options': options,
+                'counts': vote_counts,
+                'total': total_votes,
+                'status': vote.status
+            }, None
+    
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _get_results)
+    
+    if error:
+        await query.answer(f"❌ {error}")
+        return
+    
+    # Build results message
+    msg = f"📊 <b>{result['title']}</b>\n\n"
+    msg += f"总投票数：{result['total']}\n\n"
+    
+    for idx, (option, count) in enumerate(zip(result['options'], result['counts'])):
+        percentage = (count / result['total'] * 100) if result['total'] > 0 else 0
+        bar_length = int(percentage / 5)  # 20 chars max
+        bar = "█" * bar_length + "░" * (20 - bar_length)
+        msg += f"{option}\n{bar} {count} 票 ({percentage:.1f}%)\n\n"
+    
+    if result['status'] == 'ended':
+        msg += "⏰ 投票已结束"
+    
+    await query.answer()
+    await query.message.reply_text(msg, parse_mode='HTML')
 
 async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
     """显示群底部按钮

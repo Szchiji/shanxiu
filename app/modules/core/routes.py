@@ -7775,6 +7775,8 @@ async def cmd_start(update: Update, context):
             await update.message.reply_html(sanitized_notification)
         
         # Send start message with media support and inline keyboard
+        # Note: All error logging uses print() for server logs only
+        # User-facing messages are always generic and safe
         media_type = start_msg_data['media_type']
         content = start_msg_data['content']
         media_url = start_msg_data['media_url']

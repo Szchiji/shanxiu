@@ -4749,7 +4749,9 @@ async def run_lottery_draws(context):
             with global_flask_app.app_context():
                 now = get_beijing_now()
                 # Find lotteries that have ended but not yet drawn
-                # Query both pending and active status (pending ones that passed end time directly)
+                # Query both pending and active status to handle edge cases where:
+                # 1. Lottery goes from pending directly to end_time without status update task running first
+                # 2. Status update task hasn't run yet but end_time has been reached
                 return GroupLottery.query.filter(
                     GroupLottery.status.in_(['pending', 'active']),
                     GroupLottery.end_time != None,

@@ -7,6 +7,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember)
 from app.services import sanitize_html_for_telegram
+from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
@@ -2852,7 +2853,7 @@ def api_save_sync_group_messages():
 
 @core_bp.route('/api/save_bot_clone', methods=['POST'])
 def api_save_bot_clone():
-    """保存机器人克隆"""
+    """保存机器人克隆 - 如果克隆正在运行且被编辑，则重启它"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d: return jsonify({'status':'error','msg':'Missing request body'})
@@ -2865,10 +2866,15 @@ def api_save_bot_clone():
     
     try:
         clone_id = d.get('id')
+        was_running = False
+        
         if clone_id:
             # Edit existing clone
             clone = BotClone.query.get(clone_id)
             if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+            
+            # Check if clone is currently running
+            was_running = bot_clone_manager.is_clone_running(clone_id)
         else:
             # Create new clone
             clone = BotClone()
@@ -2922,14 +2928,46 @@ def api_save_bot_clone():
             clone.expiration_date = None
         
         db.session.commit()
+        
+        # If clone was running and was edited, restart it
+        if was_running and clone_id and global_bot_loop and global_flask_app:
+            try:
+                # Check if not expired
+                now = get_beijing_now()
+                if not clone.expiration_date or clone.expiration_date >= now:
+                    clone_data = {
+                        'id': clone.id,
+                        'token': clone.bot_token,
+                        'webhook_url': clone.webhook_url
+                    }
+                    
+                    # Restart the clone bot in the bot loop
+                    future = asyncio.run_coroutine_threadsafe(
+                        bot_clone_manager.restart_clone_bot(
+                            clone_id=clone_data['id'],
+                            bot_token=clone_data['token'],
+                            webhook_url=clone_data['webhook_url'],
+                            flask_app=global_flask_app,
+                            handlers_setup_func=setup_clone_handlers
+                        ),
+                        global_bot_loop
+                    )
+                    future.result(timeout=15)  # Wait for restart
+                    print(f"✅ Clone bot {clone_id} restarted after edit")
+            except Exception as e:
+                print(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
+                # Don't fail the API call, just log the error
+        
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
+        print(f"Error saving clone bot: {e}")
+        traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/delete_bot_clone', methods=['POST'])
 def api_delete_bot_clone():
-    """删除机器人克隆"""
+    """删除机器人克隆 - 如果正在运行则先停止"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
@@ -2937,16 +2975,34 @@ def api_delete_bot_clone():
     try:
         clone = BotClone.query.get(d['id'])
         if not clone: return jsonify({'status':'error','msg':'Clone not found'})
+        
+        clone_id = clone.id
+        
+        # Stop clone if running
+        if bot_clone_manager.is_clone_running(clone_id) and global_bot_loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    bot_clone_manager.stop_clone_bot(clone_id),
+                    global_bot_loop
+                )
+                future.result(timeout=10)
+                print(f"✅ Stopped clone bot {clone_id} before deletion")
+            except Exception as e:
+                print(f"⚠️ Failed to stop clone bot {clone_id} before deletion: {e}")
+                # Continue with deletion anyway
+        
         db.session.delete(clone)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
+        print(f"Error deleting clone bot: {e}")
+        traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/toggle_bot_clone', methods=['POST'])
 def api_toggle_bot_clone():
-    """切换机器人克隆状态"""
+    """切换机器人克隆状态 - 动态启动/停止克隆机器人"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
@@ -2954,11 +3010,56 @@ def api_toggle_bot_clone():
     try:
         clone = BotClone.query.get(d['id'])
         if not clone: return jsonify({'status':'error','msg':'Clone not found'})
-        clone.is_active = not clone.is_active
+        
+        # Toggle active status
+        new_status = not clone.is_active
+        clone.is_active = new_status
         db.session.commit()
+        
+        # Check if expired
+        now = get_beijing_now()
+        if clone.expiration_date and clone.expiration_date < now:
+            return jsonify({'status':'error','msg':'克隆机器人已过期，无法启动'})
+        
+        # Dynamically start or stop the clone bot
+        if global_bot_loop and global_flask_app:
+            clone_data = {
+                'id': clone.id,
+                'name': clone.clone_name,
+                'token': clone.bot_token,
+                'webhook_url': clone.webhook_url
+            }
+            
+            # Schedule the async operation in the bot loop
+            if new_status:
+                # Start the clone bot
+                future = asyncio.run_coroutine_threadsafe(
+                    bot_clone_manager.start_clone_bot(
+                        clone_id=clone_data['id'],
+                        bot_token=clone_data['token'],
+                        webhook_url=clone_data['webhook_url'],
+                        flask_app=global_flask_app,
+                        handlers_setup_func=setup_clone_handlers
+                    ),
+                    global_bot_loop
+                )
+                # Wait for completion (with timeout)
+                success = future.result(timeout=10)
+                if not success:
+                    return jsonify({'status':'error','msg':'克隆机器人启动失败'})
+            else:
+                # Stop the clone bot
+                future = asyncio.run_coroutine_threadsafe(
+                    bot_clone_manager.stop_clone_bot(clone_data['id']),
+                    global_bot_loop
+                )
+                future.result(timeout=10)
+        
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
+        print(f"Error toggling clone bot: {e}")
+        traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
 
@@ -5766,6 +5867,143 @@ async def run_bot(app_instance):
         except Exception as e:
             print(f"❌ Polling 启动失败: {e}", flush=True)
             raise
+    
+    # 🆕 Start all active clone bots after main bot is ready
+    await start_all_clone_bots(app_instance)
+
+def setup_clone_handlers(app, flask_app, clone_id):
+    """
+    为克隆机器人设置处理器
+    这个函数会为每个克隆机器人设置完整的命令和消息处理器
+    
+    Args:
+        app: Telegram Application实例
+        flask_app: Flask应用实例
+        clone_id: 克隆机器人的数据库ID
+    """
+    # Note: Clone bots use the same handlers as the main bot
+    # But we need to add permission checks for clone_id
+    
+    # Add chat member handler
+    app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    # Add member join/leave handlers
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
+    
+    # Add auto-delete system messages
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS | 
+        filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+        filters.StatusUpdate.PINNED_MESSAGE,
+        handle_auto_delete_messages
+    ))
+    
+    # Handle channel messages for pin control
+    app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+    
+    # General message handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    
+    # Callback query handler
+    app.add_handler(CallbackQueryHandler(pagination_callback))
+    
+    # Command handlers
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("kick", cmd_kick))
+    app.add_handler(CommandHandler("ban", cmd_ban))
+    app.add_handler(CommandHandler("unban", cmd_unban))
+    app.add_handler(CommandHandler("mute", cmd_mute))
+    app.add_handler(CommandHandler("unmute", cmd_unmute))
+    app.add_handler(CommandHandler("pin", cmd_pin))
+    app.add_handler(CommandHandler("unpin", cmd_unpin))
+    app.add_handler(CommandHandler("warn", cmd_warn))
+    app.add_handler(CommandHandler("userinfo", cmd_userinfo))
+    app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CommandHandler("buttons", cmd_menu))
+    app.add_handler(CommandHandler("bid", cmd_bid))
+    app.add_handler(CommandHandler("auction", cmd_auction))
+    app.add_handler(CommandHandler("vote", cmd_vote))
+    app.add_handler(CommandHandler("quiz", cmd_quiz))
+    app.add_handler(CommandHandler("redpacket", cmd_redpacket))
+    app.add_handler(CommandHandler("lottery_draw", cmd_lottery_draw))
+    app.add_handler(CommandHandler("draw", cmd_lottery_draw))
+    app.add_handler(CommandHandler("lottery_history", cmd_lottery_history))
+    app.add_handler(CommandHandler("lottery", cmd_lottery))
+    app.add_handler(CommandHandler("lottery_list", cmd_lottery))
+    app.add_handler(CommandHandler("rank", cmd_rank))
+    app.add_handler(CommandHandler("top", cmd_rank))
+    app.add_handler(CommandHandler("active", cmd_active))
+
+
+async def start_all_clone_bots(flask_app):
+    """
+    启动所有激活的克隆机器人
+    在主Bot启动后调用
+    
+    Args:
+        flask_app: Flask应用实例
+    """
+    if not flask_app:
+        print("⚠️ Flask app not available, skipping clone bot startup")
+        return
+    
+    def _get_active_clones():
+        with flask_app.app_context():
+            now = get_beijing_now()
+            # Get all active clones that haven't expired
+            clones = BotClone.query.filter_by(is_active=True).all()
+            
+            active_clones = []
+            for clone in clones:
+                # Check expiration
+                if clone.expiration_date and clone.expiration_date < now:
+                    print(f"⏰ Clone bot {clone.id} ({clone.clone_name}) has expired, skipping")
+                    continue
+                
+                active_clones.append({
+                    'id': clone.id,
+                    'name': clone.clone_name,
+                    'token': clone.bot_token,
+                    'webhook_url': clone.webhook_url
+                })
+            
+            return active_clones
+    
+    try:
+        clones = await asyncio.get_running_loop().run_in_executor(None, _get_active_clones)
+        
+        if not clones:
+            print("ℹ️ No active clone bots to start")
+            return
+        
+        print(f"🤖 Starting {len(clones)} clone bot(s)...")
+        
+        for clone_data in clones:
+            try:
+                success = await bot_clone_manager.start_clone_bot(
+                    clone_id=clone_data['id'],
+                    bot_token=clone_data['token'],
+                    webhook_url=clone_data['webhook_url'],
+                    flask_app=flask_app,
+                    handlers_setup_func=setup_clone_handlers
+                )
+                
+                if success:
+                    print(f"✅ Clone bot {clone_data['id']} ({clone_data['name']}) started")
+                else:
+                    print(f"❌ Failed to start clone bot {clone_data['id']} ({clone_data['name']})")
+                    
+            except Exception as e:
+                print(f"❌ Error starting clone bot {clone_data['id']}: {e}")
+                traceback.print_exc()
+        
+        print(f"✅ Clone bot startup complete ({len(bot_clone_manager.get_active_clone_ids())} running)")
+        
+    except Exception as e:
+        print(f"❌ Error in start_all_clone_bots: {e}")
+        traceback.print_exc()
+
 
 def do_like(chat_id, message_id, emoji):
     token = os.getenv('TG_BOT_TOKEN')

@@ -7776,9 +7776,13 @@ async def cmd_start(update: Update, context):
         
         # Send start message with media support and inline keyboard
         media_type = start_msg_data['media_type']
-        content = start_msg_data['content'] or ''
+        content = start_msg_data['content']
         media_url = start_msg_data['media_url']
         links = start_msg_data['links']
+        
+        # Ensure content has a meaningful value, fallback to default if empty
+        if not content:
+            content = DEFAULT_SYSTEM['msg_private_start']
         
         # Build inline keyboard from links if any
         reply_markup = None
@@ -7808,9 +7812,8 @@ async def cmd_start(update: Update, context):
                 await update.message.reply_html(content, reply_markup=reply_markup)
         except Exception as e:
             print(f"❌ [/start] Failed to send start message: {e}", flush=True)
-            # Fallback to simple text message with default content
-            fallback_content = content if content else DEFAULT_SYSTEM['msg_private_start']
-            await update.message.reply_html(fallback_content)
+            # Fallback to simple text message (content already has fallback value)
+            await update.message.reply_html(content)
 
 
 async def on_my_chat_member(update: Update, context):

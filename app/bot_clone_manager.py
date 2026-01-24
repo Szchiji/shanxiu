@@ -1,5 +1,14 @@
 """
 Bot Clone Manager - 管理克隆机器人实例
+
+This module manages the lifecycle of clone bots, allowing multiple bot instances
+to run concurrently with the main bot.
+
+Webhook Mode Note:
+- Clone bots can use webhook mode if a webhook_url is provided
+- The webhook endpoint needs to be handled by the hosting infrastructure
+  (e.g., reverse proxy routing different paths to different handlers)
+- For simpler deployments, polling mode is recommended for clone bots
 """
 import asyncio
 import os
@@ -10,7 +19,7 @@ from datetime import datetime
 import traceback
 
 # 存储所有运行中的克隆Bot实例
-# Key: clone_id (int), Value: {'app': Application, 'loop_task': Task or None}
+# Key: clone_id (int), Value: {'app': Application, 'loop_task': Task or None, 'mode': str}
 active_clones: Dict[int, dict] = {}
 
 logger = logging.getLogger(__name__)

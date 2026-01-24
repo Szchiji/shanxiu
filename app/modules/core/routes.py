@@ -7645,8 +7645,8 @@ async def cmd_start(update: Update, context):
                         # Return structured data from StartMessage table
                         try:
                             links = json.loads(start_msg.links) if start_msg.links else []
-                        except (json.JSONDecodeError, TypeError):
-                            print(f"⚠️ [/start] Failed to parse links JSON, using empty list", flush=True)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {group.id}: {e}", flush=True)
                             links = []
                         
                         start_msg_data = {
@@ -7811,9 +7811,17 @@ async def cmd_start(update: Update, context):
                 # Default to text message
                 await update.message.reply_html(content, reply_markup=reply_markup)
         except Exception as e:
-            print(f"❌ [/start] Failed to send start message: {e}", flush=True)
+            print(f"❌ [/start] Failed to send start message (media_type={media_type}, has_media_url={bool(media_url)}): {e}", flush=True)
             # Fallback to simple text message (content already has fallback value)
-            await update.message.reply_html(content)
+            try:
+                await update.message.reply_html(content)
+            except Exception as fallback_error:
+                print(f"❌ [/start] Critical error: Even fallback text message failed: {fallback_error}", flush=True)
+                # Last resort: send minimal error message
+                try:
+                    await update.message.reply_text("欢迎使用本机器人！")
+                except Exception as final_error:
+                    print(f"❌ [/start] Fatal error: Cannot send any message to user {user_id}: {final_error}", flush=True)
 
 
 async def on_my_chat_member(update: Update, context):

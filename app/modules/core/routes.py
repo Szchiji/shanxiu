@@ -7628,7 +7628,37 @@ async def cmd_start(update: Update, context):
                 # Try to get configuration from the most recently updated group (bot-level setting)
                 group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.updated_at.desc()).first()
                 conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
-                private_msg = conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
+                
+                # Check if start_msg_open is enabled
+                start_msg_enabled = conf.get('start_msg_open', False)
+                
+                # Query StartMessage table for active user messages
+                start_msg_data = None
+                if start_msg_enabled and group:
+                    start_msg = StartMessage.query.filter_by(
+                        group_id=group.id,
+                        message_type='user',
+                        is_active=True
+                    ).first()
+                    
+                    if start_msg:
+                        # Return structured data from StartMessage table
+                        start_msg_data = {
+                            'media_type': start_msg.media_type,
+                            'media_url': start_msg.media_url,
+                            'content': start_msg.content,
+                            'links': json.loads(start_msg.links) if start_msg.links else []
+                        }
+                
+                # Fallback to default message if no custom message configured
+                if not start_msg_data:
+                    private_msg = conf.get('msg_private_start', DEFAULT_SYSTEM['msg_private_start'])
+                    start_msg_data = {
+                        'media_type': 'text',
+                        'media_url': None,
+                        'content': private_msg,
+                        'links': []
+                    }
                 
                 # Check if this user has any expired memberships in groups
                 now = get_beijing_now()
@@ -7655,9 +7685,9 @@ async def cmd_start(update: Update, context):
                         })
                 
                 # Return data WITHOUT marking as banned - will update after successful API call
-                return private_msg, users_to_ban
+                return start_msg_data, users_to_ban
         
-        private_msg, users_to_ban = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg_and_check_expiration)
+        start_msg_data, users_to_ban = await asyncio.get_running_loop().run_in_executor(None, _get_private_start_msg_and_check_expiration)
         
         # Helper function to mark user as banned in database after successful API call
         def _mark_user_banned_in_db(group_user_id):
@@ -7738,7 +7768,42 @@ async def cmd_start(update: Update, context):
             sanitized_notification = sanitize_html_for_telegram(notification_msg)
             await update.message.reply_html(sanitized_notification)
         
-        await update.message.reply_html(private_msg)
+        # Send start message with media support and inline keyboard
+        media_type = start_msg_data['media_type']
+        content = start_msg_data['content'] or ''
+        media_url = start_msg_data['media_url']
+        links = start_msg_data['links']
+        
+        # Build inline keyboard from links if any
+        reply_markup = None
+        if links:
+            keyboard = build_inline_keyboard_from_links(links)
+            if keyboard:
+                reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send message based on media type
+        try:
+            if media_type == 'image' and media_url:
+                await update.message.reply_photo(
+                    photo=media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif media_type == 'video' and media_url:
+                await update.message.reply_video(
+                    video=media_url,
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            else:
+                # Default to text message
+                await update.message.reply_html(content, reply_markup=reply_markup)
+        except Exception as e:
+            print(f"❌ [/start] Failed to send start message: {e}", flush=True)
+            # Fallback to simple text message
+            await update.message.reply_html(content)
 
 
 async def on_my_chat_member(update: Update, context):

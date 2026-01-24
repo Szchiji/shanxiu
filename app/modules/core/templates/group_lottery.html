@@ -116,7 +116,7 @@
                                 </span>
                             </div>
                             <div>
-                                <button class="btn btn-sm btn-primary" onclick='editLottery({{ lottery.id }}, {{ lottery|tojson }})'>
+                                <button class="btn btn-sm btn-primary" onclick="editLottery({{ lottery.id }})">
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteLottery({{ lottery.id }})">
@@ -197,6 +197,7 @@
 
 <script>
 let lotteryModal;
+const lotteriesData = {{ lotteries_json|safe }};
 
 document.addEventListener('DOMContentLoaded', function() {
     lotteryModal = new bootstrap.Modal(document.getElementById('lotteryModal'));
@@ -228,7 +229,10 @@ function showAddModal() {
     lotteryModal.show();
 }
 
-function editLottery(id, lottery) {
+function editLottery(id) {
+    const lottery = lotteriesData.find(l => l.id === id);
+    if (!lottery) return;
+    
     document.getElementById('modalTitle').textContent = '编辑抽奖';
     document.getElementById('lottery_id').value = id;
     document.getElementById('lottery_name').value = lottery.lottery_name || '';
@@ -236,8 +240,8 @@ function editLottery(id, lottery) {
     document.getElementById('min_messages').value = lottery.min_messages || 10;
     document.getElementById('top_n_winners').value = lottery.top_n_winners || 3;
     document.getElementById('prize_description').value = lottery.prize_description || '';
-    document.getElementById('start_time').value = (lottery.start_time && lottery.start_time.length >= 16) ? lottery.start_time.substring(0, 16) : '';
-    document.getElementById('end_time').value = (lottery.end_time && lottery.end_time.length >= 16) ? lottery.end_time.substring(0, 16) : '';
+    document.getElementById('start_time').value = lottery.start_time || '';
+    document.getElementById('end_time').value = lottery.end_time || '';
     document.getElementById('status').value = lottery.status || 'pending';
     toggleLotteryFields();
     lotteryModal.show();

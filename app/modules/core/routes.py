@@ -724,7 +724,22 @@ def page_group_lottery(gid):
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
     lotteries = GroupLottery.query.filter_by(group_id=gid).order_by(GroupLottery.created_at.desc()).all()
-    return render_template('group_lottery.html', page='group_lottery', group=group, lotteries=lotteries)
+    
+    # Convert to JSON for JavaScript
+    lotteries_json = json.dumps([{
+        'id': l.id,
+        'lottery_name': l.lottery_name,
+        'lottery_type': l.lottery_type,
+        'min_messages': l.min_messages,
+        'top_n_winners': l.top_n_winners,
+        'prize_description': l.prize_description or '',
+        'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
+        'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
+        'status': l.status,
+        'winner_ids': l.winner_ids
+    } for l in lotteries], ensure_ascii=False)
+    
+    return render_template('group_lottery.html', page='group_lottery', group=group, lotteries=lotteries, lotteries_json=lotteries_json)
 
 @core_bp.route('/group/<int:gid>/member_level')
 def page_member_level(gid):

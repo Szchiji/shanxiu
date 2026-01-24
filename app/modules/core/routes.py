@@ -4712,6 +4712,33 @@ async def update_member_levels(context):
     except Exception as e:
         print(f"❌ Error in update_member_levels: {e}")
 
+async def update_lottery_status(context):
+    """Update lottery status: pending -> active when start time is reached"""
+    if not global_flask_app:
+        return
+    
+    try:
+        def _update_pending_lotteries():
+            with global_flask_app.app_context():
+                now = get_beijing_now()
+                # Find lotteries that should be active now
+                updated = GroupLottery.query.filter(
+                    GroupLottery.status == 'pending',
+                    GroupLottery.start_time != None,
+                    GroupLottery.start_time <= now
+                ).update({'status': 'active'})
+                
+                if updated > 0:
+                    db.session.commit()
+                    print(f"✅ Updated {updated} lottery status: pending -> active")
+                
+                return updated
+        
+        await asyncio.get_running_loop().run_in_executor(None, _update_pending_lotteries)
+        
+    except Exception as e:
+        print(f"❌ Error in update_lottery_status: {e}")
+
 async def run_lottery_draws(context):
     """Background task to run lottery draws when time is up"""
     if not global_flask_app:
@@ -4722,8 +4749,12 @@ async def run_lottery_draws(context):
             with global_flask_app.app_context():
                 now = get_beijing_now()
                 # Find lotteries that have ended but not yet drawn
+                # Query both pending and active status to handle edge cases where:
+                # 1. Lottery goes from pending directly to end_time without status update task running first
+                # 2. Status update task hasn't run yet but end_time has been reached
                 return GroupLottery.query.filter(
-                    GroupLottery.status == 'active',
+                    GroupLottery.status.in_(['pending', 'active']),
+                    GroupLottery.end_time != None,
                     GroupLottery.end_time <= now
                 ).all()
         
@@ -5857,6 +5888,7 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)  # 🆕 Check every minute
     app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
+    app.job_queue.run_repeating(update_lottery_status, interval=60, first=45)  # 🆕 Update lottery status every minute
     app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
     app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
     app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
@@ -8074,11 +8106,14 @@ async def on_message(update: Update, context):
             # ✅ Track ALL group members, not just verified users (unverified users can participate)
             if chat.type in ['group', 'supergroup']:
                 # Track for both message_count and message_rank lotteries
-                # Limit to 10 concurrent active lotteries to prevent performance issues in large groups
+                # Support both pending and active status as long as within time window
+                # Limit to 10 concurrent lotteries to prevent performance issues in large groups
                 active_lotteries = GroupLottery.query.filter_by(
-                    group_id=group.id,
-                    status='active'
-                ).filter(GroupLottery.lottery_type.in_(['message_count', 'message_rank'])).limit(10).all()
+                    group_id=group.id
+                ).filter(
+                    GroupLottery.status.in_(['pending', 'active']),
+                    GroupLottery.lottery_type.in_(['message_count', 'message_rank'])
+                ).limit(10).all()
                 
                 # Track for ALL users (verified and unverified)
                 if active_lotteries:
@@ -8427,7 +8462,8 @@ async def on_message(update: Update, context):
                         is_search = True
                         break
                 # Treat as placeholder query keyword (short text that's not a command)
-                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/'):
+                # BUT exclude pure digit messages to avoid interfering with normal chat
+                if not is_search and 0 < len(txt) < 15 and not txt.startswith('/') and not txt.isdigit():
                     kw = txt
                     is_search = True
             

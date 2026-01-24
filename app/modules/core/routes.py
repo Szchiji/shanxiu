@@ -7643,11 +7643,17 @@ async def cmd_start(update: Update, context):
                     
                     if start_msg:
                         # Return structured data from StartMessage table
+                        try:
+                            links = json.loads(start_msg.links) if start_msg.links else []
+                        except (json.JSONDecodeError, TypeError):
+                            print(f"⚠️ [/start] Failed to parse links JSON, using empty list", flush=True)
+                            links = []
+                        
                         start_msg_data = {
                             'media_type': start_msg.media_type,
                             'media_url': start_msg.media_url,
-                            'content': start_msg.content,
-                            'links': json.loads(start_msg.links) if start_msg.links else []
+                            'content': start_msg.content or '',
+                            'links': links
                         }
                 
                 # Fallback to default message if no custom message configured
@@ -7802,8 +7808,9 @@ async def cmd_start(update: Update, context):
                 await update.message.reply_html(content, reply_markup=reply_markup)
         except Exception as e:
             print(f"❌ [/start] Failed to send start message: {e}", flush=True)
-            # Fallback to simple text message
-            await update.message.reply_html(content)
+            # Fallback to simple text message with default content
+            fallback_content = content if content else DEFAULT_SYSTEM['msg_private_start']
+            await update.message.reply_html(fallback_content)
 
 
 async def on_my_chat_member(update: Update, context):

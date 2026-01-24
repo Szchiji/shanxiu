@@ -275,5 +275,5 @@ SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # 秒
 
 ---
 
-**最后更新:** 2026-01-24  
+**最后更新:** $(date +%Y-%m-%d)  
 **文档版本:** 1.0

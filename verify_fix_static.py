@@ -46,12 +46,14 @@ def verify_code():
     print()
     
     # 提取函数内容（简化版，找到下一个顶层函数）
+    # Skip the function definition line to avoid matching itself
+    FUNCTION_DEF_SKIP = 100  # Skip first 100 chars to avoid matching function def itself
     next_func_pattern = r'\nasync def |^\ndef '
-    remaining_content = content[func_start + 100:]
+    remaining_content = content[func_start + FUNCTION_DEF_SKIP:]
     next_func_match = re.search(next_func_pattern, remaining_content)
     
     if next_func_match:
-        func_end = func_start + 100 + next_func_match.start()
+        func_end = func_start + FUNCTION_DEF_SKIP + next_func_match.start()
     else:
         func_end = len(content)
     
@@ -156,7 +158,7 @@ def verify_code():
         snippet = match.group(0)
         # 清理缩进
         lines = snippet.split('\n')
-        min_indent = min(len(line) - len(line.lstrip()) for line in lines if line.strip())
+        min_indent = min((len(line) - len(line.lstrip()) for line in lines if line.strip()), default=0)
         cleaned_lines = [line[min_indent:] if len(line) > min_indent else line for line in lines]
         cleaned_snippet = '\n'.join(cleaned_lines)
         
@@ -166,13 +168,9 @@ def verify_code():
     print("-" * 70)
     print()
     
-    # 最终判断
-    critical_checks = [
-        'ScheduledMessage.query 查询存在' in str(checks),
-        found_filter,
-    ]
-    
-    all_critical_pass = all(critical_checks)
+    # 最终判断 - Use structured check results
+    has_query_check = any('ScheduledMessage.query 查询存在' in desc and status == '✓' for status, desc in checks)
+    all_critical_pass = has_query_check and found_filter
     
     if all_critical_pass and fail_count == 0:
         print("=" * 70)

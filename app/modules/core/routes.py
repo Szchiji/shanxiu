@@ -5724,7 +5724,10 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("quiz", cmd_quiz))
     app.add_handler(CommandHandler("redpacket", cmd_redpacket))
     app.add_handler(CommandHandler("lottery_draw", cmd_lottery_draw))
+    app.add_handler(CommandHandler("draw", cmd_lottery_draw))  # alias for lottery_draw
     app.add_handler(CommandHandler("lottery_history", cmd_lottery_history))
+    app.add_handler(CommandHandler("lottery", cmd_lottery))
+    app.add_handler(CommandHandler("lottery_list", cmd_lottery))  # alias for lottery
     app.add_handler(CommandHandler("rank", cmd_rank))
     app.add_handler(CommandHandler("top", cmd_rank))  # alias for rank
     app.add_handler(CommandHandler("active", cmd_active))
@@ -6631,6 +6634,88 @@ async def cmd_lottery_history(update: Update, context):
             print(f"Error parsing winner_ids for lottery history: {e}")
     
     await update.message.reply_text("\n".join(message_lines), parse_mode='HTML')
+
+
+async def cmd_lottery(update: Update, context):
+    """查看当前活跃抽奖列表 /lottery 或 /lottery_list"""
+    chat = update.effective_chat
+    
+    # Only work in groups
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    if not global_flask_app:
+        return
+    
+    def _get_active_lotteries():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return []
+            
+            # Get active lotteries
+            now = get_beijing_now()
+            lotteries = GroupLottery.query.filter_by(
+                group_id=group.id,
+                status='active'
+            ).order_by(GroupLottery.end_time).all()
+            
+            # Return lotteries with additional context
+            results = []
+            for lottery in lotteries:
+                # Check if still within time window
+                if lottery.start_time and lottery.end_time:
+                    if lottery.start_time <= now <= lottery.end_time:
+                        # Get participant count
+                        participant_count = LotteryMessageCount.query.filter_by(
+                            lottery_id=lottery.id
+                        ).filter(LotteryMessageCount.message_count > 0).count()
+                        
+                        results.append({
+                            'id': lottery.id,
+                            'name': lottery.lottery_name,
+                            'type': lottery.lottery_type,
+                            'prize': lottery.prize_description,
+                            'end_time': lottery.end_time,
+                            'min_messages': lottery.min_messages,
+                            'top_n_winners': lottery.top_n_winners,
+                            'participant_count': participant_count
+                        })
+            
+            return results
+    
+    lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
+    
+    if not lotteries:
+        await update.message.reply_text("📭 当前没有进行中的抽奖活动")
+        return
+    
+    message_lines = ["🎰 进行中的抽奖活动\n"]
+    message_lines.append("━━━━━━━━━━━━━━━━")
+    
+    for lottery in lotteries:
+        message_lines.append(f"\n🎁 #{lottery['id']} {lottery['name']}")
+        
+        if lottery['type'] == 'message_count':
+            message_lines.append(f"   类型: 消息数量抽奖")
+            message_lines.append(f"   最少发言: {lottery['min_messages']}条")
+        else:
+            message_lines.append(f"   类型: 消息排名抽奖")
+            message_lines.append(f"   获奖人数: 前{lottery['top_n_winners']}名")
+        
+        if lottery['prize']:
+            message_lines.append(f"   奖品: {lottery['prize']}")
+        
+        if lottery['end_time']:
+            message_lines.append(f"   结束时间: {lottery['end_time'].strftime('%Y-%m-%d %H:%M')}")
+        
+        message_lines.append(f"   当前参与人数: {lottery['participant_count']}人")
+    
+    message_lines.append("\n━━━━━━━━━━━━━━━━")
+    message_lines.append("💡 提示: 在群内发言即可参与抽奖")
+    
+    await update.message.reply_text("\n".join(message_lines))
 
 
 async def check_auction_expiration(context):

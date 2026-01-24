@@ -36,6 +36,9 @@ SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # Check scheduled messages every minute (
 MAX_LOTTERY_PARTICIPANTS = 100  # Maximum participants to consider in lottery fallback
 MAX_LOTTERY_MESSAGE_COUNT_RECORDS = 10000  # Maximum message count records to load for lottery
 MAX_AUCTION_WINNERS = 100  # Maximum winners in auction/lottery ranking
+CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
+CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
+CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -2952,16 +2955,16 @@ def api_save_bot_clone():
                         ),
                         global_bot_loop
                     )
-                    future.result(timeout=15)  # Wait for restart
-                    print(f"✅ Clone bot {clone_id} restarted after edit")
+                    future.result(timeout=CLONE_RESTART_TIMEOUT)  # Wait for restart
+                    logging.info(f"✅ Clone bot {clone_id} restarted after edit")
             except Exception as e:
-                print(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
+                logging.warning(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
                 # Don't fail the API call, just log the error
         
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
-        print(f"Error saving clone bot: {e}")
+        logging.error(f"Error saving clone bot: {e}")
         traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
@@ -2985,10 +2988,10 @@ def api_delete_bot_clone():
                     bot_clone_manager.stop_clone_bot(clone_id),
                     global_bot_loop
                 )
-                future.result(timeout=10)
-                print(f"✅ Stopped clone bot {clone_id} before deletion")
+                future.result(timeout=CLONE_STOP_TIMEOUT)
+                logging.info(f"✅ Stopped clone bot {clone_id} before deletion")
             except Exception as e:
-                print(f"⚠️ Failed to stop clone bot {clone_id} before deletion: {e}")
+                logging.warning(f"⚠️ Failed to stop clone bot {clone_id} before deletion: {e}")
                 # Continue with deletion anyway
         
         db.session.delete(clone)
@@ -2996,7 +2999,7 @@ def api_delete_bot_clone():
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
-        print(f"Error deleting clone bot: {e}")
+        logging.error(f"Error deleting clone bot: {e}")
         traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
@@ -3044,7 +3047,7 @@ def api_toggle_bot_clone():
                     global_bot_loop
                 )
                 # Wait for completion (with timeout)
-                success = future.result(timeout=10)
+                success = future.result(timeout=CLONE_START_TIMEOUT)
                 if not success:
                     return jsonify({'status':'error','msg':'克隆机器人启动失败'})
             else:
@@ -3053,12 +3056,12 @@ def api_toggle_bot_clone():
                     bot_clone_manager.stop_clone_bot(clone_data['id']),
                     global_bot_loop
                 )
-                future.result(timeout=10)
+                future.result(timeout=CLONE_STOP_TIMEOUT)
         
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
-        print(f"Error toggling clone bot: {e}")
+        logging.error(f"Error toggling clone bot: {e}")
         traceback.print_exc()
         return jsonify({'status':'error','msg':str(e)})
 
@@ -5990,18 +5993,18 @@ async def start_all_clone_bots(flask_app):
                 )
                 
                 if success:
-                    print(f"✅ Clone bot {clone_data['id']} ({clone_data['name']}) started")
+                    print(f"✅ Clone bot {clone_data['id']} ({clone_data['name']}) started", flush=True)
                 else:
-                    print(f"❌ Failed to start clone bot {clone_data['id']} ({clone_data['name']})")
+                    print(f"❌ Failed to start clone bot {clone_data['id']} ({clone_data['name']})", flush=True)
                     
             except Exception as e:
-                print(f"❌ Error starting clone bot {clone_data['id']}: {e}")
+                logging.error(f"Error starting clone bot {clone_data['id']}: {e}")
                 traceback.print_exc()
         
-        print(f"✅ Clone bot startup complete ({len(bot_clone_manager.get_active_clone_ids())} running)")
+        print(f"✅ Clone bot startup complete ({len(bot_clone_manager.get_active_clone_ids())} running)", flush=True)
         
     except Exception as e:
-        print(f"❌ Error in start_all_clone_bots: {e}")
+        logging.error(f"Error in start_all_clone_bots: {e}")
         traceback.print_exc()
 
 

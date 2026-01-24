@@ -18,6 +18,9 @@ from telegram.ext import Application
 from datetime import datetime
 import traceback
 
+# Constants
+RESTART_DELAY_SECONDS = 1  # Brief delay before restart to ensure clean shutdown
+
 # 存储所有运行中的克隆Bot实例
 # Key: clone_id (int), Value: {'app': Application, 'loop_task': Task or None, 'mode': str}
 active_clones: Dict[int, dict] = {}
@@ -151,7 +154,7 @@ async def restart_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional
         bool: 成功返回True, 失败返回False
     """
     await stop_clone_bot(clone_id)
-    await asyncio.sleep(1)  # Brief delay before restart
+    await asyncio.sleep(RESTART_DELAY_SECONDS)  # Brief delay before restart
     return await start_clone_bot(clone_id, bot_token, webhook_url, flask_app, handlers_setup_func)
 
 

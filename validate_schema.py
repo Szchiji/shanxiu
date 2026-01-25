@@ -63,7 +63,9 @@ def validate_schema():
                 query = text("""
                     SELECT column_name, data_type, column_default
                     FROM information_schema.columns 
-                    WHERE table_name=:table_name AND column_name=:column_name
+                    WHERE table_name=:table_name 
+                      AND column_name=:column_name
+                      AND table_schema = current_schema()
                 """)
                 result = db.session.execute(
                     query, 
@@ -108,6 +110,21 @@ def check_data_integrity():
         print()
         
         try:
+            # First check if the column exists before querying it
+            query = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='group_users' 
+                  AND column_name='is_muted_permanent'
+                  AND table_schema = current_schema()
+            """)
+            result = db.session.execute(query).fetchone()
+            
+            if not result:
+                print("⚠️  Column is_muted_permanent does not exist yet.")
+                print("   Run migrate_database.py first.")
+                return
+            
             # Check for NULL values in is_muted_permanent (should all have defaults)
             query = text("""
                 SELECT COUNT(*) 
@@ -150,6 +167,21 @@ def cleanup_data():
         print()
         
         try:
+            # First check if the column exists before trying to update it
+            query = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='group_users' 
+                  AND column_name='is_muted_permanent'
+                  AND table_schema = current_schema()
+            """)
+            result = db.session.execute(query).fetchone()
+            
+            if not result:
+                print("⚠️  Column is_muted_permanent does not exist yet.")
+                print("   Run migrate_database.py first before cleanup.")
+                return
+            
             # Fix NULL values in is_muted_permanent
             query = text("""
                 UPDATE group_users 

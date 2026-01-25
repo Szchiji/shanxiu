@@ -22,6 +22,8 @@ class GroupUser(db.Model):
     profile_data = db.Column(db.Text, default='{}')
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
+    is_muted_permanent = db.Column(db.Boolean, default=False)  # Track if user needs admin to unlock
+    mute_reason = db.Column(db.String(255), nullable=True)  # Reason for permanent mute
     checkin_time = db.Column(db.DateTime)
     last_activity = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)  # Track last message activity
     online = db.Column(db.Boolean, default=False)
@@ -108,8 +110,10 @@ class GroupEntryExitSettings(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     # 进群验证
     entry_verification_enabled = db.Column(db.Boolean, default=False)
+    verification_type = db.Column(db.String(20), default='question')  # question, captcha, emoji, multiple_choice
     verification_question = db.Column(db.Text, nullable=True)
     verification_answer = db.Column(db.Text, nullable=True)
+    verification_options = db.Column(db.Text, nullable=True)  # JSON array for multiple choice options
     verification_timeout = db.Column(db.Integer, default=60)  # 验证超时时间(秒)
     # 进群欢迎
     welcome_enabled = db.Column(db.Boolean, default=False)
@@ -137,7 +141,7 @@ class SpamProtection(db.Model):
     block_forwards = db.Column(db.Boolean, default=False)
     block_stickers = db.Column(db.Boolean, default=False)
     # 惩罚措施
-    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban
+    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban, mute_permanent
     punishment_duration = db.Column(db.Integer, default=60)  # 分钟
     # 白名单
     whitelist_users = db.Column(db.Text, default='[]')  # JSON array of user IDs
@@ -175,6 +179,7 @@ class InvitationActivity(db.Model):
     activity_start = db.Column(db.DateTime, nullable=True)
     activity_end = db.Column(db.DateTime, nullable=True)
     description = db.Column(db.Text, nullable=True)
+    announce_in_group = db.Column(db.Boolean, default=False)  # 是否在群内公告邀请成功
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -460,7 +465,7 @@ class InactiveUserSettings(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     enabled = db.Column(db.Boolean, default=False)
     inactivity_days = db.Column(db.Integer, default=30)  # 不活跃天数阈值
-    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute
+    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute, mute_permanent
     check_interval = db.Column(db.Integer, default=86400)  # 检查间隔(秒)，默认24小时
     warning_enabled = db.Column(db.Boolean, default=False)  # 是否提前警告
     warning_days = db.Column(db.Integer, default=7)  # 提前警告天数

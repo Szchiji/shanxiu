@@ -6439,6 +6439,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("rank", cmd_rank))
     app.add_handler(CommandHandler("top", cmd_rank))
     app.add_handler(CommandHandler("active", cmd_active))
+    app.add_handler(CommandHandler("clones", cmd_clones))
 
 
 async def start_all_clone_bots(flask_app):
@@ -8397,6 +8398,61 @@ async def on_my_chat_member(update: Update, context):
         import traceback
         print(f"Error in on_my_chat_member: {e}")
         traceback.print_exc()
+
+async def cmd_clones(update: Update, context):
+    """查看和管理克隆机器人 /clones - 仅管理员可用"""
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+    admin_id = safe_int(os.getenv('ADMIN_ID', 0))
+    
+    # Only work in private chat
+    if chat.type != 'private':
+        await update.message.reply_text("❌ 此命令只能在私聊中使用")
+        return
+    
+    # Check if user is admin
+    if user_id != admin_id:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    if not global_flask_app:
+        await update.message.reply_text("❌ 系统未就绪")
+        return
+    
+    def _get_clones():
+        with global_flask_app.app_context():
+            clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
+            return [{
+                'id': c.id,
+                'clone_name': c.clone_name,
+                'owner_user_id': c.owner_user_id,
+                'is_active': c.is_active,
+                'expiration_date': c.expiration_date.strftime('%Y-%m-%d %H:%M') if c.expiration_date else '无期限',
+                'description': c.description or '无描述'
+            } for c in clones]
+    
+    clones = await asyncio.get_running_loop().run_in_executor(None, _get_clones)
+    
+    if not clones:
+        await update.message.reply_text("📝 当前没有克隆机器人")
+        return
+    
+    # Format the list
+    message = "🤖 <b>克隆机器人列表</b>\n\n"
+    for clone in clones:
+        status = "✅ 活跃" if clone['is_active'] else "❌ 停用"
+        message += f"<b>ID:</b> {clone['id']}\n"
+        message += f"<b>名称:</b> {clone['clone_name']}\n"
+        message += f"<b>状态:</b> {status}\n"
+        message += f"<b>拥有者ID:</b> {clone['owner_user_id'] or '无'}\n"
+        message += f"<b>有效期:</b> {clone['expiration_date']}\n"
+        message += f"<b>描述:</b> {clone['description']}\n"
+        message += "─────────────────\n"
+    
+    message += f"\n💡 <b>提示:</b> 在管理后台可以管理克隆机器人\n"
+    message += f"访问: {os.getenv('RAILWAY_PUBLIC_DOMAIN', 'localhost:5000')}/core/bot_clones"
+    
+    await update.message.reply_html(message)
 
 async def on_message(update: Update, context):
     if not global_flask_app: return

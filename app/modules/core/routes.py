@@ -40,6 +40,10 @@ CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
 CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
 CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 
+# Mute reasons (internationalization support)
+MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
+MUTE_REASON_SPAM = '垃圾信息'  # Spam
+
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
@@ -4039,7 +4043,7 @@ async def handle_new_chat_member(update: Update, context):
                             db.session.commit()
                             
                             # Announce in group if enabled
-                            if invitation_activity.announce_in_group:
+                            if getattr(invitation_activity, 'announce_in_group', False):
                                 try:
                                     inviter_mention = f"<a href='tg://user?id={inviter_id}'>邀请者</a>"
                                     invitee_mention = f"<a href='tg://user?id={new_member.id}'>{new_member.first_name}</a>"
@@ -5312,7 +5316,7 @@ async def check_inactive_users(context):
                                         user = GroupUser.query.get(item['user_db_id'])
                                         if user:
                                             user.is_muted_permanent = True
-                                            user.mute_reason = '不活跃用户'
+                                            user.mute_reason = MUTE_REASON_INACTIVE
                                             db.session.commit()
                                     except Exception as e:
                                         print(f"Error marking permanent mute for user {item['user_id']}: {e}")

@@ -141,7 +141,7 @@ class SpamProtection(db.Model):
     block_forwards = db.Column(db.Boolean, default=False)
     block_stickers = db.Column(db.Boolean, default=False)
     # 惩罚措施
-    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban, mute_permanent
+    punishment_type = db.Column(db.String(20), default='mute')  # mute, kick, ban, mute_permanent (requires admin to unlock)
     punishment_duration = db.Column(db.Integer, default=60)  # 分钟
     # 白名单
     whitelist_users = db.Column(db.Text, default='[]')  # JSON array of user IDs
@@ -465,7 +465,7 @@ class InactiveUserSettings(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     enabled = db.Column(db.Boolean, default=False)
     inactivity_days = db.Column(db.Integer, default=30)  # 不活跃天数阈值
-    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute, mute_permanent
+    action_type = db.Column(db.String(20), default='kick')  # kick, ban, mute, mute_permanent (requires admin to unlock)
     check_interval = db.Column(db.Integer, default=86400)  # 检查间隔(秒)，默认24小时
     warning_enabled = db.Column(db.Boolean, default=False)  # 是否提前警告
     warning_days = db.Column(db.Integer, default=7)  # 提前警告天数

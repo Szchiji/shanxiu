@@ -2,6 +2,9 @@
 """
 Database Migration Script
 Adds new fields for issues #3, #4, and #6
+
+Note: This script uses PostgreSQL-specific syntax (information_schema).
+The application uses PostgreSQL as indicated by psycopg2-binary in requirements.txt.
 """
 import os
 import sys

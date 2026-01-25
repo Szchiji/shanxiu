@@ -12,6 +12,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPer
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_, cast, String, func, case
+from sqlalchemy.exc import ProgrammingError, OperationalError
 import os, jwt, time, json, asyncio, re, requests, math, secrets, string, hmac, csv, io, logging, traceback, random
 from datetime import datetime, timedelta
 import pytz
@@ -383,7 +384,17 @@ def page_dashboard(gid):
     ).count()
     
     # 🆕 Get invitations count (users who invited others)
-    invitation_activity = InvitationActivity.query.filter_by(group_id=gid, enabled=True).first()
+    # Wrapped in try-except to handle cases where announce_in_group column doesn't exist yet
+    try:
+        invitation_activity = InvitationActivity.query.filter_by(group_id=gid, enabled=True).first()
+    except (ProgrammingError, OperationalError) as e:
+        # Column might not exist in database yet - run migration
+        print(f"⚠️  Warning: Could not query invitation_activity table: {e}")
+        print(f"   This usually means the announce_in_group column doesn't exist yet.")
+        print(f"   Run 'python migrate_database.py' to add missing columns.")
+        invitation_activity = None
+        # Rollback the session to prevent transaction errors
+        db.session.rollback()
     
     # 🆕 Top points users
     top_points_users = db.session.query(UserPoints.user_id, UserPoints.points_balance).filter(
@@ -740,11 +751,25 @@ def page_invitation_activity(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    settings = InvitationActivity.query.filter_by(group_id=gid).first()
-    if not settings:
-        settings = InvitationActivity(group_id=gid)
-        db.session.add(settings)
-        db.session.commit()
+    
+    # Wrapped in try-except to handle cases where announce_in_group column doesn't exist yet
+    try:
+        settings = InvitationActivity.query.filter_by(group_id=gid).first()
+        if not settings:
+            settings = InvitationActivity(group_id=gid)
+            db.session.add(settings)
+            db.session.commit()
+    except (ProgrammingError, OperationalError) as e:
+        # Column might not exist in database yet - run migration
+        print(f"⚠️  Warning: Could not query invitation_activity table: {e}")
+        print(f"   This usually means the announce_in_group column doesn't exist yet.")
+        print(f"   Run 'python migrate_database.py' to add missing columns.")
+        # Rollback the session to prevent transaction errors
+        db.session.rollback()
+        # Return error page with helpful message
+        return render_template('error.html', 
+                             error_title='Database Migration Required',
+                             error_message='The invitation_activity table is missing required columns. Please run database migration: python migrate_database.py'), 500
     
     # Get invitation leaderboard (top 10 inviters)
     invitation_leaderboard = db.session.query(
@@ -2462,9 +2487,17 @@ def api_save_invitation_activity():
             except (ValueError, TypeError):
                 pass
         settings.description = d.get('description')
+        # Handle announce_in_group if it exists
+        if 'announce_in_group' in d:
+            settings.announce_in_group = d.get('announce_in_group', False)
         
         db.session.commit()
         return jsonify({'status':'ok'})
+    except (ProgrammingError, OperationalError) as e:
+        db.session.rollback()
+        error_msg = 'Database schema error. Please run: python migrate_database.py'
+        print(f"⚠️  Warning: {error_msg}: {e}")
+        return jsonify({'status':'error','msg':error_msg})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})

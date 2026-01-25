@@ -112,6 +112,24 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
         print(f"Error checking admin status: {e}")
         return False
 
+async def is_user_chat_owner(bot, chat_id, user_id):
+    """Check if a user is the chat owner (creator) in a specific group
+    
+    Args:
+        bot: Telegram bot instance
+        chat_id: The chat/group ID
+        user_id: The user's Telegram ID
+        
+    Returns:
+        bool: True if user is chat owner, False otherwise
+    """
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status == 'creator'
+    except Exception as e:
+        print(f"Error checking chat owner status: {e}")
+        return False
+
 def get_muted_permissions():
     """返回完全禁言的权限设置（统一管理以避免代码重复）
     
@@ -213,15 +231,25 @@ def unban_user_in_group(group_id, user_tg_id):
         if chat_id_int is None:
             return False
         
-        asyncio.run_coroutine_threadsafe(
-            global_ptb_app.bot.restrict_chat_member(
+        # Check if user is chat owner - skip unmute for chat owners
+        async def _check_and_unban():
+            is_owner = await is_user_chat_owner(global_ptb_app.bot, chat_id_int, user_tg_id)
+            if is_owner:
+                print(f"⏭️ [解除禁言] 跳过解除禁言操作 - 用户 {user_tg_id} 是群主 (Chat Owner) in group {group.chat_id} (chat_id={chat_id_int})", flush=True)
+                return True  # Return True since no action needed for chat owner
+            
+            await global_ptb_app.bot.restrict_chat_member(
                 chat_id=chat_id_int,
                 user_id=user_tg_id,
                 permissions=get_unrestricted_permissions()
-            ),
+            )
+            print(f"✅ User {user_tg_id} unbanned in group {group.chat_id}")
+            return True
+        
+        asyncio.run_coroutine_threadsafe(
+            _check_and_unban(),
             global_bot_loop
         ).result(timeout=5)
-        print(f"✅ User {user_tg_id} unbanned in group {group.chat_id}")
         return True
     except Exception as e:
         print(f"Failed to unban user {user_tg_id} in group {group.chat_id} (chat_id type: {type(group.chat_id).__name__}): {e}")
@@ -4934,6 +4962,12 @@ async def check_channel_subscriptions(context):
                             
                             # If not subscribed (left or kicked), apply action
                             if member.status in ['left', 'kicked']:
+                                # Check if user is chat owner in the group - skip all actions for chat owners
+                                is_owner = await is_user_chat_owner(context.bot, chat_id, group_user.tg_id)
+                                if is_owner:
+                                    print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {group_user.tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    continue
+                                
                                 if settings.unsubscribe_action == 'kick':
                                     await context.bot.ban_chat_member(chat_id, group_user.tg_id)
                                     await context.bot.unban_chat_member(chat_id, group_user.tg_id)
@@ -4955,6 +4989,12 @@ async def check_channel_subscriptions(context):
                                         print(f"   Traceback: {traceback.format_exc()}", flush=True)
                             # If subscribed (member, administrator, creator), unmute if action was mute
                             elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
+                                # Check if user is chat owner in the group - skip unmute for chat owners
+                                is_owner = await is_user_chat_owner(context.bot, chat_id, group_user.tg_id)
+                                if is_owner:
+                                    print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {group_user.tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    continue
+                                
                                 try:
                                     print(f"🔄 [频道订阅检测] 检测到用户 {group_user.tg_id} 已订阅频道，准备解除禁言 in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                     await context.bot.restrict_chat_member(
@@ -6709,6 +6749,13 @@ async def cmd_unmute(update: Update, context):
         return
     
     target_user = update.message.reply_to_message.from_user
+    
+    # Check if target user is chat owner - skip unmute for chat owners
+    is_owner = await is_user_chat_owner(context.bot, chat.id, target_user.id)
+    if is_owner:
+        await update.message.reply_text(f"⏭️ 无法解除群主 {target_user.first_name} 的禁言 - Chat Owner 不需要解除禁言操作")
+        print(f"⏭️ [解除禁言命令] 跳过解除禁言操作 - 用户 {target_user.id} 是群主 (Chat Owner) in group {chat.id}", flush=True)
+        return
     
     try:
         # Restore default permissions

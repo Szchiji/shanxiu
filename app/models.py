@@ -181,6 +181,24 @@ class InvitationActivity(db.Model):
     group = db.relationship('BotGroup', backref='invitation_activity', lazy=True)
 
 
+class InvitationRecord(db.Model):
+    """邀请记录 - 跟踪谁邀请了谁"""
+    __tablename__ = 'invitation_records'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    inviter_id = db.Column(db.BigInteger, index=True)  # 邀请人的 Telegram ID
+    invited_id = db.Column(db.BigInteger, index=True)  # 被邀请人的 Telegram ID
+    invited_name = db.Column(db.String(255), nullable=True)  # 被邀请人的名称
+    points_awarded = db.Column(db.Integer, default=0)  # 奖励的积分
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('group_id', 'invited_id', name='_group_invited_uc'),  # 每个被邀请人只能被记录一次
+    )
+    
+    group = db.relationship('BotGroup', backref='invitation_records', lazy=True)
+
+
 class ForcedChannelSubscription(db.Model):
     """强制订阅频道"""
     __tablename__ = 'forced_channel_subscription'

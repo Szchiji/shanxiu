@@ -97,6 +97,8 @@
     .icon-users { color: #3b82f6; }
     .icon-settings { color: #06b6d4; }
     .icon-fields { color: #ec4899; }
+    .icon-security { color: #22c55e; }
+    .icon-points { color: #f59e0b; }
     
     .stat-badge {
         font-size: 1.25rem;
@@ -153,6 +155,42 @@
         font-size: 0.8rem;
         margin: 0;
     }
+    
+    .security-status {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1rem;
+    }
+    
+    .security-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .security-item:last-child {
+        border-bottom: none;
+    }
+    
+    .status-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 50px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .status-enabled {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+    
+    .status-disabled {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+    }
 </style>
 
 <div class="row mb-4" style="animation: fadeInUp 0.5s ease-out;">
@@ -180,7 +218,7 @@
     </div>
 </div>
 
-<!-- Statistics Cards -->
+<!-- Statistics Cards Row 1 - User Stats -->
 <div class="stats-grid mb-4" style="animation: fadeInUp 0.6s ease-out;">
     <div class="mini-stat-card">
         <div class="icon" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);">
@@ -202,6 +240,38 @@
         </div>
         <h3>{{ stats.banned }}</h3>
         <p>禁言用户</p>
+    </div>
+    <div class="mini-stat-card">
+        <div class="icon" style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(74, 222, 128, 0.15) 100%);">
+            <i class="fa-solid fa-user-plus" style="color: #22c55e;"></i>
+        </div>
+        <h3>{{ stats.new_users_week }}</h3>
+        <p>本周新用户</p>
+    </div>
+</div>
+
+<!-- Statistics Cards Row 2 - Message Stats -->
+<div class="stats-grid mb-4" style="animation: fadeInUp 0.65s ease-out;">
+    <div class="mini-stat-card">
+        <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(34, 211, 238, 0.15) 100%);">
+            <i class="fa-solid fa-message" style="color: #06b6d4;"></i>
+        </div>
+        <h3>{{ stats.today_messages }}</h3>
+        <p>今日消息</p>
+    </div>
+    <div class="mini-stat-card">
+        <div class="icon" style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);">
+            <i class="fa-solid fa-chart-line" style="color: #8b5cf6;"></i>
+        </div>
+        <h3>{{ stats.week_messages }}</h3>
+        <p>本周消息</p>
+    </div>
+    <div class="mini-stat-card">
+        <div class="icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(251, 191, 36, 0.15) 100%);">
+            <i class="fa-solid fa-coins" style="color: #f59e0b;"></i>
+        </div>
+        <h3>{{ stats.total_points }}</h3>
+        <p>总积分</p>
     </div>
     <div class="mini-stat-card">
         <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(34, 211, 238, 0.15) 100%);">
@@ -235,6 +305,63 @@
         <h3>{{ stats.users }}</h3>
         <p>总用户数</p>
     </div>
+    <div class="mini-stat-card">
+        <div class="icon" style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(244, 63, 94, 0.15) 100%);">
+            <i class="fa-solid fa-filter" style="color: #ec4899;"></i>
+        </div>
+        <h3>{{ stats.keyword_filters }}</h3>
+        <p>关键词过滤</p>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <!-- Security Status Card -->
+    <div class="col-md-6">
+        <div class="security-status" style="animation: fadeInUp 0.75s ease-out;">
+            <h6 class="fw-bold mb-3"><i class="fa-solid fa-shield me-2 text-success"></i>安全模块状态</h6>
+            <div class="security-item">
+                <span><i class="fa-solid fa-shield-virus me-2"></i>垃圾防护</span>
+                <span class="status-badge {{ 'status-enabled' if stats.spam_protection_enabled else 'status-disabled' }}">
+                    {{ '已启用' if stats.spam_protection_enabled else '未启用' }}
+                </span>
+            </div>
+            <div class="security-item">
+                <span><i class="fa-solid fa-rss me-2"></i>强制订阅</span>
+                <span class="status-badge {{ 'status-enabled' if stats.forced_subscription_enabled else 'status-disabled' }}">
+                    {{ '已启用' if stats.forced_subscription_enabled else '未启用' }}
+                </span>
+            </div>
+            <div class="security-item">
+                <span><i class="fa-solid fa-user-plus me-2"></i>邀请活动</span>
+                <span class="status-badge {{ 'status-enabled' if stats.invitation_enabled else 'status-disabled' }}">
+                    {{ '已启用' if stats.invitation_enabled else '未启用' }}
+                </span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Top Points Users -->
+    <div class="col-md-6">
+        <div class="security-status" style="animation: fadeInUp 0.8s ease-out;">
+            <h6 class="fw-bold mb-3"><i class="fa-solid fa-trophy me-2 text-warning"></i>积分排行榜 TOP 5</h6>
+            {% if stats.top_points_users %}
+                {% for user_id, points in stats.top_points_users %}
+                <div class="security-item">
+                    <span>
+                        <span class="badge bg-{{ 'warning' if loop.index == 1 else ('secondary' if loop.index == 2 else 'dark') }} me-2">{{ loop.index }}</span>
+                        用户 {{ user_id }}
+                    </span>
+                    <span class="fw-bold text-primary">{{ points }} 积分</span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-3 text-muted">
+                    <i class="fa-solid fa-inbox fa-2x mb-2"></i>
+                    <p class="mb-0">暂无积分数据</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
 </div>
 
 <div class="row g-3">
@@ -251,6 +378,35 @@
             </div>
         </a>
     </div>
+    <div class="col-md-4">
+        <a href="/core/group/{{ group.id }}/spam_protection" class="quick-action-card card h-100">
+            <div class="card-body text-center p-4">
+                <i class="fa-solid fa-shield fa-3x icon-security mb-3"></i>
+                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">群组安全</h5>
+                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">垃圾防护、关键词过滤、强制订阅</p>
+                <div>
+                    <span class="badge {{ 'bg-success' if stats.spam_protection_enabled else 'bg-secondary' }}">
+                        {{ '已启用' if stats.spam_protection_enabled else '未启用' }}
+                    </span>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="/core/group/{{ group.id }}/points_rules" class="quick-action-card card h-100">
+            <div class="card-body text-center p-4">
+                <i class="fa-solid fa-coins fa-3x icon-points mb-3"></i>
+                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">积分系统</h5>
+                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">积分规则、积分排行、积分日志</p>
+                <div>
+                    <span class="badge bg-warning">{{ stats.total_points }} 总积分</span>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<div class="row g-3 mt-1">
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/settings" class="quick-action-card card h-100">
             <div class="card-body text-center p-4">
@@ -271,6 +427,18 @@
                 <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">定义本群用户的资料字段 (如身高/地区)</p>
                 <div>
                     <span class="badge bg-warning">自定义字段</span>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="/core/group/{{ group.id }}/message_statistics" class="quick-action-card card h-100">
+            <div class="card-body text-center p-4">
+                <i class="fa-solid fa-chart-bar fa-3x mb-3" style="color: #8b5cf6;"></i>
+                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">消息统计</h5>
+                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">查看群消息统计和活跃度分析</p>
+                <div>
+                    <span class="badge bg-purple" style="background-color: #8b5cf6;">{{ stats.today_messages }} 今日</span>
                 </div>
             </div>
         </a>

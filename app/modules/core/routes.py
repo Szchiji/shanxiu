@@ -5,7 +5,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember)
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord)
 from app.services import sanitize_html_for_telegram
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
@@ -326,6 +326,43 @@ def page_dashboard(gid):
     scheduled_msgs_count = ScheduledMessage.query.filter_by(group_id=gid, is_active=True).count()
     start_msgs_count = StartMessage.query.filter_by(group_id=gid, is_active=True).count()
     
+    # 🆕 Enhanced statistics - Total points
+    total_points = db.session.query(func.sum(UserPoints.points_balance)).filter(
+        UserPoints.group_id == gid
+    ).scalar() or 0
+    
+    # 🆕 Get today's message count
+    today_messages = db.session.query(func.sum(MessageStatistics.message_count)).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date == today.date()
+    ).scalar() or 0
+    
+    # 🆕 Get this week's statistics
+    week_ago = today - timedelta(days=7)
+    week_messages = db.session.query(func.sum(MessageStatistics.message_count)).filter(
+        MessageStatistics.group_id == gid,
+        MessageStatistics.date >= week_ago.date()
+    ).scalar() or 0
+    
+    # 🆕 Get new users this week
+    new_users_week = GroupUser.query.filter(
+        GroupUser.group_id == gid,
+        GroupUser.created_at >= week_ago
+    ).count()
+    
+    # 🆕 Get invitations count (users who invited others)
+    invitation_activity = InvitationActivity.query.filter_by(group_id=gid, enabled=True).first()
+    
+    # 🆕 Top points users
+    top_points_users = db.session.query(UserPoints.user_id, UserPoints.points_balance).filter(
+        UserPoints.group_id == gid
+    ).order_by(UserPoints.points_balance.desc()).limit(5).all()
+    
+    # 🆕 Security module status
+    spam_protection = SpamProtection.query.filter_by(group_id=gid).first()
+    forced_subscription = ForcedChannelSubscription.query.filter_by(group_id=gid).first()
+    keyword_filter_count = KeywordFilter.query.filter_by(group_id=gid, is_active=True).count()
+    
     stats = {
         'users': total_users,
         'online': online_users,
@@ -334,7 +371,17 @@ def page_dashboard(gid):
         'banned': banned_users,
         'auto_replies': auto_replies_count,
         'scheduled_msgs': scheduled_msgs_count,
-        'start_msgs': start_msgs_count
+        'start_msgs': start_msgs_count,
+        # 🆕 Enhanced statistics
+        'total_points': total_points,
+        'today_messages': today_messages,
+        'week_messages': week_messages,
+        'new_users_week': new_users_week,
+        'invitation_enabled': invitation_activity.enabled if invitation_activity else False,
+        'top_points_users': top_points_users,
+        'spam_protection_enabled': spam_protection.enabled if spam_protection else False,
+        'forced_subscription_enabled': forced_subscription.enabled if forced_subscription else False,
+        'keyword_filters': keyword_filter_count
     }
     
     return render_template('dashboard.html', page='dashboard', group=group, stats=stats)
@@ -666,7 +713,35 @@ def page_invitation_activity(gid):
         settings = InvitationActivity(group_id=gid)
         db.session.add(settings)
         db.session.commit()
-    return render_template('invitation_activity.html', page='invitation_activity', group=group, settings=settings)
+    
+    # Get invitation leaderboard (top 10 inviters)
+    invitation_leaderboard = db.session.query(
+        InvitationRecord.inviter_id,
+        func.count(InvitationRecord.id).label('invite_count'),
+        func.sum(InvitationRecord.points_awarded).label('total_points')
+    ).filter(
+        InvitationRecord.group_id == gid
+    ).group_by(
+        InvitationRecord.inviter_id
+    ).order_by(
+        func.count(InvitationRecord.id).desc()
+    ).limit(10).all()
+    
+    # Get recent invitation records
+    recent_invitations = InvitationRecord.query.filter_by(
+        group_id=gid
+    ).order_by(InvitationRecord.created_at.desc()).limit(20).all()
+    
+    # Get total invitations count
+    total_invitations = InvitationRecord.query.filter_by(group_id=gid).count()
+    
+    return render_template('invitation_activity.html', 
+                          page='invitation_activity', 
+                          group=group, 
+                          settings=settings,
+                          leaderboard=invitation_leaderboard,
+                          recent_invitations=recent_invitations,
+                          total_invitations=total_invitations)
 
 @core_bp.route('/group/<int:gid>/forced_channel_subscription')
 def page_forced_channel_subscription(gid):
@@ -3915,31 +3990,50 @@ async def handle_new_chat_member(update: Update, context):
                     invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
                     
                     if invitation_activity:
-                        # Award points to inviter
-                        user_points = UserPoints.query.filter_by(
+                        # Check if this invitation was already recorded
+                        existing_record = InvitationRecord.query.filter_by(
                             group_id=group.id,
-                            user_id=inviter_id
+                            invited_id=new_member.id
                         ).first()
                         
-                        if not user_points:
-                            user_points = UserPoints(
+                        if not existing_record:
+                            # Record the invitation
+                            invitation_record = InvitationRecord(
+                                group_id=group.id,
+                                inviter_id=inviter_id,
+                                invited_id=new_member.id,
+                                invited_name=new_member.first_name,
+                                points_awarded=invitation_activity.reward_points
+                            )
+                            db.session.add(invitation_record)
+                            
+                            # Award points to inviter
+                            user_points = UserPoints.query.filter_by(
+                                group_id=group.id,
+                                user_id=inviter_id
+                            ).first()
+                            
+                            if not user_points:
+                                user_points = UserPoints(
+                                    group_id=group.id,
+                                    user_id=inviter_id,
+                                    points_balance=0
+                                )
+                                db.session.add(user_points)
+                            
+                            user_points.points_balance += invitation_activity.reward_points
+                            
+                            # Log the points transaction
+                            points_log = PointsLog(
                                 group_id=group.id,
                                 user_id=inviter_id,
-                                points_balance=0
+                                points_change=invitation_activity.reward_points,
+                                reason=f"邀请新成员: {new_member.first_name}",
+                                balance_after=user_points.points_balance
                             )
-                            db.session.add(user_points)
-                        
-                        user_points.points_balance += invitation_activity.reward_points
-                        
-                        # Log the points transaction
-                        points_log = PointsLog(
-                            group_id=group.id,
-                            user_id=inviter_id,
-                            points_change=invitation_activity.reward_points,
-                            reason=f"邀请新成员: {new_member.first_name}",
-                            balance_after=user_points.points_balance
-                        )
-                        db.session.add(points_log)
+                            db.session.add(points_log)
+                            
+                            print(f"📝 [邀请追踪] 记录邀请: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 奖励 {invitation_activity.reward_points} 积分")
                 
                 # Commit all changes for this member (including member record and optional invitation points)
                 db.session.commit()
@@ -4087,6 +4181,177 @@ async def check_spam_protection(update: Update, context):
     except Exception as e:
         print(f"Error in check_spam_protection: {e}")
         return False
+
+async def check_forced_subscription(update: Update, context):
+    """Real-time check if user is subscribed to required channel before allowing message"""
+    if not global_flask_app or not update.message:
+        return False
+    
+    try:
+        chat = update.effective_chat
+        user = update.effective_user
+        
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return False
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group or not group.is_active:
+                return False
+            
+            # Get forced subscription settings
+            settings = ForcedChannelSubscription.query.filter_by(
+                group_id=group.id,
+                enabled=True
+            ).first()
+            
+            if not settings or not settings.channel_id:
+                return False
+            
+            try:
+                # Check if user is subscribed to the channel
+                member = await context.bot.get_chat_member(
+                    settings.channel_id,
+                    user.id
+                )
+                
+                # If user is not subscribed (left or kicked)
+                if member.status in ['left', 'kicked']:
+                    # Delete the message
+                    try:
+                        await update.message.delete()
+                    except Exception as e:
+                        print(f"Error deleting message for unsubscribed user: {e}")
+                    
+                    # Send verification message with subscribe button
+                    verification_msg = settings.verification_message or "请先订阅我们的频道才能在群内发言"
+                    channel_link = f"https://t.me/{settings.channel_username.lstrip('@')}" if settings.channel_username else None
+                    
+                    keyboard = None
+                    if channel_link:
+                        keyboard = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("📢 订阅频道", url=channel_link),
+                            InlineKeyboardButton("✅ 已订阅", callback_data=f"check_sub_{user.id}")
+                        ]])
+                    
+                    try:
+                        alert_msg = await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=f"⚠️ @{user.username or user.first_name}\n\n{verification_msg}",
+                            reply_markup=keyboard,
+                            parse_mode='HTML'
+                        )
+                        # Auto-delete the alert after 30 seconds
+                        asyncio.create_task(delete_message_after_delay(context, chat.id, alert_msg.message_id, 30))
+                    except Exception as e:
+                        print(f"Error sending subscription alert: {e}")
+                    
+                    # Apply punishment if configured
+                    if settings.unsubscribe_action == 'mute':
+                        try:
+                            await context.bot.restrict_chat_member(
+                                chat_id=chat.id,
+                                user_id=user.id,
+                                permissions=get_muted_permissions()
+                            )
+                        except Exception as e:
+                            print(f"Error muting unsubscribed user: {e}")
+                    
+                    return True  # Message was handled (deleted)
+                    
+            except Exception as e:
+                # User may not be in channel or bot doesn't have access to check
+                print(f"Error checking channel subscription for user {user.id}: {e}")
+        
+        return False
+        
+    except Exception as e:
+        print(f"Error in check_forced_subscription: {e}")
+        return False
+
+async def delete_message_after_delay(context, chat_id, message_id, delay_seconds):
+    """Helper function to delete a message after a delay"""
+    try:
+        await asyncio.sleep(delay_seconds)
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        print(f"Error deleting message after delay: {e}")
+
+async def handle_subscription_check_callback(update: Update, context):
+    """Handle callback when user clicks 'Already Subscribed' button"""
+    query = update.callback_query
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    if not query.data.startswith("check_sub_"):
+        return
+    
+    try:
+        target_user_id = int(query.data.split("_")[2])
+        
+        # Only allow the user who triggered the check to verify
+        if user.id != target_user_id:
+            await query.answer("❌ 此按钮不是您的", show_alert=True)
+            return
+        
+        if not global_flask_app:
+            await query.answer("❌ 系统错误", show_alert=True)
+            return
+        
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                await query.answer("❌ 群组不存在", show_alert=True)
+                return
+            
+            settings = ForcedChannelSubscription.query.filter_by(
+                group_id=group.id,
+                enabled=True
+            ).first()
+            
+            if not settings or not settings.channel_id:
+                await query.answer("❌ 未配置订阅频道", show_alert=True)
+                return
+            
+            try:
+                member = await context.bot.get_chat_member(
+                    settings.channel_id,
+                    user.id
+                )
+                
+                if member.status not in ['left', 'kicked']:
+                    # User is now subscribed, unmute them if they were muted
+                    try:
+                        await context.bot.restrict_chat_member(
+                            chat_id=chat.id,
+                            user_id=user.id,
+                            permissions=ChatPermissions(
+                                can_send_messages=True,
+                                can_send_media_messages=True,
+                                can_send_other_messages=True,
+                                can_add_web_page_previews=True
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Error unmuting user: {e}")
+                    
+                    await query.answer("✅ 验证成功！您现在可以发言了", show_alert=True)
+                    
+                    # Delete the verification message
+                    try:
+                        await query.message.delete()
+                    except:
+                        pass
+                else:
+                    await query.answer("❌ 您还没有订阅频道，请先订阅", show_alert=True)
+                    
+            except Exception as e:
+                print(f"Error verifying subscription: {e}")
+                await query.answer("❌ 验证失败，请稍后重试", show_alert=True)
+                
+    except Exception as e:
+        print(f"Error in handle_subscription_check_callback: {e}")
+        await query.answer("❌ 系统错误", show_alert=True)
 
 async def check_timed_group_control(context):
     """Background task to check and apply timed group controls"""
@@ -5750,6 +6015,92 @@ async def cmd_rank(update: Update, context):
     await update.message.reply_text(msg, parse_mode='HTML')
 
 
+async def cmd_invite_rank(update: Update, context):
+    """邀请排行榜命令 /invite_rank [数量]"""
+    chat = update.effective_chat
+    
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    
+    # Parse limit (default 10, max 50)
+    limit = 10
+    if context.args:
+        try:
+            limit = int(context.args[0])
+            if limit < 1 or limit > 50:
+                limit = 10
+        except ValueError:
+            pass
+    
+    if not global_flask_app:
+        return
+    
+    def _get_invite_rankings():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            if not group:
+                return None, "群组不存在"
+            
+            # Get top inviters
+            rankings = db.session.query(
+                InvitationRecord.inviter_id,
+                func.count(InvitationRecord.id).label('invite_count'),
+                func.sum(InvitationRecord.points_awarded).label('total_points')
+            ).filter(
+                InvitationRecord.group_id == group.id
+            ).group_by(
+                InvitationRecord.inviter_id
+            ).order_by(
+                func.count(InvitationRecord.id).desc()
+            ).limit(limit).all()
+            
+            results = []
+            for inviter_id, invite_count, total_points in rankings:
+                # Try to get user name from GroupUser
+                group_user = GroupUser.query.filter_by(
+                    group_id=group.id,
+                    tg_id=inviter_id
+                ).first()
+                
+                name = f'User_{inviter_id}'
+                if group_user:
+                    try:
+                        profile = json.loads(group_user.profile_data) if group_user.profile_data else {}
+                        name = profile.get('name', f'User_{inviter_id}')
+                    except Exception:
+                        pass
+                
+                results.append({
+                    'name': name,
+                    'invite_count': invite_count,
+                    'total_points': total_points or 0,
+                    'user_id': inviter_id
+                })
+            
+            return results, None
+    
+    results, error = await asyncio.get_running_loop().run_in_executor(None, _get_invite_rankings)
+    
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    
+    if not results:
+        await update.message.reply_text("📊 暂无邀请排行数据")
+        return
+    
+    # Build ranking message
+    msg = f"🏆 <b>邀请排行榜 TOP {len(results)}</b>\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    for idx, user_data in enumerate(results):
+        rank_icon = medals[idx] if idx < 3 else f"{idx + 1}."
+        msg += f"{rank_icon} {user_data['name']} - 邀请 {user_data['invite_count']} 人 ({user_data['total_points']} 积分)\n"
+    
+    await update.message.reply_text(msg, parse_mode='HTML')
+
+
 async def cmd_active(update: Update, context):
     """活跃排行榜命令 /active [period]"""
     chat = update.effective_chat
@@ -5915,6 +6266,8 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("rank", cmd_rank))
     app.add_handler(CommandHandler("top", cmd_rank))  # alias for rank
     app.add_handler(CommandHandler("active", cmd_active))
+    app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 🆕 Invitation rank command
+    app.add_handler(CommandHandler("invites", cmd_invite_rank))  # alias for invite_rank
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -7976,6 +8329,11 @@ async def on_message(update: Update, context):
             if keyword_filtered:
                 return  # Message was deleted, stop processing
             
+            # 🆕 Check forced subscription (may delete message and return early)
+            subscription_blocked = await check_forced_subscription(update, context)
+            if subscription_blocked:
+                return  # Message was deleted, stop processing
+            
             # 🆕 Check and mute expired users immediately
             await check_and_mute_expired_user(update, context)
             
@@ -8618,6 +8976,8 @@ async def pagination_callback(update: Update, context):
         return await redpacket_claim_callback(update, context)
     elif query.data.startswith('vote_'):
         return await vote_callback(update, context)
+    elif query.data.startswith('check_sub_'):
+        return await handle_subscription_check_callback(update, context)
     
     # 默认处理分页查询
     try:

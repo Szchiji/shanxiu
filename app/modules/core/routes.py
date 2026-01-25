@@ -4168,7 +4168,7 @@ async def check_spam_protection(update: Update, context):
                     should_punish = True
             
             # Block forwards
-            if protection.block_forwards and msg.forward_date:
+            if protection.block_forwards and msg.forward_origin:
                 should_punish = True
             
             # Block stickers
@@ -4676,7 +4676,7 @@ async def handle_sync_group_messages(update: Update, context):
                             # Continue with sync if filter is invalid
                     
                     # Skip forwards if not enabled
-                    if msg.forward_date and not sync_setting.sync_forwards:
+                    if msg.forward_origin and not sync_setting.sync_forwards:
                         continue
                     
                     # Sync the message to target group

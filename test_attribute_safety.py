@@ -34,28 +34,25 @@ def test_forward_origin_safety():
             for match in matches1:
                 print(f"     - {match}")
         
-        # Check that there are no unsafe direct accesses
-        # Look for patterns like "msg.forward_origin" without hasattr check
-        # But exclude patterns that already have hasattr
-        unsafe_pattern = r"(?<!hasattr\([^)]{0,50})msg\.forward_origin(?!\s+and\s+hasattr)"
-        
-        # Find all forward_origin accesses
+        # Find all forward_origin accesses and check if they're safe
         all_accesses = re.finditer(r'msg\.forward_origin', content)
         unsafe_count = 0
         safe_count = 0
         
         for match in all_accesses:
-            # Get context around the match (100 chars before)
+            # Get context before the match (100 chars)
             start = max(0, match.start() - 100)
-            context = content[start:match.end() + 50]
+            context_before = content[start:match.start()]
             
             # Check if hasattr is in the context before the match
-            if 'hasattr' in context[:100]:
+            if 'hasattr' in context_before:
                 safe_count += 1
             else:
                 unsafe_count += 1
+                # Get full context for display
+                context_full = content[start:match.end() + 50]
                 print(f"\n   ⚠️  Potentially unsafe access at position {match.start()}")
-                print(f"      Context: ...{context}...")
+                print(f"      Context: ...{context_full}...")
         
         print(f"\n✅ Summary:")
         print(f"   - Safe accesses (with hasattr): {safe_count}")

@@ -6753,7 +6753,7 @@ async def cmd_unmute(update: Update, context):
     # Check if target user is chat owner - skip unmute for chat owners
     is_owner = await is_user_chat_owner(context.bot, chat.id, target_user.id)
     if is_owner:
-        await update.message.reply_text(f"⏭️ 无法解除群主 {target_user.first_name} 的禁言 - Chat Owner 不需要解除禁言操作")
+        await update.message.reply_text(f"⏭️ 无法解除群主 {target_user.first_name} 的禁言 - 群主权限无需解除禁言")
         print(f"⏭️ [解除禁言命令] 跳过解除禁言操作 - 用户 {target_user.id} 是群主 (Chat Owner) in group {chat.id}", flush=True)
         return
     

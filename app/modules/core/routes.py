@@ -3696,6 +3696,9 @@ async def check_scheduled_messages(context):
                 # 查找所有需要发送的定时消息
                 messages_to_send = []
                 
+                # Ensure we get fresh data from the database (not cached)
+                db.session.expire_all()
+                
                 scheduled_messages = ScheduledMessage.query.options(
                     joinedload(ScheduledMessage.group)
                 ).filter(
@@ -4720,6 +4723,9 @@ async def update_lottery_status(context):
     try:
         def _update_pending_lotteries():
             with global_flask_app.app_context():
+                # Ensure we get fresh data from the database (not cached)
+                db.session.expire_all()
+                
                 now = get_beijing_now()
                 # Find lotteries that should be active now
                 updated = GroupLottery.query.filter(
@@ -4745,103 +4751,131 @@ async def run_lottery_draws(context):
         return
     
     try:
-        def _get_active_lotteries():
+        def _get_active_lottery_ids():
             with global_flask_app.app_context():
+                # Ensure we get fresh data from the database (not cached)
+                db.session.expire_all()
+                
                 now = get_beijing_now()
                 # Find lotteries that have ended but not yet drawn
                 # Query both pending and active status to handle edge cases where:
                 # 1. Lottery goes from pending directly to end_time without status update task running first
                 # 2. Status update task hasn't run yet but end_time has been reached
-                return GroupLottery.query.filter(
+                # Return only IDs to avoid detached object issues
+                lotteries = GroupLottery.query.filter(
                     GroupLottery.status.in_(['pending', 'active']),
                     GroupLottery.end_time != None,
                     GroupLottery.end_time <= now
                 ).all()
+                return [lottery.id for lottery in lotteries]
         
-        lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
+        lottery_ids = await asyncio.get_running_loop().run_in_executor(None, _get_active_lottery_ids)
         
-        for lottery in lotteries:
+        for lottery_id in lottery_ids:
             try:
-                with global_flask_app.app_context():
-                    group = BotGroup.query.get(lottery.group_id)
-                    if not group:
-                        continue
-                    
-                    chat_id = int(group.chat_id)
-                    winners = []
-                    
-                    if lottery.lottery_type == 'message_count':
-                        # 🆕 Use actual message tracking data
-                        # Get participants who sent at least one message
-                        # Limit to top MAX_LOTTERY_MESSAGE_COUNT_RECORDS participants for performance in very large groups
-                        message_counts = LotteryMessageCount.query.filter_by(
-                            lottery_id=lottery.id
-                        ).filter(LotteryMessageCount.message_count > 0).order_by(
-                            LotteryMessageCount.message_count.desc()
-                        ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
+                def _process_lottery(lid):
+                    with global_flask_app.app_context():
+                        # Ensure we get fresh data from the database (not cached)
+                        db.session.expire_all()
                         
-                        if message_counts:
-                            # Create weighted random selection based on message counts
-                            # Users with more messages have higher chance to win
-                            participants = [(mc.user_id, mc.message_count) for mc in message_counts]
+                        # Re-fetch lottery in this context to ensure it's attached to the session
+                        lottery = GroupLottery.query.get(lid)
+                        if not lottery:
+                            return None
+                        
+                        # Double-check status hasn't changed (race condition protection)
+                        if lottery.status == 'ended':
+                            return None
+                        
+                        group = BotGroup.query.get(lottery.group_id)
+                        if not group:
+                            return None
+                        
+                        chat_id = int(group.chat_id)
+                        winners = []
+                        
+                        if lottery.lottery_type == 'message_count':
+                            # 🆕 Use actual message tracking data
+                            # Get participants who sent at least one message
+                            # Limit to top MAX_LOTTERY_MESSAGE_COUNT_RECORDS participants for performance in very large groups
+                            message_counts = LotteryMessageCount.query.filter_by(
+                                lottery_id=lottery.id
+                            ).filter(LotteryMessageCount.message_count > 0).order_by(
+                                LotteryMessageCount.message_count.desc()
+                            ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
                             
-                            # Weighted random selection
-                            total_messages = sum(count for _, count in participants)
-                            if total_messages > 0:
-                                rand_val = random.uniform(0, total_messages)
-                                cumulative = 0
-                                for user_id, count in participants:
-                                    cumulative += count
-                                    if cumulative >= rand_val:
-                                        winners = [user_id]
-                                        break
-                        else:
-                            # Fallback: if no one sent messages, pick from group users (limited sample)
-                            eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
-                            if eligible_users:
-                                winner = random.choice(eligible_users)
-                                winners = [winner.tg_id]
-                    
-                    elif lottery.lottery_type == 'message_rank':
-                        # 🆕 Use actual message tracking data - top N senders
-                        # Optimized: use limit() to avoid loading all records
-                        top_senders = LotteryMessageCount.query.filter_by(
-                            lottery_id=lottery.id
-                        ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                            min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)  # Cap at MAX_AUCTION_WINNERS for performance
-                        ).all()
+                            if message_counts:
+                                # Create weighted random selection based on message counts
+                                # Users with more messages have higher chance to win
+                                participants = [(mc.user_id, mc.message_count) for mc in message_counts]
+                                
+                                # Weighted random selection
+                                total_messages = sum(count for _, count in participants)
+                                if total_messages > 0:
+                                    rand_val = random.uniform(0, total_messages)
+                                    cumulative = 0
+                                    for user_id, count in participants:
+                                        cumulative += count
+                                        if cumulative >= rand_val:
+                                            winners = [user_id]
+                                            break
+                            else:
+                                # Fallback: if no one sent messages, pick from group users (limited sample)
+                                eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
+                                if eligible_users:
+                                    winner = random.choice(eligible_users)
+                                    winners = [winner.tg_id]
                         
-                        winners = [mc.user_id for mc in top_senders]
-                        
-                        if not winners:
-                            # Fallback: if no tracking data, use group users (limited sample)
-                            top_users = GroupUser.query.filter_by(group_id=group.id).limit(
-                                min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
+                        elif lottery.lottery_type == 'message_rank':
+                            # 🆕 Use actual message tracking data - top N senders
+                            # Optimized: use limit() to avoid loading all records
+                            top_senders = LotteryMessageCount.query.filter_by(
+                                lottery_id=lottery.id
+                            ).order_by(LotteryMessageCount.message_count.desc()).limit(
+                                min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)  # Cap at MAX_AUCTION_WINNERS for performance
                             ).all()
-                            winners = [u.tg_id for u in top_users]
-                    
-                    # Update lottery with winners
-                    lottery.winner_ids = json.dumps(winners)
-                    lottery.status = 'ended'
-                    db.session.commit()
-                    
-                    # Announce winners
-                    if winners:
-                        winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winners]
-                        message = f"🎉 <b>抽奖结束！</b>\n\n"
-                        message += f"活动：{lottery.lottery_name}\n"
-                        message += f"获奖者：{', '.join(winner_mentions)}\n"
-                        if lottery.prize_description:
-                            message += f"奖品：{lottery.prize_description}\n"
+                            
+                            winners = [mc.user_id for mc in top_senders]
+                            
+                            if not winners:
+                                # Fallback: if no tracking data, use group users (limited sample)
+                                top_users = GroupUser.query.filter_by(group_id=group.id).limit(
+                                    min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
+                                ).all()
+                                winners = [u.tg_id for u in top_users]
                         
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=message,
-                            parse_mode='HTML'
-                        )
+                        # Update lottery with winners
+                        lottery.winner_ids = json.dumps(winners)
+                        lottery.status = 'ended'
+                        db.session.commit()
+                        
+                        return {
+                            'chat_id': chat_id,
+                            'lottery_name': lottery.lottery_name,
+                            'prize_description': lottery.prize_description,
+                            'winners': winners
+                        }
+                
+                result = await asyncio.get_running_loop().run_in_executor(None, _process_lottery, lottery_id)
+                
+                # Announce winners (outside the DB context)
+                # Only announce if there are actual winners (empty list = no winners)
+                if result and result.get('winners'):
+                    winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in result['winners']]
+                    message = f"🎉 <b>抽奖结束！</b>\n\n"
+                    message += f"活动：{result['lottery_name']}\n"
+                    message += f"获奖者：{', '.join(winner_mentions)}\n"
+                    if result['prize_description']:
+                        message += f"奖品：{result['prize_description']}\n"
+                    
+                    await context.bot.send_message(
+                        chat_id=result['chat_id'],
+                        text=message,
+                        parse_mode='HTML'
+                    )
                         
             except Exception as e:
-                print(f"Error running lottery {lottery.id}: {e}")
+                print(f"Error running lottery {lottery_id}: {e}")
                 
     except Exception as e:
         print(f"Error in run_lottery_draws: {e}")

@@ -40,6 +40,10 @@ CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
 CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
 CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 
+# Mute reasons (internationalization support)
+MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
+MUTE_REASON_SPAM = '垃圾信息'  # Spam
+
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
@@ -4034,9 +4038,29 @@ async def handle_new_chat_member(update: Update, context):
                             db.session.add(points_log)
                             
                             print(f"📝 [邀请追踪] 记录邀请: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 奖励 {invitation_activity.reward_points} 积分")
-                
-                # Commit all changes for this member (including member record and optional invitation points)
-                db.session.commit()
+                            
+                            # Commit all changes before sending announcement
+                            db.session.commit()
+                            
+                            # Announce in group if enabled
+                            if getattr(invitation_activity, 'announce_in_group', False):
+                                try:
+                                    inviter_mention = f"<a href='tg://user?id={inviter_id}'>邀请者</a>"
+                                    invitee_mention = f"<a href='tg://user?id={new_member.id}'>{new_member.first_name}</a>"
+                                    announcement = f"🎉 <b>邀请成功！</b>\n\n{inviter_mention} 邀请了 {invitee_mention} 加入群组\n获得积分奖励: +{invitation_activity.reward_points}"
+                                    await context.bot.send_message(
+                                        chat_id=chat.id,
+                                        text=announcement,
+                                        parse_mode='HTML'
+                                    )
+                                except Exception as announce_error:
+                                    print(f"Error sending invitation announcement: {announce_error}")
+                        else:
+                            # Commit member record even if no invitation tracking
+                            db.session.commit()
+                else:
+                    # Commit member record if no inviter detected
+                    db.session.commit()
                         
     except Exception as e:
         print(f"Error in handle_new_chat_member: {e}")
@@ -4929,6 +4953,20 @@ async def check_channel_subscriptions(context):
                                         print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                                         print(f"   Error details: {str(restrict_error)}", flush=True)
                                         print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                            # If subscribed (member, administrator, creator), unmute if action was mute
+                            elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
+                                try:
+                                    print(f"🔄 [频道订阅检测] 检测到用户 {group_user.tg_id} 已订阅频道，准备解除禁言 in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    await context.bot.restrict_chat_member(
+                                        chat_id=chat_id,
+                                        user_id=group_user.tg_id,
+                                        permissions=get_unrestricted_permissions()
+                                    )
+                                    print(f"✅ [频道订阅检测] Successfully unmuted subscribed user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                except Exception as unmute_error:
+                                    print(f"❌ [频道订阅检测] Failed to unmute user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    print(f"   Error type: {type(unmute_error).__name__}", flush=True)
+                                    print(f"   Error details: {str(unmute_error)}", flush=True)
                         except Exception as e:
                             # User may not be in channel or bot doesn't have access
                             print(f"Error checking subscription for user {group_user.tg_id}: {e}")
@@ -5206,6 +5244,14 @@ async def check_inactive_users(context):
                                         'group_id': settings.group_id,
                                         'user_db_id': user.id  # Store DB ID for later update
                                     })
+                                elif settings.action_type == 'mute_permanent':
+                                    users_to_mute.append({
+                                        'action': 'mute_permanent',
+                                        'chat_id': chat_id_int,
+                                        'user_id': user.tg_id,
+                                        'group_id': settings.group_id,
+                                        'user_db_id': user.id  # Store DB ID for later update
+                                    })
                                     
                         except Exception as e:
                             print(f"Error processing group {settings.group_id}: {e}")
@@ -5255,6 +5301,32 @@ async def check_inactive_users(context):
                             print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                             print(f"   Error details: {str(restrict_error)}", flush=True)
                             print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                    elif item['action'] == 'mute_permanent':
+                        try:
+                            print(f"🔄 [不活跃用户检测] 准备永久禁言不活跃用户 {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                            await context.bot.restrict_chat_member(
+                                chat_id=item['chat_id'],
+                                user_id=item['user_id'],
+                                permissions=get_muted_permissions()
+                            )
+                            # Mark as permanently muted in database
+                            def _mark_permanent_mute():
+                                with global_flask_app.app_context():
+                                    try:
+                                        user = GroupUser.query.get(item['user_db_id'])
+                                        if user:
+                                            user.is_muted_permanent = True
+                                            user.mute_reason = MUTE_REASON_INACTIVE
+                                            db.session.commit()
+                                    except Exception as e:
+                                        print(f"Error marking permanent mute for user {item['user_id']}: {e}")
+                                        db.session.rollback()
+                            await asyncio.get_running_loop().run_in_executor(None, _mark_permanent_mute)
+                            print(f"✅ [不活跃用户检测] Successfully permanently muted inactive user {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                        except Exception as restrict_error:
+                            print(f"❌ [不活跃用户检测] Permanent mute failed for user {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
+                            print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                            print(f"   Error details: {str(restrict_error)}", flush=True)
                 except Exception as e:
                     print(f"Error executing action for user {item['user_id']}: {e}")
                     continue
@@ -6371,6 +6443,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("rank", cmd_rank))
     app.add_handler(CommandHandler("top", cmd_rank))
     app.add_handler(CommandHandler("active", cmd_active))
+    app.add_handler(CommandHandler("clones", cmd_clones))
 
 
 async def start_all_clone_bots(flask_app):
@@ -6641,6 +6714,28 @@ async def cmd_unmute(update: Update, context):
         # Restore default permissions
         permissions = get_unrestricted_permissions()
         await context.bot.restrict_chat_member(chat.id, target_user.id, permissions)
+        
+        # Clear permanent mute flag in database if exists
+        if global_flask_app:
+            def _clear_permanent_mute():
+                with global_flask_app.app_context():
+                    try:
+                        group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                        if group:
+                            group_user = GroupUser.query.filter_by(
+                                group_id=group.id,
+                                tg_id=target_user.id
+                            ).first()
+                            if group_user and group_user.is_muted_permanent:
+                                group_user.is_muted_permanent = False
+                                group_user.mute_reason = None
+                                db.session.commit()
+                                print(f"✅ Cleared permanent mute flag for user {target_user.id} in group {group.id}")
+                    except Exception as e:
+                        print(f"Error clearing permanent mute flag: {e}")
+                        db.session.rollback()
+            await asyncio.get_running_loop().run_in_executor(None, _clear_permanent_mute)
+        
         await update.message.reply_text(f"✅ 已解除 {target_user.first_name} 的禁言")
     except Exception as e:
         await update.message.reply_text(f"❌ 操作失败: {str(e)}")
@@ -8307,6 +8402,61 @@ async def on_my_chat_member(update: Update, context):
         import traceback
         print(f"Error in on_my_chat_member: {e}")
         traceback.print_exc()
+
+async def cmd_clones(update: Update, context):
+    """查看和管理克隆机器人 /clones - 仅管理员可用"""
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+    admin_id = safe_int(os.getenv('ADMIN_ID', 0))
+    
+    # Only work in private chat
+    if chat.type != 'private':
+        await update.message.reply_text("❌ 此命令只能在私聊中使用")
+        return
+    
+    # Check if user is admin
+    if user_id != admin_id:
+        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        return
+    
+    if not global_flask_app:
+        await update.message.reply_text("❌ 系统未就绪")
+        return
+    
+    def _get_clones():
+        with global_flask_app.app_context():
+            clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
+            return [{
+                'id': c.id,
+                'clone_name': c.clone_name,
+                'owner_user_id': c.owner_user_id,
+                'is_active': c.is_active,
+                'expiration_date': c.expiration_date.strftime('%Y-%m-%d %H:%M') if c.expiration_date else '无期限',
+                'description': c.description or '无描述'
+            } for c in clones]
+    
+    clones = await asyncio.get_running_loop().run_in_executor(None, _get_clones)
+    
+    if not clones:
+        await update.message.reply_text("📝 当前没有克隆机器人")
+        return
+    
+    # Format the list
+    message = "🤖 <b>克隆机器人列表</b>\n\n"
+    for clone in clones:
+        status = "✅ 活跃" if clone['is_active'] else "❌ 停用"
+        message += f"<b>ID:</b> {clone['id']}\n"
+        message += f"<b>名称:</b> {clone['clone_name']}\n"
+        message += f"<b>状态:</b> {status}\n"
+        message += f"<b>拥有者ID:</b> {clone['owner_user_id'] or '无'}\n"
+        message += f"<b>有效期:</b> {clone['expiration_date']}\n"
+        message += f"<b>描述:</b> {clone['description']}\n"
+        message += "─────────────────\n"
+    
+    message += f"\n💡 <b>提示:</b> 在管理后台可以管理克隆机器人\n"
+    message += f"访问: {os.getenv('RAILWAY_PUBLIC_DOMAIN', 'localhost:5000')}/core/bot_clones"
+    
+    await update.message.reply_html(message)
 
 async def on_message(update: Update, context):
     if not global_flask_app: return

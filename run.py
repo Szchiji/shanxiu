@@ -25,10 +25,10 @@ def fix_database_schema(app):
         alter_statements = [
             "ALTER TABLE bot_groups ADD COLUMN last_query_msg_id INTEGER",
             "ALTER TABLE group_users ADD COLUMN expiration_date TIMESTAMP",
-            "ALTER TABLE group_users ADD COLUMN is_banned BOOLEAN DEFAULT FALSE",
-            "ALTER TABLE group_users ADD COLUMN is_muted_permanent BOOLEAN DEFAULT FALSE",
-            "ALTER TABLE group_users ADD COLUMN mute_reason VARCHAR(255)",
-            "ALTER TABLE group_users ADD COLUMN last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS is_muted_permanent BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS mute_reason VARCHAR(255)",
+            "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE group_users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             # Auto replies table columns
             "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",

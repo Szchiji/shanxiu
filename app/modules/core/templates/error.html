@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        {{ error_title or 'Error' }}
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-danger">
+                        <p class="mb-0">{{ error_message or 'An error occurred. Please try again later.' }}</p>
+                    </div>
+                    
+                    {% if error_details %}
+                    <div class="mt-3">
+                        <h6>Details:</h6>
+                        <pre class="bg-light p-3 rounded">{{ error_details }}</pre>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mt-4">
+                        <a href="{{ url_for('core.page_select_group') }}" class="btn btn-primary">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Groups
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

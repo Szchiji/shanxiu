@@ -4859,7 +4859,8 @@ async def run_lottery_draws(context):
                 result = await asyncio.get_running_loop().run_in_executor(None, _process_lottery, lottery_id)
                 
                 # Announce winners (outside the DB context)
-                if result and result['winners']:
+                # Only announce if there are actual winners (empty list = no winners)
+                if result and result.get('winners'):
                     winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in result['winners']]
                     message = f"🎉 <b>抽奖结束！</b>\n\n"
                     message += f"活动：{result['lottery_name']}\n"

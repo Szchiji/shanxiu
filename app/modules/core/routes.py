@@ -4167,8 +4167,8 @@ async def check_spam_protection(update: Update, context):
                 if 'http://' in msg.text or 'https://' in msg.text or 'www.' in msg.text:
                     should_punish = True
             
-            # Block forwards
-            if protection.block_forwards and msg.forward_origin:
+            # Block forwards (use hasattr for safety)
+            if protection.block_forwards and hasattr(msg, 'forward_origin') and msg.forward_origin:
                 should_punish = True
             
             # Block stickers
@@ -4675,8 +4675,8 @@ async def handle_sync_group_messages(update: Update, context):
                             print(f"Error parsing filter keywords JSON: {e}")
                             # Continue with sync if filter is invalid
                     
-                    # Skip forwards if not enabled
-                    if msg.forward_origin and not sync_setting.sync_forwards:
+                    # Skip forwards if not enabled (use hasattr for safety)
+                    if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
                     
                     # Sync the message to target group

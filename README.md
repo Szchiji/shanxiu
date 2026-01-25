@@ -56,7 +56,12 @@ SECRET_KEY=your_secret_key_here
 ADMIN_ID=your_telegram_id
 ```
 
-4. **启动应用**
+4. **运行数据库迁移**
+```bash
+python migrate_database.py
+```
+
+5. **启动应用**
 ```bash
 python run.py
 ```
@@ -67,7 +72,8 @@ python run.py
 2. 在Railway创建新项目
 3. 连接GitHub仓库
 4. 配置环境变量
-5. 部署完成！
+5. 首次部署后，运行数据库迁移：`python migrate_database.py`
+6. 部署完成！
 
 ## 🏗️ 系统架构
 

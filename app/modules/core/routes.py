@@ -389,9 +389,9 @@ def page_dashboard(gid):
         invitation_activity = InvitationActivity.query.filter_by(group_id=gid, enabled=True).first()
     except (ProgrammingError, OperationalError) as e:
         # Column might not exist in database yet - run migration
-        print(f"⚠️  Warning: Could not query invitation_activity table: {e}")
-        print(f"   This usually means the announce_in_group column doesn't exist yet.")
-        print(f"   Run 'python migrate_database.py' to add missing columns.")
+        logging.warning(f"Could not query invitation_activity table: {e}")
+        logging.warning("This usually means the announce_in_group column doesn't exist yet.")
+        logging.warning("Run 'python migrate_database.py' to add missing columns.")
         invitation_activity = None
         # Rollback the session to prevent transaction errors
         db.session.rollback()
@@ -761,9 +761,9 @@ def page_invitation_activity(gid):
             db.session.commit()
     except (ProgrammingError, OperationalError) as e:
         # Column might not exist in database yet - run migration
-        print(f"⚠️  Warning: Could not query invitation_activity table: {e}")
-        print(f"   This usually means the announce_in_group column doesn't exist yet.")
-        print(f"   Run 'python migrate_database.py' to add missing columns.")
+        logging.error(f"Could not query invitation_activity table: {e}")
+        logging.error("This usually means the announce_in_group column doesn't exist yet.")
+        logging.error("Run 'python migrate_database.py' to add missing columns.")
         # Rollback the session to prevent transaction errors
         db.session.rollback()
         # Return error page with helpful message
@@ -2487,16 +2487,15 @@ def api_save_invitation_activity():
             except (ValueError, TypeError):
                 pass
         settings.description = d.get('description')
-        # Handle announce_in_group if it exists
-        if 'announce_in_group' in d:
-            settings.announce_in_group = d.get('announce_in_group', False)
+        # Handle announce_in_group
+        settings.announce_in_group = d.get('announce_in_group', False)
         
         db.session.commit()
         return jsonify({'status':'ok'})
     except (ProgrammingError, OperationalError) as e:
         db.session.rollback()
         error_msg = 'Database schema error. Please run: python migrate_database.py'
-        print(f"⚠️  Warning: {error_msg}: {e}")
+        logging.error(f"{error_msg}: {e}")
         return jsonify({'status':'error','msg':error_msg})
     except Exception as e:
         db.session.rollback()

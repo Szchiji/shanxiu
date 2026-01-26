@@ -4022,18 +4022,27 @@ async def handle_new_chat_member(update: Update, context):
         if chat.type not in ['group', 'supergroup']:
             return
         
+        logging.info(f"👥 [入群事件] 检测到新成员加入群组 (ID: {chat.id})")
+        
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
             if not group or not group.is_active:
+                logging.warning(f"👥 [入群事件] 群组未激活或未找到: {chat.id}")
                 return
+            
+            logging.info(f"👥 [入群事件] 在群组 {group.id} 中处理新成员")
             
             settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
             if not settings:
+                logging.info(f"👥 [入群事件] 群组 {group.id} 无入群设置，跳过验证")
                 return
             
             for new_member in update.message.new_chat_members:
                 if new_member.is_bot:
+                    logging.info(f"👥 [入群事件] 跳过机器人: {new_member.first_name}")
                     continue
+                
+                logging.info(f"👥 [入群事件] 处理新成员: {new_member.first_name} (ID: {new_member.id})")
                 
                 # 记录新成员加入（包含joined_at时间）
                 update_or_create_group_member(
@@ -4095,9 +4104,13 @@ async def handle_new_chat_member(update: Update, context):
                 # Track invitation for points system
                 if update.message.from_user and update.message.from_user.id != new_member.id:
                     inviter_id = update.message.from_user.id
+                    logging.info(f"🎁 [邀请活动] 检测到邀请者: {inviter_id}")
+                    
                     invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
                     
                     if invitation_activity:
+                        logging.info(f"🎁 [邀请活动] 邀请活动已启用 (奖励: {invitation_activity.reward_points} 积分)")
+                        
                         # Check if this invitation was already recorded
                         existing_record = InvitationRecord.query.filter_by(
                             group_id=group.id,
@@ -4105,6 +4118,8 @@ async def handle_new_chat_member(update: Update, context):
                         ).first()
                         
                         if not existing_record:
+                            logging.info(f"🎁 [邀请活动] 创建新的邀请记录: {inviter_id} -> {new_member.id}")
+                            
                             # Record the invitation
                             invitation_record = InvitationRecord(
                                 group_id=group.id,
@@ -4129,6 +4144,7 @@ async def handle_new_chat_member(update: Update, context):
                                 )
                                 db.session.add(user_points)
                             
+                            old_balance = user_points.points_balance
                             user_points.points_balance += invitation_activity.reward_points
                             
                             # Log the points transaction
@@ -4141,10 +4157,16 @@ async def handle_new_chat_member(update: Update, context):
                             )
                             db.session.add(points_log)
                             
-                            print(f"📝 [邀请追踪] 记录邀请: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 奖励 {invitation_activity.reward_points} 积分")
+                            logging.info(f"✅ [邀请活动] 邀请记录成功: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 积分: {old_balance} -> {user_points.points_balance}")
                             
                             # Commit all changes before sending announcement
-                            db.session.commit()
+                            try:
+                                db.session.commit()
+                                logging.info(f"✅ [邀请活动] 数据库提交成功")
+                            except Exception as commit_error:
+                                logging.error(f"❌ [邀请活动] 数据库提交失败: {commit_error}")
+                                db.session.rollback()
+                                raise
                             
                             # Announce in group if enabled
                             if getattr(invitation_activity, 'announce_in_group', False):
@@ -4157,17 +4179,25 @@ async def handle_new_chat_member(update: Update, context):
                                         text=announcement,
                                         parse_mode='HTML'
                                     )
+                                    logging.info(f"📢 [邀请活动] 成功在群组 {chat.id} 发送邀请公告")
                                 except Exception as announce_error:
-                                    print(f"Error sending invitation announcement: {announce_error}")
+                                    logging.error(f"❌ [邀请活动] 发送邀请公告失败: {announce_error}")
                         else:
+                            logging.info(f"🎁 [邀请活动] 邀请记录已存在，跳过 (被邀请者: {new_member.id})")
                             # Commit member record even if no invitation tracking
                             db.session.commit()
+                    else:
+                        logging.info(f"🎁 [邀请活动] 群组 {group.id} 未启用邀请活动")
+                        # Commit member record if no invitation activity
+                        db.session.commit()
                 else:
+                    logging.info(f"👥 [入群事件] 未检测到邀请者或自行加入")
                     # Commit member record if no inviter detected
                     db.session.commit()
                         
     except Exception as e:
-        print(f"Error in handle_new_chat_member: {e}")
+        logging.error(f"❌ [入群事件] handle_new_chat_member 执行失败: {e}")
+        logging.error(traceback.format_exc())
 
 async def handle_left_chat_member(update: Update, context):
     """Handle members leaving the group - Exit ban functionality and record deletion"""
@@ -5158,6 +5188,7 @@ async def update_member_levels(context):
 async def update_lottery_status(context):
     """Update lottery status: pending -> active when start time is reached"""
     if not global_flask_app:
+        logging.warning("🎲 [状态更新] global_flask_app 未初始化")
         return
     
     try:
@@ -5176,18 +5207,20 @@ async def update_lottery_status(context):
                 
                 if updated > 0:
                     db.session.commit()
-                    print(f"✅ Updated {updated} lottery status: pending -> active")
+                    logging.info(f"✅ [状态更新] 已更新 {updated} 个抽奖状态: pending -> active")
                 
                 return updated
         
         await asyncio.get_running_loop().run_in_executor(None, _update_pending_lotteries)
         
     except Exception as e:
-        print(f"❌ Error in update_lottery_status: {e}")
+        logging.error(f"❌ [状态更新] update_lottery_status 执行失败: {e}")
+        logging.error(traceback.format_exc())
 
 async def run_lottery_draws(context):
     """Background task to run lottery draws when time is up"""
     if not global_flask_app:
+        logging.warning("🎲 [抽奖任务] global_flask_app 未初始化")
         return
     
     try:
@@ -5207,7 +5240,10 @@ async def run_lottery_draws(context):
                     GroupLottery.end_time != None,
                     GroupLottery.end_time <= now
                 ).all()
-                return [lottery.id for lottery in lotteries]
+                lottery_ids = [lottery.id for lottery in lotteries]
+                if lottery_ids:
+                    logging.info(f"🎲 [抽奖任务] 发现 {len(lottery_ids)} 个需要开奖的抽奖活动: {lottery_ids}")
+                return lottery_ids
         
         lottery_ids = await asyncio.get_running_loop().run_in_executor(None, _get_active_lottery_ids)
         
@@ -5221,15 +5257,20 @@ async def run_lottery_draws(context):
                         # Re-fetch lottery in this context to ensure it's attached to the session
                         lottery = GroupLottery.query.get(lid)
                         if not lottery:
+                            logging.warning(f"🎲 [抽奖任务] 抽奖 ID {lid} 未找到")
                             return None
                         
                         # Double-check status hasn't changed (race condition protection)
                         if lottery.status == 'ended':
+                            logging.info(f"🎲 [抽奖任务] 抽奖 '{lottery.lottery_name}' (ID: {lid}) 已结束，跳过")
                             return None
                         
                         group = BotGroup.query.get(lottery.group_id)
                         if not group:
+                            logging.warning(f"🎲 [抽奖任务] 群组 ID {lottery.group_id} 未找到")
                             return None
+                        
+                        logging.info(f"🎲 [抽奖任务] 开始处理抽奖 '{lottery.lottery_name}' (ID: {lid}, 类型: {lottery.lottery_type}, 群组 ID: {lottery.group_id})")
                         
                         chat_id = int(group.chat_id)
                         winners = []
@@ -5243,6 +5284,8 @@ async def run_lottery_draws(context):
                             ).filter(LotteryMessageCount.message_count > 0).order_by(
                                 LotteryMessageCount.message_count.desc()
                             ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
+                            
+                            logging.info(f"🎲 [抽奖任务] 消息计数抽奖: 找到 {len(message_counts)} 个参与者")
                             
                             if message_counts:
                                 # Create weighted random selection based on message counts
@@ -5258,36 +5301,47 @@ async def run_lottery_draws(context):
                                         cumulative += count
                                         if cumulative >= rand_val:
                                             winners = [user_id]
+                                            logging.info(f"🎲 [抽奖任务] 选中获奖者: 用户 {user_id} (消息数: {count})")
                                             break
                             else:
                                 # Fallback: if no one sent messages, pick from group users (limited sample)
+                                logging.warning(f"🎲 [抽奖任务] 无消息记录，使用随机备选方案")
                                 eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
                                 if eligible_users:
                                     winner = random.choice(eligible_users)
                                     winners = [winner.tg_id]
+                                    logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: 用户 {winner.tg_id}")
                         
                         elif lottery.lottery_type == 'message_rank':
                             # 🆕 Use actual message tracking data - top N senders
                             # Optimized: use limit() to avoid loading all records
+                            top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                             top_senders = LotteryMessageCount.query.filter_by(
                                 lottery_id=lottery.id
                             ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                                min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)  # Cap at MAX_AUCTION_WINNERS for performance
+                                top_n
                             ).all()
+                            
+                            logging.info(f"🎲 [抽奖任务] 消息排名抽奖: 需要前 {top_n} 名，找到 {len(top_senders)} 个参与者")
                             
                             winners = [mc.user_id for mc in top_senders]
                             
-                            if not winners:
+                            if winners:
+                                logging.info(f"🎲 [抽奖任务] 选中获奖者: {winners}")
+                            else:
                                 # Fallback: if no tracking data, use group users (limited sample)
-                                top_users = GroupUser.query.filter_by(group_id=group.id).limit(
-                                    min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                                ).all()
+                                logging.warning(f"🎲 [抽奖任务] 无消息记录，使用随机备选方案")
+                                top_users = GroupUser.query.filter_by(group_id=group.id).limit(top_n).all()
                                 winners = [u.tg_id for u in top_users]
+                                if winners:
+                                    logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
                         
                         # Update lottery with winners
                         lottery.winner_ids = json.dumps(winners)
                         lottery.status = 'ended'
                         db.session.commit()
+                        
+                        logging.info(f"✅ [抽奖任务] 抽奖 '{lottery.lottery_name}' (ID: {lid}) 已结束，获奖者: {winners}")
                         
                         return {
                             'chat_id': chat_id,
@@ -5308,17 +5362,23 @@ async def run_lottery_draws(context):
                     if result['prize_description']:
                         message += f"奖品：{result['prize_description']}\n"
                     
-                    await context.bot.send_message(
-                        chat_id=result['chat_id'],
-                        text=message,
-                        parse_mode='HTML'
-                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=result['chat_id'],
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                        logging.info(f"📢 [抽奖任务] 成功在群组 {result['chat_id']} 发送获奖公告")
+                    except Exception as send_error:
+                        logging.error(f"❌ [抽奖任务] 发送获奖公告失败 (群组: {result['chat_id']}): {send_error}")
                         
             except Exception as e:
-                print(f"Error running lottery {lottery_id}: {e}")
+                logging.error(f"❌ [抽奖任务] 处理抽奖 {lottery_id} 时出错: {e}")
+                logging.error(traceback.format_exc())
                 
     except Exception as e:
-        print(f"Error in run_lottery_draws: {e}")
+        logging.error(f"❌ [抽奖任务] run_lottery_draws 执行失败: {e}")
+        logging.error(traceback.format_exc())
 
 
 async def check_inactive_users(context):
@@ -8809,6 +8869,7 @@ async def on_message(update: Update, context):
                 
                 # Track for ALL users (verified and unverified)
                 if active_lotteries:
+                    logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.id} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
                     now = get_beijing_now()
                     for lottery in active_lotteries:
                         # Only track if lottery is still within its time window
@@ -8828,15 +8889,17 @@ async def on_message(update: Update, context):
                                         message_count=0
                                     )
                                     db.session.add(msg_count)
+                                    logging.debug(f"🎲 [消息计数] 为用户 {user.id} 创建抽奖 '{lottery.lottery_name}' (ID: {lottery.id}) 的消息计数记录")
                                 
                                 msg_count.message_count += 1
                                 msg_count.updated_at = now
+                                logging.debug(f"🎲 [消息计数] 用户 {user.id} 抽奖 '{lottery.lottery_name}' 消息计数: {msg_count.message_count}")
                     
                     # Batch commit all lottery tracking updates
                     try:
                         db.session.commit()
                     except Exception as e:
-                        print(f"Error committing lottery tracking: {e}")
+                        logging.error(f"❌ [消息计数] 提交抽奖追踪数据失败: {e}")
                         db.session.rollback()
             
             if conf.get('auto_like'):

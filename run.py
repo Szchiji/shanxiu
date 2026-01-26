@@ -4,7 +4,17 @@ import asyncio
 import os
 import sys
 import time
+import logging
 from sqlalchemy import text
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 app = create_app()
 

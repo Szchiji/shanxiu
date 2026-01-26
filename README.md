@@ -54,6 +54,10 @@ TG_BOT_TOKEN=your_bot_token_here
 DATABASE_URL=postgresql://user:pass@host:port/dbname
 SECRET_KEY=your_secret_key_here
 ADMIN_ID=your_telegram_id
+
+# Bot实例角色配置（可选，默认为main）
+# BOT_INSTANCE_ROLE=main   # 主实例：可管理克隆实例
+# BOT_INSTANCE_ROLE=clone  # 克隆实例：无法管理其他克隆
 ```
 
 4. **运行数据库迁移**
@@ -153,8 +157,27 @@ python run.py
 - Bot克隆
 - 独立Token管理
 - 分权管理
+- **实例角色管理**：通过 `BOT_INSTANCE_ROLE` 环境变量区分主实例与克隆实例
+  - **主实例 (main)**: 默认角色，具有完整管理权限，可创建、编辑、删除克隆实例，启动时自动启动所有有效克隆
+  - **克隆实例 (clone)**: 受限角色，无法访问克隆管理功能，不会启动其他克隆实例
+  - 前端自动隐藏克隆管理菜单（克隆实例）
+  - 后端API保护，防止克隆实例通过URL直接访问管理功能 (返回403)
 
-## 📊 数据库设计
+## 🔧 环境变量说明
+
+### 必需环境变量
+- `TG_BOT_TOKEN`: Telegram Bot Token（必需）
+- `DATABASE_URL`: 数据库连接URL（默认: sqlite:///bot.db）
+- `SECRET_KEY`: Flask会话密钥（生产环境必须设置）
+- `ADMIN_ID`: 管理员Telegram用户ID
+
+### 可选环境变量
+- `RAILWAY_PUBLIC_DOMAIN`: Railway部署域名（用于Webhook模式，不设置则使用Polling模式）
+- `BOT_INSTANCE_ROLE`: Bot实例角色（默认: main）
+  - `main`: 主实例，具有完整管理权限
+  - `clone`: 克隆实例，无克隆管理权限
+
+
 
 系统使用30+张表支持完整功能，核心表包括：
 

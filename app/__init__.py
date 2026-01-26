@@ -10,6 +10,25 @@ db = SQLAlchemy()
 global_bot = None
 global_loop = None
 
+def get_bot_instance_role():
+    """
+    获取机器人实例角色
+    从环境变量 BOT_INSTANCE_ROLE 读取，默认为 'main'
+    """
+    return os.getenv('BOT_INSTANCE_ROLE', 'main').lower()
+
+def is_clone_instance():
+    """
+    判断当前实例是否为克隆实例
+    """
+    return get_bot_instance_role() == 'clone'
+
+def is_main_instance():
+    """
+    判断当前实例是否为主实例
+    """
+    return get_bot_instance_role() == 'main'
+
 def create_app():
     app = Flask(__name__)
     
@@ -40,6 +59,20 @@ def create_app():
     def from_json_filter(value):
         try: return json.loads(value)
         except: return {}
+
+    # 注册上下文处理器 - 注入实例角色信息
+    @app.context_processor
+    def inject_bot_instance_role():
+        """
+        向所有模板注入机器人实例角色信息
+        用于前端判断当前实例是主实例还是克隆实例
+        """
+        role = get_bot_instance_role()
+        return {
+            'bot_instance_role': role,
+            'is_clone_instance': role == 'clone',
+            'is_main_instance': role == 'main'
+        }
 
     # 📦 注册模块
     from app.modules.core.routes import core_bp

@@ -3941,10 +3941,25 @@ async def check_scheduled_messages(context):
     if not messages_to_send:
         return
     
+    # Helper function to verify if a message is still active
+    def _verify_still_active(msg_id):
+        with global_flask_app.app_context():
+            scheduled_msg = ScheduledMessage.query.get(msg_id)
+            return scheduled_msg is not None and scheduled_msg.is_active
+    
     # 发送消息
     for msg_data in messages_to_send:
         try:
             chat_id = msg_data['chat_id']
+            
+            # 在发送前再次验证消息是否仍然激活（防止发送期间被停用或删除）
+            is_still_active = await asyncio.get_running_loop().run_in_executor(
+                None, _verify_still_active, msg_data['id']
+            )
+            
+            if not is_still_active:
+                print(f"⏭️ 跳过消息 {msg_data['id']}：已被停用或删除", flush=True)
+                continue
             
             # 如果需要删除上一条消息
             if msg_data['delete_previous'] and msg_data['last_message_id']:
@@ -3997,7 +4012,8 @@ async def check_scheduled_messages(context):
                 def _update_sent(msg_id, sent_msg_id):
                     with global_flask_app.app_context():
                         scheduled_msg = ScheduledMessage.query.get(msg_id)
-                        if scheduled_msg:
+                        # 只更新仍然激活的消息
+                        if scheduled_msg and scheduled_msg.is_active:
                             scheduled_msg.last_sent_at = get_beijing_now()
                             scheduled_msg.last_message_id = sent_msg_id
                             db.session.commit()

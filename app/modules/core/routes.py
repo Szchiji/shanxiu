@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify, abort
 from app import db
+from app import get_bot_instance_role, is_clone_instance, is_main_instance
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
@@ -49,26 +50,7 @@ MUTE_REASON_SPAM = '垃圾信息'  # Spam
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
-# --- 实例角色管理 ---
-def get_bot_instance_role():
-    """
-    获取机器人实例角色
-    从环境变量 BOT_INSTANCE_ROLE 读取，默认为 'main'
-    """
-    return os.getenv('BOT_INSTANCE_ROLE', 'main').lower()
-
-def is_clone_instance():
-    """
-    判断当前实例是否为克隆实例
-    """
-    return get_bot_instance_role() == 'clone'
-
-def is_main_instance():
-    """
-    判断当前实例是否为主实例
-    """
-    return get_bot_instance_role() == 'main'
-
+# --- 实例角色管理装饰器 ---
 def require_main_instance(f):
     """
     装饰器：要求主实例才能访问

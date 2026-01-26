@@ -4358,13 +4358,17 @@ async def check_forced_subscription(update: Update, context):
                     # Apply punishment if configured
                     if settings.unsubscribe_action == 'mute':
                         try:
+                            print(f"🔄 [实时订阅检测] 用户 {user.id} 未订阅频道，准备禁言 in group {group.id} (chat_id={chat.id})", flush=True)
                             await context.bot.restrict_chat_member(
                                 chat_id=chat.id,
                                 user_id=user.id,
                                 permissions=get_muted_permissions()
                             )
+                            print(f"✅ [实时订阅检测] Successfully muted unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
                         except Exception as e:
-                            print(f"Error muting unsubscribed user: {e}")
+                            print(f"❌ [实时订阅检测] Failed to mute unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                            print(f"   Error type: {type(e).__name__}", flush=True)
+                            print(f"   Error details: {str(e)}", flush=True)
                     
                     return True  # Message was handled (deleted)
                     
@@ -4431,18 +4435,17 @@ async def handle_subscription_check_callback(update: Update, context):
                 if member.status not in ['left', 'kicked']:
                     # User is now subscribed, unmute them if they were muted
                     try:
+                        print(f"🔄 [即时订阅验证] 用户 {user.id} 已订阅频道，准备立即解除禁言 in group {group.id} (chat_id={chat.id})", flush=True)
                         await context.bot.restrict_chat_member(
                             chat_id=chat.id,
                             user_id=user.id,
-                            permissions=ChatPermissions(
-                                can_send_messages=True,
-                                can_send_media_messages=True,
-                                can_send_other_messages=True,
-                                can_add_web_page_previews=True
-                            )
+                            permissions=get_unrestricted_permissions()
                         )
+                        print(f"✅ [即时订阅验证] Successfully unmuted user {user.id} immediately after subscription verification in group {group.id} (chat_id={chat.id})", flush=True)
                     except Exception as e:
-                        print(f"Error unmuting user: {e}")
+                        print(f"❌ [即时订阅验证] Failed to unmute user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                        print(f"   Error type: {type(e).__name__}", flush=True)
+                        print(f"   Error details: {str(e)}", flush=True)
                     
                     await query.answer("✅ 验证成功！您现在可以发言了", show_alert=True)
                     

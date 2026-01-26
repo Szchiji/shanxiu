@@ -16,9 +16,6 @@ logging.basicConfig(
     ]
 )
 
-# Set logging level for specific modules
-logging.getLogger('app.modules.core.routes').setLevel(logging.INFO)
-
 app = create_app()
 
 def init_database(app):

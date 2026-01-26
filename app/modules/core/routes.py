@@ -4022,7 +4022,7 @@ async def handle_new_chat_member(update: Update, context):
         if chat.type not in ['group', 'supergroup']:
             return
         
-        logging.info(f"👥 [入群事件] 检测到新成员加入群组 {chat.title} (ID: {chat.id})")
+        logging.info(f"👥 [入群事件] 检测到新成员加入群组 (ID: {chat.id})")
         
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
@@ -4030,9 +4030,11 @@ async def handle_new_chat_member(update: Update, context):
                 logging.warning(f"👥 [入群事件] 群组未激活或未找到: {chat.id}")
                 return
             
+            logging.info(f"👥 [入群事件] 在群组 {group.id} 中处理新成员")
+            
             settings = GroupEntryExitSettings.query.filter_by(group_id=group.id).first()
             if not settings:
-                logging.info(f"👥 [入群事件] 群组 {group.title} 无入群设置，跳过验证")
+                logging.info(f"👥 [入群事件] 群组 {group.id} 无入群设置，跳过验证")
                 return
             
             for new_member in update.message.new_chat_members:
@@ -4185,7 +4187,7 @@ async def handle_new_chat_member(update: Update, context):
                             # Commit member record even if no invitation tracking
                             db.session.commit()
                     else:
-                        logging.info(f"🎁 [邀请活动] 群组 {group.title} 未启用邀请活动")
+                        logging.info(f"🎁 [邀请活动] 群组 {group.id} 未启用邀请活动")
                         # Commit member record if no invitation activity
                         db.session.commit()
                 else:
@@ -5268,7 +5270,7 @@ async def run_lottery_draws(context):
                             logging.warning(f"🎲 [抽奖任务] 群组 ID {lottery.group_id} 未找到")
                             return None
                         
-                        logging.info(f"🎲 [抽奖任务] 开始处理抽奖 '{lottery.lottery_name}' (ID: {lid}, 类型: {lottery.lottery_type}, 群组: {group.title})")
+                        logging.info(f"🎲 [抽奖任务] 开始处理抽奖 '{lottery.lottery_name}' (ID: {lid}, 类型: {lottery.lottery_type}, 群组 ID: {lottery.group_id})")
                         
                         chat_id = int(group.chat_id)
                         winners = []
@@ -5317,7 +5319,7 @@ async def run_lottery_draws(context):
                             top_senders = LotteryMessageCount.query.filter_by(
                                 lottery_id=lottery.id
                             ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                                top_n  # Cap at MAX_AUCTION_WINNERS for performance
+                                top_n
                             ).all()
                             
                             logging.info(f"🎲 [抽奖任务] 消息排名抽奖: 需要前 {top_n} 名，找到 {len(top_senders)} 个参与者")
@@ -8867,7 +8869,7 @@ async def on_message(update: Update, context):
                 
                 # Track for ALL users (verified and unverified)
                 if active_lotteries:
-                    logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.title} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
+                    logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.id} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
                     now = get_beijing_now()
                     for lottery in active_lotteries:
                         # Only track if lottery is still within its time window

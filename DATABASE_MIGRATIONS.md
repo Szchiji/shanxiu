@@ -44,7 +44,7 @@ The application's `fix_database_schema()` function automatically adds missing co
 
 **用途 / Purpose**: 追踪群成员最后同步时间 / Track last group member synchronization time
 
-**添加时间 / Added**: 2026-01
+**添加时间 / Added**: 2025-01
 
 **SQL 命令 / SQL Command**:
 ```sql
@@ -242,7 +242,7 @@ This is not an error! SQL commands with `IF NOT EXISTS` are idempotent. If you s
 
 ## 版本历史 / Version History
 
-- **2026-01**: 添加 `members_last_sync` 字段以修复群成员同步问题
+- **2025-01**: 添加 `members_last_sync` 字段以修复群成员同步问题
   - Added `members_last_sync` field to fix group member sync issue
 - **2025-12**: 添加 `is_muted_permanent`, `mute_reason` 字段
   - Added `is_muted_permanent`, `mute_reason` fields

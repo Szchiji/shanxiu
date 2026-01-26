@@ -84,7 +84,7 @@ def fix_database_schema(app):
             # GroupMember: Set joined_at for existing records if NULL (use created_at as fallback)
             "UPDATE group_members SET joined_at = COALESCE(created_at, synced_at) WHERE joined_at IS NULL",
             # BotGroup: Add members_last_sync column to track last successful group member sync
-            "ALTER TABLE bot_groups ADD COLUMN members_last_sync TIMESTAMP NULL",
+            "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

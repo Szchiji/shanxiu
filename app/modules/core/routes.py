@@ -3941,17 +3941,18 @@ async def check_scheduled_messages(context):
     if not messages_to_send:
         return
     
+    # Helper function to verify if a message is still active
+    def _verify_still_active(msg_id):
+        with global_flask_app.app_context():
+            scheduled_msg = ScheduledMessage.query.get(msg_id)
+            return scheduled_msg is not None and scheduled_msg.is_active
+    
     # 发送消息
     for msg_data in messages_to_send:
         try:
             chat_id = msg_data['chat_id']
             
             # 在发送前再次验证消息是否仍然激活（防止发送期间被停用或删除）
-            def _verify_still_active(msg_id):
-                with global_flask_app.app_context():
-                    scheduled_msg = ScheduledMessage.query.get(msg_id)
-                    return scheduled_msg is not None and scheduled_msg.is_active
-            
             is_still_active = await asyncio.get_running_loop().run_in_executor(
                 None, _verify_still_active, msg_data['id']
             )

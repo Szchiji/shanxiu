@@ -383,7 +383,8 @@ def test_session_refresh():
             # We'll use a raw SQL update to simulate another process changing the value
             from sqlalchemy import text
             db.session.execute(
-                text(f"UPDATE scheduled_messages SET is_active = 0 WHERE id = {msg_id}")
+                text("UPDATE scheduled_messages SET is_active = 0 WHERE id = :msg_id"),
+                {"msg_id": msg_id}
             )
             db.session.commit()
             print("   - Simulated external update: set is_active=False")

@@ -72,7 +72,8 @@ def test_race_condition_protection():
         ('ScheduledMessage.is_active == True', 'Initial query filters by is_active'),
         ('db.session.expire_all()', 'Session cache is refreshed'),
         ('_verify_still_active', 'Pre-send verification exists'),
-        ('跳过消息', 'Skip message if deactivated'),
+        ('is_still_active', 'Check active status before sending'),
+        ('continue', 'Skip logic for inactive messages'),
         ('scheduled_msg and scheduled_msg.is_active', 'Update only active messages')
     ]
     

@@ -1438,7 +1438,6 @@ def api_sync_group_members():
             
     except Exception as e:
         print(f"❌ API sync_group_members error: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({'status': 'error', 'msg': f'同步失败: {str(e)}'})
 
@@ -4720,7 +4719,6 @@ async def sync_group_members_task(group):
     except Exception as e:
         error_msg = f"同步失败: {str(e)}"
         print(f"❌ 同步群成员失败: {e}")
-        import traceback
         traceback.print_exc()
         return (False, error_msg, 0)
 

@@ -4,7 +4,20 @@ import asyncio
 import os
 import sys
 import time
+import logging
 from sqlalchemy import text
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Set logging level for specific modules
+logging.getLogger('app.modules.core.routes').setLevel(logging.INFO)
 
 app = create_app()
 

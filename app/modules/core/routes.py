@@ -4708,8 +4708,15 @@ async def sync_group_members_task(group):
                 )
                 synced_count += 1
             
-            # Update group's last sync timestamp
-            group.members_last_sync = now
+            # Update group's last sync timestamp (with safety check for missing column)
+            try:
+                if hasattr(group, 'members_last_sync'):
+                    group.members_last_sync = now
+            except (ProgrammingError, OperationalError) as col_err:
+                # Column doesn't exist yet, log but don't fail
+                print(f"⚠️ Warning: Could not update members_last_sync: {col_err}")
+                print("   Please run: python migrate_database.py")
+            
             db.session.commit()
             
             success_msg = f"同步成功: {synced_count} 位管理员 (总成员约 {member_count} 人)"

@@ -975,13 +975,15 @@
                         </li>
                         {% endif %}
                         
-                        <!-- Bot Clones - Global feature, not group-specific -->
+                        <!-- Bot Clones - Global feature, not group-specific, only visible on main instance -->
+                        {% if is_main_instance %}
                         <li class="nav-item">
                             <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
                                 <i class="fa-solid fa-robot"></i> 机器人克隆
                                 <span class="feature-desc">管理机器人克隆实例</span>
                             </a>
                         </li>
+                        {% endif %}
                         
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">

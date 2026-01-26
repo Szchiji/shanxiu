@@ -1,5 +1,6 @@
-from flask import Blueprint, render_template, request, redirect, session, jsonify
+from flask import Blueprint, render_template, request, redirect, session, jsonify, abort
 from app import db
+from app import get_bot_instance_role, is_clone_instance, is_main_instance
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
@@ -19,6 +20,7 @@ import pytz
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
+from functools import wraps
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
 
@@ -47,6 +49,25 @@ MUTE_REASON_SPAM = '垃圾信息'  # Spam
 
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
+
+# --- 实例角色管理装饰器 ---
+def require_main_instance(f):
+    """
+    装饰器：要求主实例才能访问
+    克隆实例访问将返回403错误
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if is_clone_instance():
+            if request.is_json or request.path.startswith('/core/api/'):
+                return jsonify({
+                    'success': False,
+                    'error': '克隆实例无权限访问此功能。Clone instances are not allowed to access this feature.'
+                }), 403
+            else:
+                abort(403, description='克隆实例无权限访问此页面。此功能仅限主实例使用。')
+        return f(*args, **kwargs)
+    return decorated_function
 
 def generate_verification_code():
     """Generate a random 6-digit verification code"""
@@ -950,6 +971,7 @@ def page_sync_message_logs(gid):
                          total_pages=total_pages, total_items=total)
 
 @core_bp.route('/bot_clones')
+@require_main_instance
 def page_bot_clones():
     """机器人克隆管理 - 只在主机器人后台显示"""
     if not session.get('logged_in'): return redirect('/core')
@@ -3009,6 +3031,7 @@ def api_save_sync_group_messages():
 
 
 @core_bp.route('/api/save_bot_clone', methods=['POST'])
+@require_main_instance
 def api_save_bot_clone():
     """保存机器人克隆 - 如果克隆正在运行且被编辑，则重启它"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
@@ -3123,6 +3146,7 @@ def api_save_bot_clone():
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/delete_bot_clone', methods=['POST'])
+@require_main_instance
 def api_delete_bot_clone():
     """删除机器人克隆 - 如果正在运行则先停止"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
@@ -3158,6 +3182,7 @@ def api_delete_bot_clone():
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/toggle_bot_clone', methods=['POST'])
+@require_main_instance
 def api_toggle_bot_clone():
     """切换机器人克隆状态 - 动态启动/停止克隆机器人"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
@@ -6522,10 +6547,16 @@ async def start_all_clone_bots(flask_app):
     """
     启动所有激活的克隆机器人
     在主Bot启动后调用
+    仅在主实例中执行，克隆实例跳过
     
     Args:
         flask_app: Flask应用实例
     """
+    # 克隆实例不应该启动其他克隆
+    if is_clone_instance():
+        print("ℹ️ 克隆实例不启动其他克隆机器人 (Clone instance does not start other clones)")
+        return
+    
     if not flask_app:
         print("⚠️ Flask app not available, skipping clone bot startup")
         return

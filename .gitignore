@@ -44,3 +44,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Test files for validation
+test_bot_instance_role.py
+test_comprehensive_instance_role.py

@@ -65,6 +65,16 @@ ADMIN_ID=your_telegram_id
 python migrate_database.py
 ```
 
+**重要**：如果你已经在运行旧版本的应用，在部署新版本之前必须运行数据库迁移，否则会遇到以下错误：
+- `psycopg2.errors.UndefinedColumn: column bot_groups.members_last_sync does not exist`
+- 群成员同步功能无法正常工作
+- 定时任务可能报错
+
+如果迁移脚本执行失败，你也可以手动执行以下 SQL 命令：
+```sql
+ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL;
+```
+
 5. **启动应用**
 ```bash
 python run.py

@@ -57,6 +57,13 @@ def migrate_database():
             'check': "SELECT column_name FROM information_schema.columns WHERE table_name='invitation_activity' AND column_name='announce_in_group'"
         })
         
+        # Group Members Sync - Add last sync timestamp tracking
+        migrations.append({
+            'name': 'Add members_last_sync to bot_groups',
+            'sql': "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL",
+            'check': "SELECT column_name FROM information_schema.columns WHERE table_name='bot_groups' AND column_name='members_last_sync'"
+        })
+        
         # Run migrations
         for migration in migrations:
             try:
@@ -80,6 +87,7 @@ def migrate_database():
         print("- Added verification_type and verification_options to group_entry_exit_settings")
         print("- Added is_muted_permanent and mute_reason to group_users")
         print("- Added announce_in_group to invitation_activity")
+        print("- Added members_last_sync to bot_groups")
 
 if __name__ == '__main__':
     migrate_database()

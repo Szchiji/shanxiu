@@ -45,6 +45,7 @@ Thumbs.db
 .env
 .env.local
 
-# Test files for validation
+# Test and demo files for validation
 test_bot_instance_role.py
 test_comprehensive_instance_role.py
+demo_instance_role.py

@@ -1,5 +1,22 @@
 # 更新日志 (Changelog)
 
+## [Unreleased] - 2026-01-26
+
+### ✨ 新增功能 (Added)
+
+#### 邀请活动群内公告功能（Invitation Activity Group Announcement）
+- 新增 `announce_in_group` 字段到 `invitation_activity` 表
+- 支持在群内公告邀请成功消息，提升活动参与度
+- 添加了用户界面开关，管理员可以选择是否启用群内公告
+- 完整的数据库迁移脚本支持，使用 `IF NOT EXISTS` 确保迁移安全
+- 后端代码具有完善的错误处理，兼容尚未迁移的数据库
+- 使用安全的属性访问模式（`getattr`），防止属性不存在时报错
+
+### 🔧 优化改进 (Improved)
+- 优化邀请活动设置页面，新增"群内公告邀请成功"选项
+- 改进数据库迁移的容错性，自动检测列是否存在
+- 增强前端表单，支持保存 `announce_in_group` 配置
+
 ## [Unreleased] - 2026-01-05
 
 ### ✨ 新增功能 (Added)

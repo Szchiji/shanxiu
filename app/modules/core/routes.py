@@ -1409,18 +1409,37 @@ def api_sync_group_members():
     if not group:
         return jsonify({'status': 'error', 'msg': 'Group not found'})
     
-    # 触发同步 - 调用异步函数
+    # 触发同步 - 调用异步函数并等待结果
     try:
-        if global_ptb_app and global_bot_loop:
-            asyncio.run_coroutine_threadsafe(
-                sync_group_members_task(group),
-                global_bot_loop
-            )
-            return jsonify({'status': 'ok', 'msg': '同步请求已提交，请稍候刷新页面'})
-        else:
+        if not global_ptb_app or not global_bot_loop:
             return jsonify({'status': 'error', 'msg': 'Bot not initialized'})
+        
+        # Submit the coroutine and wait for result (with timeout)
+        future = asyncio.run_coroutine_threadsafe(
+            sync_group_members_task(group),
+            global_bot_loop
+        )
+        
+        # Wait for the task to complete with a timeout (30 seconds)
+        try:
+            success, message, synced_count = future.result(timeout=30)
+            
+            if success:
+                return jsonify({
+                    'status': 'ok', 
+                    'msg': message,
+                    'synced_count': synced_count
+                })
+            else:
+                return jsonify({'status': 'error', 'msg': message})
+                
+        except asyncio.TimeoutError:
+            return jsonify({'status': 'error', 'msg': '同步超时，请稍后重试'})
+            
     except Exception as e:
-        return jsonify({'status': 'error', 'msg': str(e)})
+        print(f"❌ API sync_group_members error: {e}")
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'msg': f'同步失败: {str(e)}'})
 
 @core_bp.route('/api/save_fields', methods=['POST'])
 def api_save_fields():
@@ -4649,10 +4668,16 @@ def update_or_create_group_member(group_id, user_id, username=None, first_name=N
     return member
 
 async def sync_group_members_task(group):
-    """从 Telegram 同步群成员到数据库"""
+    """
+    从 Telegram 同步群成员到数据库
+    
+    Returns:
+        tuple: (success: bool, message: str, synced_count: int)
+    """
     if not global_ptb_app or not global_flask_app:
-        print("❌ Bot or Flask app not initialized")
-        return
+        error_msg = "Bot or Flask app not initialized"
+        print(f"❌ {error_msg}")
+        return (False, error_msg, 0)
     
     try:
         chat_id = int(group.chat_id)
@@ -4683,13 +4708,19 @@ async def sync_group_members_task(group):
                 )
                 synced_count += 1
             
+            # Update group's last sync timestamp
+            group.members_last_sync = now
             db.session.commit()
+            
+            success_msg = f"同步成功: {synced_count} 位管理员 (总成员约 {member_count} 人)"
             print(f"✅ 同步群 {group.title} 管理员成功: {synced_count} 人 (总成员约 {member_count} 人)")
+            return (True, success_msg, synced_count)
             
     except Exception as e:
+        error_msg = f"同步失败: {str(e)}"
         print(f"❌ 同步群成员失败: {e}")
-        import traceback
         traceback.print_exc()
+        return (False, error_msg, 0)
 
 async def update_group_member(update: Update, context):
     """在消息处理时自动记录/更新成员信息"""

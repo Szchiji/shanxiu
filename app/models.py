@@ -12,6 +12,7 @@ class BotGroup(db.Model):
     config = db.Column(db.Text, default='{}')
     fields_config = db.Column(db.Text)
     last_query_msg_id = db.Column(db.Integer, nullable=True)
+    members_last_sync = db.Column(db.DateTime, nullable=True)  # Track last successful member sync
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
 class GroupUser(db.Model):

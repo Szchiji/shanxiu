@@ -344,7 +344,7 @@
                 
                 <!-- 1. 打卡模块 -->
                 <div class="config-section">
-                    <div class="section-title text-primary"><i class="fa-solid fa-check-circle me-1"></i> 打卡设置</div>
+                    <div class="section-title text-primary"><i class="fa-solid fa-check-circle me-1"></i> 打卡设置 <small class="text-muted fw-normal">（仅限认证用户，仅记录出勤）</small></div>
                     
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="checkin_open" {{ 'checked' if conf.checkin_open }}>
@@ -360,6 +360,27 @@
                         <label class="small text-muted fw-bold">回复自动删除 (秒)</label>
                         <input type="number" id="checkin_del_time" class="form-control" value="{{ conf.checkin_del_time }}">
                         <div class="form-text" style="font-size: 11px;">"打卡成功"提示多久消失。</div>
+                    </div>
+                </div>
+
+                <!-- 1b. 积分签到模块 -->
+                <div class="config-section">
+                    <div class="section-title text-success"><i class="fa-solid fa-star me-1"></i> 积分签到 <small class="text-muted fw-normal">（所有成员，每日获得积分）</small></div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="signin_open" {{ 'checked' if conf.get('signin_open') }}>
+                        <label class="fw-bold">开启积分签到</label>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="small text-muted fw-bold">触发指令 (逗号分隔)</label>
+                        <input id="signin_cmd" class="form-control" value="{{ conf.get('signin_cmd', '签到') }}" placeholder="签到">
+                    </div>
+
+                    <div class="mb-0">
+                        <label class="small text-muted fw-bold">回复自动删除 (秒)</label>
+                        <input type="number" id="signin_del_time" class="form-control" value="{{ conf.get('signin_del_time', 30) }}">
+                        <div class="form-text" style="font-size: 11px;">签到提示多久消失。0 = 不删除。</div>
                     </div>
                 </div>
                 
@@ -452,6 +473,8 @@
                     <option value="msg_checkin_success">✅ 打卡成功消息</option>
                     <option value="msg_not_registered">⚠️ 未认证提示</option>
                     <option value="msg_repeat_checkin">🔄 重复打卡提示</option>
+                    <option value="msg_signin_success">🎉 积分签到成功</option>
+                    <option value="msg_repeat_signin">🔄 重复签到提示</option>
                 </select>
             </div>
             <div class="card-body p-0">
@@ -476,6 +499,8 @@
                     <span class="badge-variable badge bg-primary text-white border" onmousedown="insert('{'+'{{ f.label }}'+'}', event)">{{ f.label }}</span>
                     {% endfor %}
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
+                    <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{积分}', event)" title="本次签到获得积分">+积分</span>
+                    <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{余额}', event)" title="签到后总余额">余额</span>
                 </div>
                 
                 <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
@@ -648,7 +673,9 @@
         msg_query_header: `{{ conf.msg_query_header|safe }}`,
         msg_filter_header: `{{ conf.msg_filter_header|safe }}`,
         msg_expired_ban: `{{ conf.msg_expired_ban|safe }}`,
-        msg_private_start: `{{ conf.msg_private_start|safe }}`
+        msg_private_start: `{{ conf.msg_private_start|safe }}`,
+        msg_signin_success: `{{ conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')|safe }}`,
+        msg_repeat_signin: `{{ conf.get('msg_repeat_signin', '🔄 <b>今日已签到，当前余额：{余额}</b>')|safe }}`
     };
     
     const currentGroupId = {{ group.id }};
@@ -932,6 +959,10 @@
                 checkin_open: document.getElementById('checkin_open').checked,
                 checkin_cmd: document.getElementById('checkin_cmd').value,
                 checkin_del_time: document.getElementById('checkin_del_time').value, // 打卡删除
+
+                signin_open: document.getElementById('signin_open').checked,
+                signin_cmd: document.getElementById('signin_cmd').value,
+                signin_del_time: document.getElementById('signin_del_time').value,
                 
                 query_open: document.getElementById('query_open').checked,
                 query_cmd: document.getElementById('query_cmd').value,

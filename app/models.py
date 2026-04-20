@@ -751,5 +751,10 @@ DEFAULT_SYSTEM = {
     "msg_private_start": "👋 你好！我是打卡机器人。",  # 私聊 /start 消息
     "template": "{onlineEmoji} {昵称} | {地区}",
     "push_template": "<b>👤 名片推送</b>\n昵称：{昵称}\n<a href='tg://user?id={tg_id}'>联系我</a>",
-    "custom_buttons": "[]" # 🆕 初始化为空数组
+    "custom_buttons": "[]", # 🆕 初始化为空数组
+    # 积分签到（独立于认证用户打卡）
+    "signin_open": False, "signin_cmd": "签到",
+    "signin_del_time": 30,
+    "msg_signin_success": "🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>",
+    "msg_repeat_signin": "🔄 <b>今日已签到，当前余额：{余额}</b>",
 }

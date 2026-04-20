@@ -6921,7 +6921,10 @@ def setup_clone_handlers(app, flask_app, clone_id):
     """
     # Note: Clone bots use the same handlers as the main bot
     # But we need to add permission checks for clone_id
-    
+
+    # Store clone_id in bot_data so handlers can identify which clone is running
+    app.bot_data['clone_id'] = clone_id
+
     # Add chat member handler
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
@@ -8648,8 +8651,32 @@ async def cmd_start(update: Update, context):
         print(f"⚠️ /start 调试: 在群组中使用 /start 命令，忽略")
         return
     
+    # Check if this is a clone bot by looking up clone_id in bot_data
+    clone_id = context.application.bot_data.get('clone_id')
+
+    # Determine if the user is an authorized admin (global or clone-specific)
+    is_admin_user = (user_id == admin_id)
+
+    if not is_admin_user and clone_id:
+        # Check if user is an admin of this clone bot
+        def _check_clone_admin():
+            with global_flask_app.app_context():
+                clone = BotClone.query.get(clone_id)
+                if not clone:
+                    return False
+                # Check owner
+                if clone.owner_user_id and clone.owner_user_id == user_id:
+                    return True
+                # Check admin_user_ids list
+                try:
+                    admin_ids = json.loads(clone.admin_user_ids or '[]')
+                    return user_id in admin_ids
+                except (json.JSONDecodeError, TypeError):
+                    return False
+        is_admin_user = await asyncio.get_running_loop().run_in_executor(None, _check_clone_admin)
+
     # Handle private chat only
-    if user_id == admin_id:
+    if is_admin_user:
         # Create authentication session for admin
         def _create_auth_session():
             with global_flask_app.app_context():
@@ -9105,7 +9132,25 @@ async def on_message(update: Update, context):
                 # Continue to verification code check even if forward message handling fails
             
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
-            if user.id == admin_id and txt.isdigit() and len(txt) == 6:
+            # Also allow clone bot admins to submit verification codes
+            clone_id = context.application.bot_data.get('clone_id')
+            is_clone_admin = False
+            if clone_id and user.id != admin_id and txt.isdigit() and len(txt) == 6:
+                def _check_clone_admin_msg():
+                    with global_flask_app.app_context():
+                        clone = BotClone.query.get(clone_id)
+                        if not clone:
+                            return False
+                        if clone.owner_user_id and clone.owner_user_id == user.id:
+                            return True
+                        try:
+                            admin_ids = json.loads(clone.admin_user_ids or '[]')
+                            return user.id in admin_ids
+                        except (json.JSONDecodeError, TypeError):
+                            return False
+                is_clone_admin = await asyncio.get_running_loop().run_in_executor(None, _check_clone_admin_msg)
+
+            if (user.id == admin_id or is_clone_admin) and txt.isdigit() and len(txt) == 6:
                 # Try to verify the code using constant-time comparison
                 def _verify_code():
                     with global_flask_app.app_context():

@@ -2143,6 +2143,9 @@ def api_toggle_scheduled_message():
         item = ScheduledMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         item.is_active = not item.is_active
+        # 重新启用时重置上次发送时间，使其立即触发发送
+        if item.is_active:
+            item.last_sent_at = None
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -2162,6 +2165,33 @@ def api_delete_scheduled_message():
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/batch_scheduled_messages', methods=['POST'])
+def api_batch_scheduled_messages():
+    """批量操作定时消息（启用/暂停/删除）"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+    ids = d.get('ids')
+    action = d.get('action')
+    if not ids or not isinstance(ids, list): return jsonify({'status':'error','msg':'Missing ids'})
+    if action not in ('enable', 'pause', 'delete'): return jsonify({'status':'error','msg':'Invalid action'})
+
+    try:
+        items = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).all()
+        for item in items:
+            if action == 'delete':
+                db.session.delete(item)
+            elif action == 'enable':
+                item.is_active = True
+                item.last_sent_at = None  # 重置上次发送时间，使其立即触发发送
+            elif action == 'pause':
+                item.is_active = False
+        db.session.commit()
+        return jsonify({'status':'ok','count':len(items)})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})

@@ -480,6 +480,27 @@
     .remark-cell {
         max-width: 100px;
     }
+
+    /* Batch action bar */
+    .batch-bar {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        margin-bottom: 1rem;
+        display: none;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .batch-bar.visible {
+        display: flex;
+    }
+    .batch-bar .selected-count {
+        font-weight: 600;
+        color: #856404;
+        margin-right: 0.5rem;
+    }
 </style>
 
 <div class="page-header">
@@ -528,12 +549,32 @@
     </div>
 </div>
 
+<!-- Batch Action Bar -->
+<div class="batch-bar" id="batchBar">
+    <span class="selected-count" id="selectedCount">已选 0 条</span>
+    <button class="btn btn-success btn-sm" onclick="batchAction('enable')">
+        <i class="fa-solid fa-play me-1"></i>批量启用
+    </button>
+    <button class="btn btn-warning btn-sm" onclick="batchAction('pause')">
+        <i class="fa-solid fa-pause me-1"></i>批量暂停
+    </button>
+    <button class="btn btn-danger btn-sm" onclick="batchAction('delete')">
+        <i class="fa-solid fa-trash me-1"></i>批量删除
+    </button>
+    <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="clearSelection()">
+        <i class="fa-solid fa-times me-1"></i>取消选择
+    </button>
+</div>
+
 <div class="table-container">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4">ID</th>
+                    <th class="ps-3 ps-md-4" style="width:36px;">
+                        <input type="checkbox" id="selectAll" title="全选" onchange="toggleSelectAll(this.checked)">
+                    </th>
+                    <th>ID</th>
                     <th>类型</th>
                     <th>间隔</th>
                     <th>开始</th>
@@ -558,7 +599,10 @@
                     data-remark="{{ item.remark or ''|e }}"
                     data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
+                    <td class="ps-3 ps-md-4">
+                        <input type="checkbox" class="row-checkbox" value="{{ item.id }}" onchange="onRowCheckboxChange()">
+                    </td>
+                    <td class="fw-bold">{{ item.id }}</td>
                     <td>
                         {% if item.media_type == 'text' %}
                         <span class="badge bg-primary">文本</span>
@@ -600,7 +644,7 @@
                 </tr>
                 {% else %}
                 <tr id="emptyRow">
-                    <td colspan="9" class="text-center py-4 py-md-5 text-muted">
+                    <td colspan="10" class="text-center py-4 py-md-5 text-muted">
                         <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
                         暂无定时消息，点击上方按钮添加
                     </td>
@@ -1362,5 +1406,60 @@ async function importData(xlsx_content) {
         alert('导入失败，请重试');
     }
 }
+    // Batch selection
+    function getSelectedIds() {
+        return [...document.querySelectorAll('.row-checkbox:checked')].map(cb => parseInt(cb.value));
+    }
+
+    function onRowCheckboxChange() {
+        const all = document.querySelectorAll('.row-checkbox');
+        const checked = document.querySelectorAll('.row-checkbox:checked');
+        document.getElementById('selectAll').indeterminate = checked.length > 0 && checked.length < all.length;
+        document.getElementById('selectAll').checked = checked.length === all.length && all.length > 0;
+        updateBatchBar();
+    }
+
+    function toggleSelectAll(checked) {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
+        updateBatchBar();
+    }
+
+    function updateBatchBar() {
+        const count = document.querySelectorAll('.row-checkbox:checked').length;
+        const bar = document.getElementById('batchBar');
+        document.getElementById('selectedCount').textContent = `已选 ${count} 条`;
+        bar.classList.toggle('visible', count > 0);
+    }
+
+    function clearSelection() {
+        document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('selectAll').checked = false;
+        document.getElementById('selectAll').indeterminate = false;
+        updateBatchBar();
+    }
+
+    async function batchAction(action) {
+        const ids = getSelectedIds();
+        if (ids.length === 0) return;
+        const labels = { enable: '启用', pause: '暂停', delete: '删除' };
+        if (!confirm(`确定要批量${labels[action]}选中的 ${ids.length} 条定时消息吗？`)) return;
+
+        try {
+            const res = await fetch('/core/api/batch_scheduled_messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids, action })
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                location.reload();
+            } else {
+                alert(result.msg || '操作失败');
+            }
+        } catch (e) {
+            alert('网络错误，请重试');
+        }
+    }
+
 </script>
 {% endblock %}

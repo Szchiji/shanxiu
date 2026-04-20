@@ -143,7 +143,8 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Webhook URL（可选）</label>
-                    <input type="text" class="form-control" id="webhook_url" placeholder="https://example.com/webhook">
+                    <input type="text" class="form-control" id="webhook_url" placeholder="https://example.com/core/clone_webhook/<id>">
+                    <small class="text-muted">留空则使用轮询模式（推荐）。如需 Webhook 模式，请先保存克隆获取ID，然后填入 <code>https://&lt;你的域名&gt;/core/clone_webhook/&lt;保存后显示的克隆ID&gt;</code></small>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">描述（可选）</label>

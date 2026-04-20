@@ -778,6 +778,9 @@
                 <button type="button" class="btn btn-primary btn-sm" onclick="saveItem()">
                     <i class="fa-solid fa-save me-1"></i>保存
                 </button>
+                <button type="button" class="btn btn-success btn-sm" id="sendNowBtn" onclick="sendNow()" style="display:none;">
+                    <i class="fa-solid fa-paper-plane me-1"></i>保存并立即发送
+                </button>
             </div>
         </div>
     </div>
@@ -1147,6 +1150,7 @@
         document.getElementById('autoPin').checked = false;
         currentLinks = [];
         renderLinksContainer();
+        document.getElementById('sendNowBtn').style.display = 'none';
         
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
         modal.show();
@@ -1189,6 +1193,7 @@
             currentLinks = [];
         }
         renderLinksContainer();
+        document.getElementById('sendNowBtn').style.display = '';
         
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
         modal.show();
@@ -1265,6 +1270,53 @@
             }
         } catch (e) {
             alert('网络错误，请重试');
+        }
+    }
+
+    // Save and send immediately
+    async function sendNow() {
+        const itemId = document.getElementById('itemId').value;
+        if (!itemId) return;  // Button is only visible for existing messages
+
+        if (!confirm('确定要立即发送此定时消息吗？')) return;
+
+        const data = {
+            group_id: groupId,
+            media_type: document.getElementById('mediaType').value,
+            media_url: document.getElementById('mediaUrl').value.trim(),
+            content: htmlToTemplate(document.getElementById('editor').innerHTML),
+            links: JSON.stringify(currentLinks.filter(l => l.text && l.url)),
+            repeat_interval: parseInt(document.getElementById('repeatInterval').value) || 0,
+            delete_previous: document.getElementById('deletePrevious').checked,
+            start_time: document.getElementById('startTime').value || null,
+            stop_time: document.getElementById('stopTime').value || null,
+            remark: document.getElementById('remark').value.trim(),
+            auto_pin: document.getElementById('autoPin').checked
+        };
+
+        const btn = document.getElementById('sendNowBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>发送中...';
+
+        try {
+            const res = await fetch(`/core/api/send_scheduled_message_now/${itemId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                alert('发送成功');
+                location.reload();
+            } else {
+                alert(result.msg || '发送失败');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-paper-plane me-1"></i>保存并立即发送';
+            }
+        } catch (e) {
+            alert('网络错误，请重试');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-paper-plane me-1"></i>保存并立即发送';
         }
     }
     

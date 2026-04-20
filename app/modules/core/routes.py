@@ -304,6 +304,34 @@ def webhook():
         print(f"❌ Webhook Error: {e}")
         return "Error", 200
 
+@core_bp.route('/clone_webhook/<int:clone_id>', methods=['POST'])
+def clone_webhook(clone_id):
+    """接收克隆机器人的 Webhook 更新并分发给对应的 Application 实例"""
+    if not global_bot_loop: return "Bot Not Ready", 503
+    clone_info = bot_clone_manager.active_clones.get(clone_id)
+    if not clone_info: return "Clone Not Found", 404
+    try:
+        json_data = request.get_json(force=True)
+        clone_app = clone_info['app']
+        update = Update.de_json(json_data, clone_app.bot)
+
+        future = asyncio.run_coroutine_threadsafe(clone_app.process_update(update), global_bot_loop)
+
+        def check_future_exception(fut):
+            try:
+                exc = fut.exception()
+                if exc:
+                    print(f"❌ Clone Webhook 异步任务异常 (clone_id={clone_id}):")
+                    print(''.join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            except Exception as e:
+                print(f"❌ Clone Webhook 回调函数本身异常: {e}")
+
+        future.add_done_callback(check_future_exception)
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ Clone Webhook Error (clone_id={clone_id}): {e}")
+        return "Error", 200
+
 # --- Context ---
 @core_bp.context_processor
 def inject_context():
@@ -2132,6 +2160,128 @@ def api_save_scheduled_message():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/send_scheduled_message_now/<int:message_id>', methods=['POST'])
+def api_send_scheduled_message_now(message_id):
+    """保存并立即发送定时消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+
+    group_id = d.get('group_id')
+    if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    try:
+        item = ScheduledMessage.query.get(message_id)
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        if item.group_id != group_id: return jsonify({'status':'error','msg':'Permission denied'})
+
+        # 更新消息内容（与保存逻辑相同）
+        item.media_type = d.get('media_type', 'text')
+        item.media_url = d.get('media_url', '').strip() or None
+        item.content = d.get('content', '').strip() or None
+        item.links = d.get('links', '[]')
+        item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
+        item.delete_previous = d.get('delete_previous', False)
+
+        start_time_str = d.get('start_time')
+        stop_time_str = d.get('stop_time')
+        item.start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
+        item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
+
+        item.remark = d.get('remark', '').strip() or None
+        item.auto_pin = bool(d.get('auto_pin', False))
+
+        db.session.commit()
+
+        # 获取群组 chat_id
+        group = item.group
+        if not group or not group.chat_id:
+            return jsonify({'status':'error','msg':'Group not found or missing chat_id'})
+
+        if not global_ptb_app or not global_bot_loop:
+            return jsonify({'status':'error','msg':'Bot not initialized'})
+
+        # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
+        chat_id = group.chat_id
+        msg_snapshot = {
+            'media_type': item.media_type,
+            'media_url': item.media_url,
+            'content': item.content,
+            'links': item.links,
+            'delete_previous': item.delete_previous,
+            'last_message_id': item.last_message_id,
+        }
+
+        async def _send_now():
+            # 如需删除上一条消息
+            if msg_snapshot['delete_previous'] and msg_snapshot['last_message_id']:
+                try:
+                    await global_ptb_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=msg_snapshot['last_message_id']
+                    )
+                except Exception:
+                    pass
+
+            # 构建内联键盘
+            buttons = []
+            try:
+                links = json.loads(msg_snapshot['links'] or '[]')
+                buttons = build_inline_keyboard_from_links(links)
+            except Exception:
+                pass
+
+            reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+            content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
+
+            sent_message = None
+            if msg_snapshot['media_type'] == 'image' and msg_snapshot['media_url']:
+                sent_message = await global_ptb_app.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=msg_snapshot['media_url'],
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif msg_snapshot['media_type'] == 'video' and msg_snapshot['media_url']:
+                sent_message = await global_ptb_app.bot.send_video(
+                    chat_id=chat_id,
+                    video=msg_snapshot['media_url'],
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif content:
+                sent_message = await global_ptb_app.bot.send_message(
+                    chat_id=chat_id,
+                    text=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+            return sent_message
+
+        future = asyncio.run_coroutine_threadsafe(_send_now(), global_bot_loop)
+        try:
+            sent_message = future.result(timeout=30)
+        except TimeoutError:
+            return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
+        except Exception as send_err:
+            print(f"Error sending scheduled message now: {send_err}", flush=True)
+            return jsonify({'status':'error','msg':'消息发送失败，请检查机器人状态'})
+
+        # 更新发送时间，防止定时任务重复发送
+        if sent_message:
+            item.last_sent_at = get_beijing_now()
+            item.last_message_id = sent_message.message_id
+            db.session.commit()
+
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in send_scheduled_message_now: {e}", flush=True)
+        return jsonify({'status':'error','msg':'操作失败，请稍后重试'})
+
 @core_bp.route('/api/toggle_scheduled_message', methods=['POST'])
 def api_toggle_scheduled_message():
     """切换定时消息状态"""
@@ -3268,6 +3418,35 @@ def api_save_bot_clone():
                     logging.info(f"✅ Clone bot {clone_id} restarted after edit")
             except Exception as e:
                 logging.warning(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
+                # Don't fail the API call, just log the error
+        
+        # If this is a brand-new active clone, start it immediately without waiting for a server restart
+        elif not clone_id and clone.is_active and global_bot_loop and global_flask_app:
+            try:
+                now = get_beijing_now()
+                if not clone.expiration_date or clone.expiration_date >= now:
+                    clone_data = {
+                        'id': clone.id,
+                        'token': clone.bot_token,
+                        'webhook_url': clone.webhook_url
+                    }
+                    future = asyncio.run_coroutine_threadsafe(
+                        bot_clone_manager.start_clone_bot(
+                            clone_id=clone_data['id'],
+                            bot_token=clone_data['token'],
+                            webhook_url=clone_data['webhook_url'],
+                            flask_app=global_flask_app,
+                            handlers_setup_func=setup_clone_handlers
+                        ),
+                        global_bot_loop
+                    )
+                    success = future.result(timeout=CLONE_START_TIMEOUT)
+                    if success:
+                        logging.info(f"✅ New clone bot {clone.id} started immediately after creation")
+                    else:
+                        logging.warning(f"⚠️ New clone bot {clone.id} failed to start after creation")
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to start new clone bot {clone.id} after creation: {e}")
                 # Don't fail the API call, just log the error
         
         return jsonify({'status':'ok'})

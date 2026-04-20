@@ -556,6 +556,7 @@
                     data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
                     data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
                     data-remark="{{ item.remark or ''|e }}"
+                    data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td>
@@ -714,6 +715,14 @@
                     <div class="mb-3">
                         <label class="form-label fw-bold">备注</label>
                         <textarea class="form-control" id="remark" rows="2" placeholder="可选，仅供管理员查看"></textarea>
+                    </div>
+                    
+                    <!-- 是否自动置顶 -->
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="autoPin">
+                            <label class="form-check-label fw-bold" for="autoPin">是否自动置顶</label>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -1091,6 +1100,7 @@
         document.getElementById('startTime').value = '';
         document.getElementById('stopTime').value = '';
         document.getElementById('remark').value = '';
+        document.getElementById('autoPin').checked = false;
         currentLinks = [];
         renderLinksContainer();
         
@@ -1113,7 +1123,8 @@
             delete_previous: row.dataset.deletePrevious === 'true',
             start_time: row.dataset.startTime || '',
             stop_time: row.dataset.stopTime || '',
-            remark: row.dataset.remark || ''
+            remark: row.dataset.remark || '',
+            auto_pin: row.dataset.autoPin === 'true'
         };
         
         document.getElementById('modalTitle').textContent = '编辑定时消息';
@@ -1126,6 +1137,7 @@
         document.getElementById('startTime').value = formatDatetimeLocal(item.start_time);
         document.getElementById('stopTime').value = formatDatetimeLocal(item.stop_time);
         document.getElementById('remark').value = item.remark;
+        document.getElementById('autoPin').checked = item.auto_pin;
         
         try {
             currentLinks = JSON.parse(item.links);
@@ -1190,7 +1202,8 @@
             delete_previous: document.getElementById('deletePrevious').checked,
             start_time: document.getElementById('startTime').value || null,
             stop_time: document.getElementById('stopTime').value || null,
-            remark: document.getElementById('remark').value.trim()
+            remark: document.getElementById('remark').value.trim(),
+            auto_pin: document.getElementById('autoPin').checked
         };
         
         try {

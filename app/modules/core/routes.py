@@ -100,6 +100,23 @@ def get_beijing_today():
     now = datetime.now(BEIJING_TZ)
     return now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def parse_telegram_message_link(url):
+    """
+    Parse a t.me message link and return (from_chat_id, message_id) or (None, None).
+    Supports:
+      https://t.me/username/message_id          → ('@username', message_id)
+      https://t.me/c/channel_id/message_id      → (-100channel_id, message_id)
+    """
+    if not url:
+        return None, None
+    m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', url)
+    if m:
+        return int(f"-100{m.group(1)}"), int(m.group(2))
+    m = re.match(r'https?://t\.me/([A-Za-z0-9_]+)/(\d+)', url)
+    if m:
+        return f"@{m.group(1)}", int(m.group(2))
+    return None, None
+
 def build_inline_keyboard_from_links(links):
     """
     将链接列表转换为内联键盘，支持多个按钮在一行显示
@@ -2265,18 +2282,32 @@ def api_send_scheduled_message_now(message_id):
             content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
 
             sent_message = None
-            if msg_snapshot['media_type'] == 'image' and msg_snapshot['media_url']:
+            media_url = msg_snapshot['media_url']
+            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+            if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+                # t.me link: use copy_message to forward content without "Forwarded from" header
+                copy_kwargs = dict(
+                    chat_id=chat_id,
+                    from_chat_id=tg_from_chat,
+                    message_id=tg_msg_id,
+                    reply_markup=reply_markup
+                )
+                if content:
+                    copy_kwargs['caption'] = content
+                    copy_kwargs['parse_mode'] = 'HTML'
+                sent_message = await global_ptb_app.bot.copy_message(**copy_kwargs)
+            elif msg_snapshot['media_type'] == 'image' and media_url:
                 sent_message = await global_ptb_app.bot.send_photo(
                     chat_id=chat_id,
-                    photo=msg_snapshot['media_url'],
+                    photo=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
                 )
-            elif msg_snapshot['media_type'] == 'video' and msg_snapshot['media_url']:
+            elif msg_snapshot['media_type'] == 'video' and media_url:
                 sent_message = await global_ptb_app.bot.send_video(
                     chat_id=chat_id,
-                    video=msg_snapshot['media_url'],
+                    video=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
@@ -4399,19 +4430,33 @@ async def check_scheduled_messages(context):
             # 发送消息
             sent_message = None
             content = sanitize_html_for_telegram(msg_data['content'] or '')
-            
-            if msg_data['media_type'] == 'image' and msg_data['media_url']:
+            media_url = msg_data['media_url']
+            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+
+            if msg_data['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+                # t.me link: use copy_message to forward content without "Forwarded from" header
+                copy_kwargs = dict(
+                    chat_id=chat_id,
+                    from_chat_id=tg_from_chat,
+                    message_id=tg_msg_id,
+                    reply_markup=reply_markup
+                )
+                if content:
+                    copy_kwargs['caption'] = content
+                    copy_kwargs['parse_mode'] = 'HTML'
+                sent_message = await context.bot.copy_message(**copy_kwargs)
+            elif msg_data['media_type'] == 'image' and media_url:
                 sent_message = await context.bot.send_photo(
                     chat_id=chat_id,
-                    photo=msg_data['media_url'],
+                    photo=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
                 )
-            elif msg_data['media_type'] == 'video' and msg_data['media_url']:
+            elif msg_data['media_type'] == 'video' and media_url:
                 sent_message = await context.bot.send_video(
                     chat_id=chat_id,
-                    video=msg_data['media_url'],
+                    video=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
@@ -9338,11 +9383,13 @@ async def on_message(update: Update, context):
             
             conf = get_group_conf(group)
             
-            # 🆕 Award points for messages (if rule exists and user is registered)
-            # Skip if this message is a checkin command to avoid double-counting
+            # Award points for messages (if rule exists and user is registered)
+            # Skip if this message is a checkin or signin command to avoid double-counting
             _checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
             _is_checkin_msg = conf.get('checkin_open') and txt in _checkin_cmds
-            if chat.type in ['group', 'supergroup'] and not _is_checkin_msg:
+            _signin_cmds = [c.strip() for c in conf.get('signin_cmd', '签到').split(',')]
+            _is_signin_msg = conf.get('signin_open') and txt in _signin_cmds
+            if chat.type in ['group', 'supergroup'] and not _is_checkin_msg and not _is_signin_msg:
                 message_rule = PointsRule.query.filter_by(
                     group_id=group.id,
                     rule_type='message',
@@ -9498,44 +9545,10 @@ async def on_message(update: Update, context):
                             if del_time > 0:
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                         else:
-                            # First check-in today, proceed normally
+                            # First check-in today, proceed normally (attendance only, no points)
                             db_user.checkin_time = get_beijing_now()
                             db_user.online = True
                             db.session.commit()
-                            
-                            # 🆕 Award points for check-in
-                            checkin_rule = PointsRule.query.filter_by(
-                                group_id=group.id,
-                                rule_type='checkin',
-                                is_active=True
-                            ).first()
-                            
-                            if checkin_rule:
-                                user_points = UserPoints.query.filter_by(
-                                    group_id=group.id,
-                                    user_id=user.id
-                                ).first()
-                                
-                                if not user_points:
-                                    user_points = UserPoints(
-                                        group_id=group.id,
-                                        user_id=user.id,
-                                        points_balance=0
-                                    )
-                                    db.session.add(user_points)
-                                
-                                user_points.points_balance += checkin_rule.points_amount
-                                
-                                # Log the points transaction
-                                points_log = PointsLog(
-                                    group_id=group.id,
-                                    user_id=user.id,
-                                    points_change=checkin_rule.points_amount,
-                                    reason="每日打卡",
-                                    balance_after=user_points.points_balance
-                                )
-                                db.session.add(points_log)
-                                db.session.commit()
                             
                             msg_text = sanitize_html_for_telegram(conf.get('msg_checkin_success', '打卡成功'))
                             r = await msg.reply_html(msg_text)
@@ -9544,7 +9557,75 @@ async def on_message(update: Update, context):
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
 
-            # 2.5 积分兑换命令处理
+            # 2.5 积分签到（独立于认证用户打卡）
+            if _is_signin_msg and chat.type in ['group', 'supergroup']:
+                signin_rule = PointsRule.query.filter_by(
+                    group_id=group.id,
+                    rule_type='checkin',
+                    is_active=True
+                ).first()
+
+                if not signin_rule:
+                    return  # No points rule configured, silently ignore
+
+                today = get_beijing_today()
+
+                # Check if already signed in today via PointsLog
+                already_signed = PointsLog.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id,
+                    reason='每日签到'
+                ).filter(PointsLog.created_at >= today).first()
+
+                # Fetch (or create) UserPoints record
+                user_points = UserPoints.query.filter_by(
+                    group_id=group.id,
+                    user_id=user.id
+                ).first()
+                cur_balance = user_points.points_balance if user_points else 0
+
+                def _substitute_signin_tpl(tpl, earned=0, balance=0):
+                    tpl = tpl.replace('{tg_id}', str(user.id))
+                    tpl = tpl.replace('{积分}', str(earned))
+                    tpl = tpl.replace('{余额}', str(balance))
+                    return tpl
+
+                if already_signed:
+                    raw_tpl = conf.get('msg_repeat_signin', '🔄 <b>今日已签到，当前余额：{余额}</b>')
+                    msg_text = sanitize_html_for_telegram(_substitute_signin_tpl(raw_tpl, earned=0, balance=cur_balance))
+                else:
+                    if not user_points:
+                        user_points = UserPoints(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_balance=0
+                        )
+                        db.session.add(user_points)
+
+                    earned_points = signin_rule.points_amount
+                    user_points.points_balance += earned_points
+                    cur_balance = user_points.points_balance
+
+                    points_log = PointsLog(
+                        group_id=group.id,
+                        user_id=user.id,
+                        points_change=earned_points,
+                        reason='每日签到',
+                        balance_after=cur_balance
+                    )
+                    db.session.add(points_log)
+                    db.session.commit()
+
+                    raw_tpl = conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')
+                    msg_text = sanitize_html_for_telegram(_substitute_signin_tpl(raw_tpl, earned=earned_points, balance=cur_balance))
+
+                r = await msg.reply_html(msg_text)
+                del_time = safe_int(conf.get('signin_del_time'), 0)
+                if del_time > 0:
+                    context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
+                return
+
+            # 2.6 积分兑换命令处理
             if chat.type in ['group', 'supergroup']:
                 _exchange_list_cmds = ['兑换', '兑换列表', '积分兑换']
                 if txt in _exchange_list_cmds:

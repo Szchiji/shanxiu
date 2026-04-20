@@ -43,6 +43,7 @@ class AuthSession(db.Model):
     __tablename__ = 'auth_sessions'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.BigInteger, index=True)
+    user_name = db.Column(db.String(255), nullable=True)  # Display name of the Telegram user
     session_token = db.Column(db.String(100), unique=True, index=True)
     verification_code = db.Column(db.String(10))
     is_verified = db.Column(db.Boolean, default=False)

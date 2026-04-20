@@ -3815,11 +3815,21 @@ def magic_login():
         data = jwt.decode(token, secret_key, algorithms=['HS256'])
         user_id = data.get('uid')
         chat_id = data.get('chat_id')
+
+        def _get_user_name(uid):
+            member = GroupMember.query.filter_by(user_id=uid).first()
+            if member:
+                return member.username or (
+                    ((member.first_name or '') + (' ' + member.last_name if member.last_name else '')).strip()
+                ) or str(uid)
+            return str(uid)
         
         # Check if user is ADMIN_ID (global admin)
         admin_id = safe_int(os.getenv('ADMIN_ID', 0))
         if admin_id and user_id == admin_id:
             session['logged_in'] = True
+            session['login_user_id'] = user_id
+            session['login_user_name'] = _get_user_name(user_id)
             return redirect('/core/select_group')
         
         # Check if user is admin in the specific group
@@ -3833,6 +3843,8 @@ def magic_login():
                 is_admin = future.result(timeout=5)
                 if is_admin:
                     session['logged_in'] = True
+                    session['login_user_id'] = user_id
+                    session['login_user_name'] = _get_user_name(user_id)
                     return redirect('/core/select_group')
             except Exception as e:
                 print(f"Error checking group admin: {e}")
@@ -3860,6 +3872,8 @@ def auth_verify_page(session_token):
             session['logged_in'] = True
             session.permanent = True  # Make session persistent
             session['clone_id'] = auth_session.clone_id
+            session['login_user_id'] = auth_session.user_id
+            session['login_user_name'] = auth_session.user_name
             return redirect('/core/select_group')
         
         return render_template('auth_verify.html', 
@@ -3894,6 +3908,8 @@ def api_check_auth_status():
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
             session['clone_id'] = auth_session.clone_id
+            session['login_user_id'] = auth_session.user_id
+            session['login_user_name'] = auth_session.user_name
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -8702,8 +8718,14 @@ def _is_clone_admin(clone_id: int, user_id: int) -> bool:
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
+    tg_user = update.effective_user
     chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
+    
+    # Build a display name: prefer username, fallback to first_name + last_name
+    _display_name = tg_user.username or (
+        ((tg_user.first_name or '') + (' ' + tg_user.last_name if tg_user.last_name else '')).strip()
+    ) or str(user_id)
     
     print(f"📍 /start 调试: chat_type={chat.type}, chat_id={chat.id}, user_id={user_id}")
     
@@ -8739,6 +8761,7 @@ async def cmd_start(update: Update, context):
                 
                 auth_session = AuthSession(
                     user_id=user_id,
+                    user_name=_display_name,
                     session_token=session_token,
                     verification_code=verification_code,
                     is_verified=False,

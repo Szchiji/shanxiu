@@ -100,6 +100,23 @@ def get_beijing_today():
     now = datetime.now(BEIJING_TZ)
     return now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def parse_telegram_message_link(url):
+    """
+    Parse a t.me message link and return (from_chat_id, message_id) or (None, None).
+    Supports:
+      https://t.me/username/message_id          → ('@username', message_id)
+      https://t.me/c/channel_id/message_id      → (-100channel_id, message_id)
+    """
+    if not url:
+        return None, None
+    m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', url)
+    if m:
+        return int(f"-100{m.group(1)}"), int(m.group(2))
+    m = re.match(r'https?://t\.me/([A-Za-z0-9_]+)/(\d+)', url)
+    if m:
+        return f"@{m.group(1)}", int(m.group(2))
+    return None, None
+
 def build_inline_keyboard_from_links(links):
     """
     将链接列表转换为内联键盘，支持多个按钮在一行显示
@@ -2265,18 +2282,32 @@ def api_send_scheduled_message_now(message_id):
             content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
 
             sent_message = None
-            if msg_snapshot['media_type'] == 'image' and msg_snapshot['media_url']:
+            media_url = msg_snapshot['media_url']
+            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+            if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+                # t.me link: use copy_message to forward content without "Forwarded from" header
+                copy_kwargs = dict(
+                    chat_id=chat_id,
+                    from_chat_id=tg_from_chat,
+                    message_id=tg_msg_id,
+                    reply_markup=reply_markup
+                )
+                if content:
+                    copy_kwargs['caption'] = content
+                    copy_kwargs['parse_mode'] = 'HTML'
+                sent_message = await global_ptb_app.bot.copy_message(**copy_kwargs)
+            elif msg_snapshot['media_type'] == 'image' and media_url:
                 sent_message = await global_ptb_app.bot.send_photo(
                     chat_id=chat_id,
-                    photo=msg_snapshot['media_url'],
+                    photo=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
                 )
-            elif msg_snapshot['media_type'] == 'video' and msg_snapshot['media_url']:
+            elif msg_snapshot['media_type'] == 'video' and media_url:
                 sent_message = await global_ptb_app.bot.send_video(
                     chat_id=chat_id,
-                    video=msg_snapshot['media_url'],
+                    video=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
@@ -4399,19 +4430,33 @@ async def check_scheduled_messages(context):
             # 发送消息
             sent_message = None
             content = sanitize_html_for_telegram(msg_data['content'] or '')
-            
-            if msg_data['media_type'] == 'image' and msg_data['media_url']:
+            media_url = msg_data['media_url']
+            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+
+            if msg_data['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+                # t.me link: use copy_message to forward content without "Forwarded from" header
+                copy_kwargs = dict(
+                    chat_id=chat_id,
+                    from_chat_id=tg_from_chat,
+                    message_id=tg_msg_id,
+                    reply_markup=reply_markup
+                )
+                if content:
+                    copy_kwargs['caption'] = content
+                    copy_kwargs['parse_mode'] = 'HTML'
+                sent_message = await context.bot.copy_message(**copy_kwargs)
+            elif msg_data['media_type'] == 'image' and media_url:
                 sent_message = await context.bot.send_photo(
                     chat_id=chat_id,
-                    photo=msg_data['media_url'],
+                    photo=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup
                 )
-            elif msg_data['media_type'] == 'video' and msg_data['media_url']:
+            elif msg_data['media_type'] == 'video' and media_url:
                 sent_message = await context.bot.send_video(
                     chat_id=chat_id,
-                    video=msg_data['media_url'],
+                    video=media_url,
                     caption=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup

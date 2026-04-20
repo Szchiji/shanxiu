@@ -914,7 +914,7 @@
                         
                         <!-- Points & Activities -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
                                id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fa-solid fa-coins"></i> 🎮 积分 & 互动
                             </a>
@@ -923,6 +923,12 @@
                                     <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
                                         <i class="fa-solid fa-list-check"></i> 积分规则
                                         <span class="feature-desc">设置积分获取和扣除规则</span>
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_exchange" class="dropdown-item {% if page == 'points_exchange' %}active{% endif %}">
+                                        <i class="fa-solid fa-gift"></i> 积分兑换
+                                        <span class="feature-desc">设置积分可兑换的商品</span>
                                     </a>
                                 </li>
                                 <li>

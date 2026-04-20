@@ -309,6 +309,37 @@ class UserPoints(db.Model):
     current_level = db.relationship('MemberLevel', backref='users_at_level', lazy=True)
 
 
+class PointsExchangeItem(db.Model):
+    """积分兑换商品"""
+    __tablename__ = 'points_exchange_items'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    item_name = db.Column(db.String(255), nullable=False)
+    item_description = db.Column(db.Text, nullable=True)
+    points_cost = db.Column(db.Integer, nullable=False, default=100)  # 兑换所需积分
+    stock = db.Column(db.Integer, nullable=True)  # NULL = unlimited stock
+    redemption_info = db.Column(db.Text, nullable=True)  # 兑换后显示给用户的信息
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='exchange_items', lazy=True)
+
+
+class PointsExchangeRecord(db.Model):
+    """积分兑换记录"""
+    __tablename__ = 'points_exchange_records'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    user_id = db.Column(db.BigInteger, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('points_exchange_items.id'), index=True)
+    points_spent = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    group = db.relationship('BotGroup', backref='exchange_records', lazy=True)
+    item = db.relationship('PointsExchangeItem', backref='records', lazy=True)
+
+
 class GroupLottery(db.Model):
     """群抽奖"""
     __tablename__ = 'group_lottery'

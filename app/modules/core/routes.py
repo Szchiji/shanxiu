@@ -47,6 +47,19 @@ CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
 MUTE_REASON_SPAM = '垃圾信息'  # Spam
 
+def get_clone_webhook_url(clone_id: int, stored_url: str = None) -> str:
+    """
+    获取克隆机器人的 Webhook URL。
+    如果数据库中已存储 webhook_url，则直接使用；
+    否则在 RAILWAY_PUBLIC_DOMAIN 存在时自动生成。
+    """
+    if stored_url:
+        return stored_url
+    domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
+    if domain:
+        return f"https://{domain}/core/clone_webhook/{clone_id}"
+    return None
+
 # Beijing timezone
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
@@ -3408,7 +3421,7 @@ def api_save_bot_clone():
                         bot_clone_manager.restart_clone_bot(
                             clone_id=clone_data['id'],
                             bot_token=clone_data['token'],
-                            webhook_url=clone_data['webhook_url'],
+                            webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                             flask_app=global_flask_app,
                             handlers_setup_func=setup_clone_handlers
                         ),
@@ -3434,7 +3447,7 @@ def api_save_bot_clone():
                         bot_clone_manager.start_clone_bot(
                             clone_id=clone_data['id'],
                             bot_token=clone_data['token'],
-                            webhook_url=clone_data['webhook_url'],
+                            webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                             flask_app=global_flask_app,
                             handlers_setup_func=setup_clone_handlers
                         ),
@@ -3530,7 +3543,7 @@ def api_toggle_bot_clone():
                     bot_clone_manager.start_clone_bot(
                         clone_id=clone_data['id'],
                         bot_token=clone_data['token'],
-                        webhook_url=clone_data['webhook_url'],
+                        webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                         flask_app=global_flask_app,
                         handlers_setup_func=setup_clone_handlers
                     ),
@@ -7005,7 +7018,7 @@ async def start_all_clone_bots(flask_app):
                 success = await bot_clone_manager.start_clone_bot(
                     clone_id=clone_data['id'],
                     bot_token=clone_data['token'],
-                    webhook_url=clone_data['webhook_url'],
+                    webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                     flask_app=flask_app,
                     handlers_setup_func=setup_clone_handlers
                 )

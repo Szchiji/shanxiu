@@ -106,13 +106,15 @@ def parse_telegram_message_link(url):
     Supports:
       https://t.me/username/message_id          → ('@username', message_id)
       https://t.me/c/channel_id/message_id      → (-100channel_id, message_id)
+      t.me/username/message_id                  → same as above (no protocol)
+      t.me/c/channel_id/message_id              → same as above (no protocol)
     """
     if not url:
         return None, None
-    m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', url)
+    m = re.match(r'(?:https?://)?t\.me/c/(\d+)/(\d+)', url)
     if m:
         return int(f"-100{m.group(1)}"), int(m.group(2))
-    m = re.match(r'https?://t\.me/([A-Za-z0-9_]+)/(\d+)', url)
+    m = re.match(r'(?:https?://)?t\.me/([A-Za-z0-9_]+)/(\d+)', url)
     if m:
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
@@ -1759,8 +1761,6 @@ def api_bulk_import_users():
     except Exception as e:
         db.session.rollback()
         print(f"Error in bulk_import_users: {e}")
-        return jsonify({'status':'error', 'msg': str(e)})
-
         return jsonify({'status':'error', 'msg': f'导入失败: {str(e)}'})
 
 @core_bp.route('/api/export_users', methods=['POST'])
@@ -2318,7 +2318,8 @@ def api_send_scheduled_message_now(message_id):
                 try:
                     sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    if 'message to copy not found' in str(copy_err).lower():
+                    _err_lower = str(copy_err).lower()
+                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
                         # Fallback 1: forward_message (shows "Forwarded from" header)
                         fwd_kwargs = dict(
                             chat_id=chat_id,
@@ -3659,15 +3660,14 @@ def api_toggle_bot_clone():
         clone = BotClone.query.get(d['id'])
         if not clone: return jsonify({'status':'error','msg':'Clone not found'})
         
-        # Toggle active status
+        # Check if expired before enabling
+        now = get_beijing_now()
         new_status = not clone.is_active
+        if new_status and clone.expiration_date and clone.expiration_date < now:
+            return jsonify({'status':'error','msg':'克隆机器人已过期，无法启动'})
+        
         clone.is_active = new_status
         db.session.commit()
-        
-        # Check if expired
-        now = get_beijing_now()
-        if clone.expiration_date and clone.expiration_date < now:
-            return jsonify({'status':'error','msg':'克隆机器人已过期，无法启动'})
         
         # Dynamically start or stop the clone bot
         if global_bot_loop and global_flask_app:
@@ -3694,6 +3694,9 @@ def api_toggle_bot_clone():
                 # Wait for completion (with timeout)
                 success = future.result(timeout=CLONE_START_TIMEOUT)
                 if not success:
+                    # Revert the DB status since the bot failed to start
+                    clone.is_active = False
+                    db.session.commit()
                     return jsonify({'status':'error','msg':'克隆机器人启动失败'})
             else:
                 # Stop the clone bot
@@ -4196,6 +4199,9 @@ async def check_expired_users(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     def _sync_check():
         with global_flask_app.app_context():
             try:
@@ -4217,11 +4223,19 @@ async def check_expired_users(context):
                 # Also retrieve configurations here to avoid repeated context creation
                 users_to_ban = []
                 for user in expired_users:
-                    if user.group and user.group.is_active and user.group.clone_id is None:
-                        # Get configuration in sync context
-                        conf = get_group_conf(user.group)
-                        ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
-                        users_to_ban.append((user, user.group, ban_msg))
+                    if not user.group or not user.group.is_active:
+                        continue
+                    # Only process groups belonging to the current bot instance
+                    if current_clone_id is None:
+                        if user.group.clone_id is not None:
+                            continue
+                    else:
+                        if user.group.clone_id != current_clone_id:
+                            continue
+                    # Get configuration in sync context
+                    conf = get_group_conf(user.group)
+                    ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
+                    users_to_ban.append((user, user.group, ban_msg))
                 
                 if not users_to_ban:
                     return None
@@ -4511,7 +4525,8 @@ async def check_scheduled_messages(context):
                 try:
                     sent_message = await context.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    if 'message to copy not found' in str(copy_err).lower():
+                    _err_lower = str(copy_err).lower()
+                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
                         print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
                         # Fallback 1: forward_message (shows "Forwarded from" header)
                         fwd_kwargs = dict(
@@ -7248,6 +7263,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
 
     # Periodic jobs for clone bot
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
+    app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=60)
 
 
 async def start_all_clone_bots(flask_app):
@@ -8315,17 +8331,21 @@ async def check_auction_expiration(context):
         def _get_expired_auctions():
             with global_flask_app.app_context():
                 now = get_beijing_now()
-                # Find active auctions that have expired
-                return PointsAuction.query.filter(
+                # Find active auctions that have expired; return only IDs to avoid detached objects
+                return [row.id for row in PointsAuction.query.filter(
                     PointsAuction.status == 'active',
                     PointsAuction.auction_end <= now
-                ).all()
+                ).all()]
         
-        auctions = await asyncio.get_running_loop().run_in_executor(None, _get_expired_auctions)
+        auction_ids = await asyncio.get_running_loop().run_in_executor(None, _get_expired_auctions)
         
-        for auction in auctions:
+        for auction_id in auction_ids:
             try:
                 with global_flask_app.app_context():
+                    # Re-query inside this context so the object is attached to the current session
+                    auction = PointsAuction.query.get(auction_id)
+                    if not auction or auction.status != 'active':
+                        continue
                     group = BotGroup.query.get(auction.group_id)
                     if not group:
                         continue
@@ -8338,32 +8358,38 @@ async def check_auction_expiration(context):
                     auction.status = 'ended'
                     db.session.commit()
                     
-                    # Notify winner
-                    if auction.current_bidder_id and auction.current_bid > 0:
-                        message = (
-                            f"🎉 <b>竞拍结束！</b>\n\n"
-                            f"📦 物品: {auction.item_name}\n"
-                            f"💰 成交价: {auction.current_bid} 积分\n"
-                            f"👤 获胜者: <a href='tg://user?id={auction.current_bidder_id}'>用户{auction.current_bidder_id}</a>\n\n"
-                        )
-                        if auction.item_description:
-                            message += f"📝 描述: {auction.item_description}\n"
-                        message += "请获胜者联系管理员领取物品！"
-                    else:
-                        message = (
-                            f"📭 <b>竞拍结束</b>\n\n"
-                            f"📦 物品: {auction.item_name}\n"
-                            f"⚠️ 无人出价，流拍"
-                        )
-                    
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=message,
-                        parse_mode='HTML'
+                    # Collect values for the Telegram message (outside context)
+                    item_name = auction.item_name
+                    item_description = auction.item_description
+                    current_bidder_id = auction.current_bidder_id
+                    current_bid = auction.current_bid
+                
+                # Notify winner (outside app_context so we can await)
+                if current_bidder_id and current_bid > 0:
+                    message = (
+                        f"🎉 <b>竞拍结束！</b>\n\n"
+                        f"📦 物品: {item_name}\n"
+                        f"💰 成交价: {current_bid} 积分\n"
+                        f"👤 获胜者: <a href='tg://user?id={current_bidder_id}'>用户{current_bidder_id}</a>\n\n"
                     )
+                    if item_description:
+                        message += f"📝 描述: {item_description}\n"
+                    message += "请获胜者联系管理员领取物品！"
+                else:
+                    message = (
+                        f"📭 <b>竞拍结束</b>\n\n"
+                        f"📦 物品: {item_name}\n"
+                        f"⚠️ 无人出价，流拍"
+                    )
+                
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
                     
             except Exception as e:
-                print(f"Error notifying auction end {auction.id}: {e}")
+                print(f"Error notifying auction end {auction_id}: {e}")
                 traceback.print_exc()
                 
     except Exception as e:
@@ -8380,17 +8406,21 @@ async def check_redpacket_expiration(context):
         def _get_expired_packets():
             with global_flask_app.app_context():
                 now = get_beijing_now()
-                # Find active red packets that have expired
-                return RedPacket.query.filter(
+                # Find active red packets that have expired; return only IDs to avoid detached objects
+                return [row.id for row in RedPacket.query.filter(
                     RedPacket.status == 'active',
                     RedPacket.expire_time <= now
-                ).all()
+                ).all()]
         
-        packets = await asyncio.get_running_loop().run_in_executor(None, _get_expired_packets)
+        packet_ids = await asyncio.get_running_loop().run_in_executor(None, _get_expired_packets)
         
-        for packet in packets:
+        for packet_id in packet_ids:
             try:
                 with global_flask_app.app_context():
+                    # Re-query inside this context so the object is attached to the current session
+                    packet = RedPacket.query.get(packet_id)
+                    if not packet or packet.status != 'active':
+                        continue
                     # Refund remaining points to creator
                     if packet.remaining_points > 0:
                         group = BotGroup.query.get(packet.group_id)
@@ -8426,7 +8456,7 @@ async def check_redpacket_expiration(context):
                     
             except Exception as e:
                 db.session.rollback()
-                print(f"Error expiring red packet {packet.id}: {e}")
+                print(f"Error expiring red packet {packet_id}: {e}")
                 traceback.print_exc()
                 
     except Exception as e:
@@ -8571,8 +8601,8 @@ async def redpacket_claim_callback(update: Update, context):
         with global_flask_app.app_context():
             import random
             
-            # 获取红包
-            packet = RedPacket.query.get(packet_id)
+            # 获取红包（加行锁防止并发超领）
+            packet = RedPacket.query.with_for_update().get(packet_id)
             if not packet:
                 return None, "红包不存在"
             
@@ -9316,6 +9346,14 @@ async def cmd_clones(update: Update, context):
     
     await update.message.reply_html(message)
 
+async def _auto_delete_msg(context):
+    """Job callback: delete the message stored in job.data."""
+    try:
+        await context.job.data.delete()
+    except Exception:
+        pass
+
+
 async def on_message(update: Update, context):
     if not global_flask_app: return
     try:
@@ -9448,7 +9486,7 @@ async def on_message(update: Update, context):
                                     db.session.commit()
                                     return True
                                 else:
-                                    return False
+                                    continue
                         return None
                 
                 result = await asyncio.get_running_loop().run_in_executor(None, _verify_code)
@@ -9632,11 +9670,7 @@ async def on_message(update: Update, context):
                             # Send a reply that will be auto-deleted
                             warning_msg = await msg.reply_html(msg_text)
                             # Auto-delete after 30 seconds
-                            context.job_queue.run_once(
-                                lambda c: c.job.data.delete(),
-                                30,
-                                data=warning_msg
-                            )
+                            context.job_queue.run_once(_auto_delete_msg, 30, data=warning_msg)
                         except Exception as e:
                             print(f"Failed to send expiration notification: {e}")
                         return  # Stop processing, don't allow check-in
@@ -9649,7 +9683,7 @@ async def on_message(update: Update, context):
                             r = await msg.reply_html(msg_text)
                             del_time = safe_int(conf.get('checkin_del_time'), 0)
                             if del_time > 0:
-                                context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
+                                context.job_queue.run_once(_auto_delete_msg, del_time, data=r)
                         else:
                             # First check-in today, proceed normally (attendance only, no points)
                             db_user.checkin_time = get_beijing_now()
@@ -9660,7 +9694,7 @@ async def on_message(update: Update, context):
                             r = await msg.reply_html(msg_text)
                             del_time = safe_int(conf.get('checkin_del_time'), 0)
                             if del_time > 0:
-                                context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
+                                context.job_queue.run_once(_auto_delete_msg, del_time, data=r)
                 return
 
             # 2.5 积分签到（独立于认证用户打卡）
@@ -9728,7 +9762,7 @@ async def on_message(update: Update, context):
                 r = await msg.reply_html(msg_text)
                 del_time = safe_int(conf.get('signin_del_time'), 0)
                 if del_time > 0:
-                    context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
+                    context.job_queue.run_once(_auto_delete_msg, del_time, data=r)
                 return
 
             # 2.6 积分兑换命令处理
@@ -9954,11 +9988,7 @@ async def on_message(update: Update, context):
                             
                             # 自动删除回复
                             if sent_reply and auto_reply.delete_after > 0:
-                                context.job_queue.run_once(
-                                    lambda c: c.job.data.delete(),
-                                    auto_reply.delete_after,
-                                    data=sent_reply
-                                )
+                                context.job_queue.run_once(_auto_delete_msg, auto_reply.delete_after, data=sent_reply)
                         except Exception as e:
                             print(f"Auto reply error: {e}")
                 # Continue to check for query functionality
@@ -10028,7 +10058,7 @@ async def on_message(update: Update, context):
                     sent = await msg.reply_html(text_resp, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
                     del_time = safe_int(conf.get('query_del_time'), 60)
                     if del_time > 0:
-                        context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=sent)
+                        context.job_queue.run_once(_auto_delete_msg, del_time, data=sent)
                 return
 
     except Exception as e:

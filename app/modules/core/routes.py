@@ -4033,7 +4033,7 @@ async def check_expired_users(context):
                 # Also retrieve configurations here to avoid repeated context creation
                 users_to_ban = []
                 for user in expired_users:
-                    if user.group and user.group.is_active:
+                    if user.group and user.group.is_active and user.group.clone_id is None:
                         # Get configuration in sync context
                         conf = get_group_conf(user.group)
                         ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
@@ -4203,6 +4203,9 @@ async def check_scheduled_messages(context):
                     if not msg.group or not msg.group.is_active:
                         continue
                     
+                    if msg.group.clone_id is not None:
+                        continue
+                    
                     # 检查模块是否启用
                     conf = get_group_conf(msg.group)
                     if not conf.get('scheduled_msg_open', True):
@@ -4351,7 +4354,7 @@ async def handle_new_chat_member(update: Update, context):
         logging.info(f"👥 [入群事件] 检测到新成员加入群组 (ID: {chat.id})")
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 # Auto-register: bot is in this group (receiving events), register it
                 bot_clone_id = context.application.bot_data.get('clone_id')
@@ -4551,7 +4554,7 @@ async def handle_left_chat_member(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group or not group.is_active:
                 return
             
@@ -4613,7 +4616,7 @@ async def check_spam_protection(update: Update, context):
             return False
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group or not group.is_active:
                 return False
             
@@ -4690,7 +4693,7 @@ async def check_forced_subscription(update: Update, context):
             return False
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group or not group.is_active:
                 return False
             
@@ -4798,7 +4801,7 @@ async def handle_subscription_check_callback(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 await query.answer("❌ 群组不存在", show_alert=True)
                 return
@@ -4887,6 +4890,8 @@ async def check_timed_group_control(context):
                         group = BotGroup.query.get(control.group_id)
                         if not group:
                             continue
+                        if group.clone_id is not None:
+                            continue
                         
                         chat_id = int(group.chat_id)
                         
@@ -4946,7 +4951,7 @@ async def track_user_name_change(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
             
@@ -5110,7 +5115,7 @@ async def update_group_member(update: Update, context):
         
         def _update_member():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return
                 
@@ -5145,7 +5150,7 @@ async def handle_sync_group_messages(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
             
@@ -5355,7 +5360,7 @@ async def handle_auto_delete_messages(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
             
@@ -5406,6 +5411,8 @@ async def check_channel_subscriptions(context):
                 with global_flask_app.app_context():
                     group = BotGroup.query.get(settings.group_id)
                     if not group:
+                        continue
+                    if group.clone_id is not None:
                         continue
                     
                     chat_id = int(group.chat_id)
@@ -5736,6 +5743,8 @@ async def check_inactive_users(context):
                             group = BotGroup.query.get(settings.group_id)
                             if not group or not group.is_active:
                                 continue
+                            if group.clone_id is not None:
+                                continue
                             
                             # Convert chat_id to integer for Telegram API
                             chat_id_int = convert_chat_id_to_int(group.chat_id, group.id)
@@ -5882,7 +5891,7 @@ async def track_message_statistics(update: Update, context):
         
         def _track_stats():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return
                 
@@ -5958,7 +5967,7 @@ async def check_keyword_filter(update: Update, context):
         
         def _check_filters():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return None
                 
@@ -6042,7 +6051,7 @@ async def update_user_activity(update: Update, context):
         
         def _update_activity():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return
                 
@@ -6091,7 +6100,7 @@ async def check_and_mute_expired_user(update: Update, context):
             with global_flask_app.app_context():
                 try:
                     # 获取群组信息
-                    group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                     if not group or not group.is_active:
                         return None
                     
@@ -6273,7 +6282,7 @@ async def cmd_vote(update: Update, context):
     
     def _create_vote():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -6351,7 +6360,7 @@ async def cmd_quiz(update: Update, context):
     
     def _get_random_quiz():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None
             
@@ -6399,7 +6408,7 @@ async def cmd_quiz(update: Update, context):
     # Create quiz session in database
     def _create_session():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if group:
                 session = QuizSession(
                     group_id=group.id,
@@ -6462,7 +6471,7 @@ async def cmd_redpacket(update: Update, context):
     
     def _create_redpacket():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -6553,7 +6562,7 @@ async def cmd_rank(update: Update, context):
     
     def _get_rankings():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -6644,7 +6653,7 @@ async def cmd_invite_rank(update: Update, context):
     
     def _get_invite_rankings():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -6725,7 +6734,7 @@ async def cmd_active(update: Update, context):
     
     def _get_active_rankings():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -7099,7 +7108,7 @@ async def cmd_kick(update: Update, context):
         # Log admin action
         def _log():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if group:
                     log_admin_action(
                         group.id,
@@ -7144,7 +7153,7 @@ async def cmd_ban(update: Update, context):
         # Log admin action
         def _log():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if group:
                     log_admin_action(
                         group.id,
@@ -7270,7 +7279,7 @@ async def cmd_unmute(update: Update, context):
             def _clear_permanent_mute():
                 with global_flask_app.app_context():
                     try:
-                        group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                        group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                         if group:
                             group_user = GroupUser.query.filter_by(
                                 group_id=group.id,
@@ -7402,7 +7411,7 @@ async def cmd_userinfo(update: Update, context):
     # Get user info from database
     def _get_user_info():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, None, None
             
@@ -7581,7 +7590,7 @@ async def cmd_bid(update: Update, context):
         with global_flask_app.app_context():
             try:
                 # Use pessimistic locking to prevent race conditions
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return "error", "群组未找到"
                 
@@ -7691,7 +7700,7 @@ async def cmd_auction(update: Update, context):
     
     def _get_auctions():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
             
@@ -7743,7 +7752,7 @@ async def handle_channel_pin(update: Update, context):
             return
         
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
             
@@ -7801,7 +7810,7 @@ async def cmd_lottery_draw(update: Update, context):
     def _draw_lottery():
         with global_flask_app.app_context():
             try:
-                group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return "error", "群组未找到"
                 
@@ -7913,7 +7922,7 @@ async def cmd_lottery_history(update: Update, context):
     
     def _get_lottery_history():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
             
@@ -7970,7 +7979,7 @@ async def cmd_lottery(update: Update, context):
     
     def _get_active_lotteries():
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
             
@@ -8061,6 +8070,8 @@ async def check_auction_expiration(context):
                     group = BotGroup.query.get(auction.group_id)
                     if not group:
                         continue
+                    if group.clone_id is not None:
+                        continue
                     
                     chat_id = int(group.chat_id)
                     
@@ -8124,7 +8135,7 @@ async def check_redpacket_expiration(context):
                     # Refund remaining points to creator
                     if packet.remaining_points > 0:
                         group = BotGroup.query.get(packet.group_id)
-                        if group:
+                        if group and group.clone_id is None:
                             user_points = UserPoints.query.filter_by(
                                 group_id=group.id,
                                 user_id=packet.creator_id
@@ -8189,7 +8200,7 @@ async def quiz_answer_callback(update: Update, context):
             if not quiz:
                 return None, "问题不存在"
             
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return None, "群组不存在"
             
@@ -8553,7 +8564,7 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
     try:
         def _get_buttons():
             with global_flask_app.app_context():
-                group = BotGroup.query.filter_by(chat_id=str(chat_id)).first()
+                group = BotGroup.query.filter_by(chat_id=str(chat_id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return []
                 
@@ -8734,7 +8745,8 @@ async def cmd_start(update: Update, context):
         def _get_private_start_msg_and_check_expiration():
             with global_flask_app.app_context():
                 # Try to get configuration from the most recently updated group (bot-level setting)
-                group = BotGroup.query.filter_by(is_active=True).order_by(BotGroup.updated_at.desc()).first()
+                bot_clone_id = context.application.bot_data.get('clone_id')
+                group = BotGroup.query.filter_by(is_active=True, clone_id=bot_clone_id).order_by(BotGroup.updated_at.desc()).first()
                 conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
                 
                 # Check if start_msg_open is enabled
@@ -8951,7 +8963,7 @@ async def on_my_chat_member(update: Update, context):
             if status in ['administrator', 'member'] and old_status in ['left', 'kicked', None]:
                 # 使用全局 App Context
                 with global_flask_app.app_context():
-                    g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    g = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                     if not g:
                         # 新群组，创建记录
                         bot_clone_id = context.application.bot_data.get('clone_id')
@@ -8973,7 +8985,7 @@ async def on_my_chat_member(update: Update, context):
             # 处理机器人被移出群组 (从 member/administrator 变为 left/kicked)
             elif status in ['left', 'kicked'] and old_status in ['administrator', 'member']:
                 with global_flask_app.app_context():
-                    g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                    g = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                     if g:
                         g.is_active = False
                         db.session.commit()
@@ -9189,7 +9201,7 @@ async def on_message(update: Update, context):
         # 使用全局 App Context
         with global_flask_app.app_context():
             # 1. 自动点赞
-            group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 if chat.type in ['group', 'supergroup']:
                     # Auto-register: bot is in this group (receiving messages), register it
@@ -9752,7 +9764,7 @@ async def pagination_callback(update: Update, context):
         # 上面 lambda 写法太绕，直接用同步函数包装即可：
         def _get_group_info():
             with global_flask_app.app_context():
-                g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
+                g = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not g: return None, None, None
                 return g.id, get_group_conf(g), get_group_fields(g)
         

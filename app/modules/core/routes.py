@@ -1032,7 +1032,8 @@ def page_bot_clones():
         'description': c.description
     } for c in clones], ensure_ascii=False)
     
-    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now())
+    railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
+    return render_template('bot_clones.html', page='bot_clones', clones=clones, clones_json=clones_json, beijing_now=get_beijing_now(), railway_domain=railway_domain)
 
 @core_bp.route('/group/<int:gid>/inactive_user_settings')
 def page_inactive_user_settings(gid):

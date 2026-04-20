@@ -70,10 +70,12 @@
                             <div class="flex-grow-1">
                                 <h6 class="mb-1">{{ clone.clone_name }}</h6>
                                 <small class="text-muted">
+                                    <span class="fw-semibold text-secondary">克隆ID: {{ clone.id }}</span> | 
                                     Token: ●●●●●●●●●●●●●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }} | 
                                     {% if clone.owner_user_id %}拥有者ID: {{ clone.owner_user_id }} | {% endif %}
                                     {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}{% else %}永久有效{% endif %}
                                     {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
+                                    {% if railway_domain %}<br>Webhook URL: <code>https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}</code>{% endif %}
                                 </small>
                                 <span class="badge {{ 'bg-success' if clone.is_active else 'bg-secondary' }} ms-2">
                                     {{ '启用' if clone.is_active else '禁用' }}
@@ -144,7 +146,7 @@
                 <div class="mb-3">
                     <label class="form-label">Webhook URL（可选）</label>
                     <input type="text" class="form-control" id="webhook_url" placeholder="https://example.com/core/clone_webhook/<id>">
-                    <small class="text-muted">留空则使用轮询模式（推荐）。如需 Webhook 模式，请先保存克隆获取ID，然后填入 <code>https://&lt;你的域名&gt;/core/clone_webhook/&lt;保存后显示的克隆ID&gt;</code></small>
+                    <small class="text-muted">留空则使用轮询模式（推荐）。如需 Webhook 模式，请先保存克隆以获取克隆ID，编辑时会自动填入 Webhook URL，也可手动填写 <code>https://&lt;你的域名&gt;/core/clone_webhook/&lt;克隆ID&gt;</code></small>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">描述（可选）</label>
@@ -166,6 +168,7 @@
 <script>
 let cloneModal;
 const clonesData = {{ clones_json|safe }};
+const railwayDomain = {{ ('"' + railway_domain + '"') if railway_domain else 'null' }};
 
 document.addEventListener('DOMContentLoaded', function() {
     cloneModal = new bootstrap.Modal(document.getElementById('cloneModal'));
@@ -222,7 +225,7 @@ function editClone(id) {
         document.getElementById('expiration_date').value = '';
     }
     
-    document.getElementById('webhook_url').value = clone.webhook_url || '';
+    document.getElementById('webhook_url').value = clone.webhook_url || (railwayDomain ? `https://${railwayDomain}/core/clone_webhook/${id}` : '');
     document.getElementById('description').value = clone.description || '';
     document.getElementById('is_active').checked = clone.is_active;
     cloneModal.show();

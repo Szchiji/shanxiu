@@ -28,7 +28,7 @@ def _strip_bare_spans(text):
     their text content.  <span class="tg-spoiler"> … </span> pairs are left
     intact.  Uses a simple stack so nested spans are handled correctly.
     """
-    _SPAN_RE = re.compile(r'(<span\s+class="tg-spoiler"\s*>|<span\b[^>]*>|</span>)')
+    _SPAN_RE = re.compile(r'(<span\s+class="tg-spoiler"[^>]*>|<span\b[^>]*>|</span>)')
     parts = _SPAN_RE.split(text)
     result = []
     stack = []  # tracks 'spoiler' or 'bare' for each open <span>

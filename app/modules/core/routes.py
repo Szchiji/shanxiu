@@ -2143,6 +2143,9 @@ def api_toggle_scheduled_message():
         item = ScheduledMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         item.is_active = not item.is_active
+        # 重新启用时重置上次发送时间，使其立即触发发送
+        if item.is_active:
+            item.last_sent_at = None
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

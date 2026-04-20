@@ -106,13 +106,15 @@ def parse_telegram_message_link(url):
     Supports:
       https://t.me/username/message_id          → ('@username', message_id)
       https://t.me/c/channel_id/message_id      → (-100channel_id, message_id)
+      t.me/username/message_id                  → same as above (no protocol)
+      t.me/c/channel_id/message_id              → same as above (no protocol)
     """
     if not url:
         return None, None
-    m = re.match(r'https?://t\.me/c/(\d+)/(\d+)', url)
+    m = re.match(r'(?:https?://)?t\.me/c/(\d+)/(\d+)', url)
     if m:
         return int(f"-100{m.group(1)}"), int(m.group(2))
-    m = re.match(r'https?://t\.me/([A-Za-z0-9_]+)/(\d+)', url)
+    m = re.match(r'(?:https?://)?t\.me/([A-Za-z0-9_]+)/(\d+)', url)
     if m:
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
@@ -2316,7 +2318,8 @@ def api_send_scheduled_message_now(message_id):
                 try:
                     sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    if 'message to copy not found' in str(copy_err).lower():
+                    _err_lower = str(copy_err).lower()
+                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
                         # Fallback 1: forward_message (shows "Forwarded from" header)
                         fwd_kwargs = dict(
                             chat_id=chat_id,
@@ -4522,7 +4525,8 @@ async def check_scheduled_messages(context):
                 try:
                     sent_message = await context.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    if 'message to copy not found' in str(copy_err).lower():
+                    _err_lower = str(copy_err).lower()
+                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
                         print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
                         # Fallback 1: forward_message (shows "Forwarded from" header)
                         fwd_kwargs = dict(

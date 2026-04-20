@@ -168,7 +168,7 @@
 <script>
 let cloneModal;
 const clonesData = {{ clones_json|safe }};
-const railwayDomain = {{ ('"' + railway_domain + '"') if railway_domain else 'null' }};
+const railwayDomain = {{ railway_domain | tojson }};
 
 document.addEventListener('DOMContentLoaded', function() {
     cloneModal = new bootstrap.Modal(document.getElementById('cloneModal'));

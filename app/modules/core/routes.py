@@ -386,7 +386,8 @@ def index(): return redirect('/core/select_group') if session.get('logged_in') e
 def page_select_group():
     if not session.get('logged_in'): return redirect('/core')
     session.pop('current_group_id', None)
-    groups = BotGroup.query.order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
+    clone_id = session.get('clone_id')
+    groups = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
     return render_template('select_group.html', groups=groups)
 
 @core_bp.route('/group/<int:gid>/dashboard')
@@ -1016,6 +1017,7 @@ def page_sync_message_logs(gid):
 def page_bot_clones():
     """机器人克隆管理 - 只在主机器人后台显示"""
     if not session.get('logged_in'): return redirect('/core')
+    if session.get('clone_id'): return redirect('/core/select_group')
     
     clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
     
@@ -3828,6 +3830,7 @@ def auth_verify_page(session_token):
         if auth_session.is_verified:
             session['logged_in'] = True
             session.permanent = True  # Make session persistent
+            session['clone_id'] = auth_session.clone_id
             return redirect('/core/select_group')
         
         return render_template('auth_verify.html', 
@@ -3861,6 +3864,7 @@ def api_check_auth_status():
             # Set session as logged in with persistent cookie
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
+            session['clone_id'] = auth_session.clone_id
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -4350,7 +4354,8 @@ async def handle_new_chat_member(update: Update, context):
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
             if not group:
                 # Auto-register: bot is in this group (receiving events), register it
-                group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                bot_clone_id = context.application.bot_data.get('clone_id')
+                group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True, clone_id=bot_clone_id)
                 group.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
                 db.session.add(group)
                 db.session.commit()
@@ -8697,7 +8702,8 @@ async def cmd_start(update: Update, context):
                     session_token=session_token,
                     verification_code=verification_code,
                     is_verified=False,
-                    expires_at=expires_at
+                    expires_at=expires_at,
+                    clone_id=clone_id  # None for main bot admin, clone ID for clone bot admin
                 )
                 db.session.add(auth_session)
                 db.session.commit()
@@ -8948,7 +8954,8 @@ async def on_my_chat_member(update: Update, context):
                     g = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
                     if not g:
                         # 新群组，创建记录
-                        g = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                        bot_clone_id = context.application.bot_data.get('clone_id')
+                        g = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True, clone_id=bot_clone_id)
                         g.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
                         db.session.add(g)
                         db.session.commit()
@@ -9186,7 +9193,8 @@ async def on_message(update: Update, context):
             if not group:
                 if chat.type in ['group', 'supergroup']:
                     # Auto-register: bot is in this group (receiving messages), register it
-                    group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                    bot_clone_id = context.application.bot_data.get('clone_id')
+                    group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True, clone_id=bot_clone_id)
                     group.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
                     db.session.add(group)
                     db.session.commit()

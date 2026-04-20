@@ -77,6 +77,10 @@ def run_migrations():
         "UPDATE group_members SET joined_at = COALESCE(created_at, synced_at) WHERE joined_at IS NULL",
         # BotGroup: Add members_last_sync column
         "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL",
+        # BotGroup: Add clone_id to track which bot (main or clone) owns each group
+        "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+        # AuthSession: Add clone_id to track which clone a login session belongs to
+        "ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
     ]
 
     with app.app_context():

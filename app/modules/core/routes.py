@@ -2350,7 +2350,7 @@ def api_send_scheduled_message_now(message_id):
             return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
         except Exception as send_err:
             print(f"Error sending scheduled message now: {send_err}", flush=True)
-            return jsonify({'status':'error','msg':'消息发送失败，请检查机器人状态'})
+            return jsonify({'status':'error','msg':f'消息发送失败：{send_err}'})
 
         # 更新发送时间，防止定时任务重复发送
         if sent_message:
@@ -4527,12 +4527,15 @@ async def check_scheduled_messages(context):
         except Exception as e:
             print(f"Error sending scheduled message: {e}")
             # 更新 last_sent_at 以防止立即重试失败的消息
+            # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
+            # 使调度器下次仍能重试（直到成功发送）
             def _update_failed(msg_id):
                 with global_flask_app.app_context():
                     scheduled_msg = ScheduledMessage.query.get(msg_id)
                     if scheduled_msg and scheduled_msg.is_active:
-                        scheduled_msg.last_sent_at = get_beijing_now()
-                        db.session.commit()
+                        if scheduled_msg.repeat_interval > 0:
+                            scheduled_msg.last_sent_at = get_beijing_now()
+                            db.session.commit()
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers

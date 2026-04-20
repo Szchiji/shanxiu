@@ -2200,7 +2200,7 @@ def api_save_scheduled_message():
         
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
-        item.message_thread_id = int(d['message_thread_id']) if d.get('message_thread_id') else None
+        item.message_thread_id = safe_int(d.get('message_thread_id'), None)
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2238,7 +2238,7 @@ def api_send_scheduled_message_now(message_id):
 
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
-        item.message_thread_id = int(d['message_thread_id']) if d.get('message_thread_id') else None
+        item.message_thread_id = safe_int(d.get('message_thread_id'), None)
 
         db.session.commit()
 

@@ -2350,6 +2350,9 @@ def api_send_scheduled_message_now(message_id):
             return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
         except Exception as send_err:
             print(f"Error sending scheduled message now: {send_err}", flush=True)
+            err_str = str(send_err)
+            if 'message to copy not found' in err_str.lower():
+                return jsonify({'status':'error','msg':'消息发送失败：媒体链接中的源消息已被删除，请重新设置媒体链接'})
             return jsonify({'status':'error','msg':f'消息发送失败：{send_err}'})
 
         # 更新发送时间，防止定时任务重复发送
@@ -4525,18 +4528,30 @@ async def check_scheduled_messages(context):
                 print(f"✅ 定时消息已发送到群组 {chat_id}", flush=True)
                 
         except Exception as e:
+            err_str = str(e)
             print(f"Error sending scheduled message: {e}")
-            # 更新 last_sent_at 以防止立即重试失败的消息
-            # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
-            # 使调度器下次仍能重试（直到成功发送）
-            def _update_failed(msg_id):
-                with global_flask_app.app_context():
-                    scheduled_msg = ScheduledMessage.query.get(msg_id)
-                    if scheduled_msg and scheduled_msg.is_active:
-                        if scheduled_msg.repeat_interval > 0:
-                            scheduled_msg.last_sent_at = get_beijing_now()
+            # 如果源消息已被删除（无法复制），自动停用该定时消息以避免无限重试
+            if 'message to copy not found' in err_str.lower():
+                def _deactivate_msg(msg_id):
+                    with global_flask_app.app_context():
+                        scheduled_msg = ScheduledMessage.query.get(msg_id)
+                        if scheduled_msg and scheduled_msg.is_active:
+                            scheduled_msg.is_active = False
                             db.session.commit()
-            await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
+                            print(f"⚠️ 定时消息 {msg_id} 已自动停用：源消息不存在 (media_url: {scheduled_msg.media_url})", flush=True)
+                await asyncio.get_running_loop().run_in_executor(None, _deactivate_msg, msg_data['id'])
+            else:
+                # 更新 last_sent_at 以防止立即重试失败的消息
+                # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
+                # 使调度器下次仍能重试（直到成功发送）
+                def _update_failed(msg_id):
+                    with global_flask_app.app_context():
+                        scheduled_msg = ScheduledMessage.query.get(msg_id)
+                        if scheduled_msg and scheduled_msg.is_active:
+                            if scheduled_msg.repeat_interval > 0:
+                                scheduled_msg.last_sent_at = get_beijing_now()
+                                db.session.commit()
+                await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers
 

@@ -304,6 +304,34 @@ def webhook():
         print(f"❌ Webhook Error: {e}")
         return "Error", 200
 
+@core_bp.route('/clone_webhook/<int:clone_id>', methods=['POST'])
+def clone_webhook(clone_id):
+    """接收克隆机器人的 Webhook 更新并分发给对应的 Application 实例"""
+    if not global_bot_loop: return "Bot Not Ready", 503
+    clone_info = bot_clone_manager.active_clones.get(clone_id)
+    if not clone_info: return "Clone Not Found", 404
+    try:
+        json_data = request.get_json(force=True)
+        clone_app = clone_info['app']
+        update = Update.de_json(json_data, clone_app.bot)
+
+        future = asyncio.run_coroutine_threadsafe(clone_app.process_update(update), global_bot_loop)
+
+        def check_future_exception(fut):
+            try:
+                exc = fut.exception()
+                if exc:
+                    print(f"❌ Clone Webhook 异步任务异常 (clone_id={clone_id}):")
+                    print(''.join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            except Exception as e:
+                print(f"❌ Clone Webhook 回调函数本身异常: {e}")
+
+        future.add_done_callback(check_future_exception)
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ Clone Webhook Error (clone_id={clone_id}): {e}")
+        return "Error", 200
+
 # --- Context ---
 @core_bp.context_processor
 def inject_context():
@@ -3390,6 +3418,35 @@ def api_save_bot_clone():
                     logging.info(f"✅ Clone bot {clone_id} restarted after edit")
             except Exception as e:
                 logging.warning(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
+                # Don't fail the API call, just log the error
+        
+        # If this is a brand-new active clone, start it immediately without waiting for a server restart
+        elif not clone_id and clone.is_active and global_bot_loop and global_flask_app:
+            try:
+                now = get_beijing_now()
+                if not clone.expiration_date or clone.expiration_date >= now:
+                    clone_data = {
+                        'id': clone.id,
+                        'token': clone.bot_token,
+                        'webhook_url': clone.webhook_url
+                    }
+                    future = asyncio.run_coroutine_threadsafe(
+                        bot_clone_manager.start_clone_bot(
+                            clone_id=clone_data['id'],
+                            bot_token=clone_data['token'],
+                            webhook_url=clone_data['webhook_url'],
+                            flask_app=global_flask_app,
+                            handlers_setup_func=setup_clone_handlers
+                        ),
+                        global_bot_loop
+                    )
+                    success = future.result(timeout=CLONE_START_TIMEOUT)
+                    if success:
+                        logging.info(f"✅ New clone bot {clone.id} started immediately after creation")
+                    else:
+                        logging.warning(f"⚠️ New clone bot {clone.id} failed to start after creation")
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to start new clone bot {clone.id} after creation: {e}")
                 # Don't fail the API call, just log the error
         
         return jsonify({'status':'ok'})

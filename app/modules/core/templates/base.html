@@ -705,6 +705,11 @@
         <div class="navbar-nav ms-auto">
             <div class="nav-item text-nowrap">
                 {% if session.get('logged_in') %}
+                {% if session.get('login_user_name') %}
+                <span class="nav-link px-3 text-muted d-none d-sm-inline">
+                    <i class="fa-solid fa-user-circle me-1"></i>{{ session.get('login_user_name') }}
+                </span>
+                {% endif %}
                 <a class="nav-link px-3" href="/core/logout">
                     <i class="fa-solid fa-right-from-bracket me-1"></i>退出登录
                 </a>
@@ -909,7 +914,7 @@
                         
                         <!-- Points & Activities -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
                                id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fa-solid fa-coins"></i> 🎮 积分 & 互动
                             </a>
@@ -918,6 +923,12 @@
                                     <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
                                         <i class="fa-solid fa-list-check"></i> 积分规则
                                         <span class="feature-desc">设置积分获取和扣除规则</span>
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/points_exchange" class="dropdown-item {% if page == 'points_exchange' %}active{% endif %}">
+                                        <i class="fa-solid fa-gift"></i> 积分兑换
+                                        <span class="feature-desc">设置积分可兑换的商品</span>
                                     </a>
                                 </li>
                                 <li>
@@ -985,15 +996,7 @@
                         </li>
                         {% endif %}
                         
-                        <!-- Return to main backend - only visible when in clone backend -->
-                        {% if is_main_instance and session.get('clone_id') %}
-                        <li class="nav-item">
-                            <a href="/core/exit_clone_backend" class="nav-link">
-                                <i class="fa-solid fa-arrow-left"></i> 返回主后台
-                                <span class="feature-desc">切换回主机器人后台</span>
-                            </a>
-                        </li>
-                        {% endif %}
+
                         
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">

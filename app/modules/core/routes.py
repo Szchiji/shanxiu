@@ -6,7 +6,8 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord)
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord,
+                        PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
@@ -911,6 +912,19 @@ def page_points_log(gid):
     group = BotGroup.query.get_or_404(gid)
     logs = PointsLog.query.filter_by(group_id=gid).order_by(PointsLog.created_at.desc()).limit(100).all()
     return render_template('points_log.html', page='points_log', group=group, logs=logs)
+
+@core_bp.route('/group/<int:gid>/points_exchange')
+def page_points_exchange(gid):
+    """积分兑换商品管理"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+    items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
+    records = (PointsExchangeRecord.query
+               .filter_by(group_id=gid)
+               .order_by(PointsExchangeRecord.created_at.desc())
+               .limit(100).all())
+    return render_template('points_exchange.html', page='points_exchange', group=group, items=items, records=records)
 
 @core_bp.route('/group/<int:gid>/group_lottery')
 def page_group_lottery(gid):
@@ -2994,6 +3008,52 @@ def api_delete_points_auction():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/save_exchange_item', methods=['POST'])
+def api_save_exchange_item():
+    """保存积分兑换商品"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    try:
+        if d.get('id'):
+            item = PointsExchangeItem.query.get(d['id'])
+            if not item: return jsonify({'status':'error','msg':'Item not found'})
+        else:
+            item = PointsExchangeItem(group_id=d['group_id'])
+            db.session.add(item)
+
+        item.item_name = d.get('item_name', '').strip()
+        item.item_description = d.get('item_description', '').strip() or None
+        item.points_cost = int(d.get('points_cost', 100))
+        stock = d.get('stock')
+        item.stock = int(stock) if stock not in (None, '', 0) else None
+        item.redemption_info = d.get('redemption_info', '').strip() or None
+        item.is_active = bool(d.get('is_active', True))
+
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/delete_exchange_item', methods=['POST'])
+def api_delete_exchange_item():
+    """删除积分兑换商品"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    try:
+        item = PointsExchangeItem.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Item not found'})
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
 @core_bp.route('/api/save_group_lottery', methods=['POST'])
 def api_save_group_lottery():
     """保存群抽奖"""
@@ -3815,11 +3875,21 @@ def magic_login():
         data = jwt.decode(token, secret_key, algorithms=['HS256'])
         user_id = data.get('uid')
         chat_id = data.get('chat_id')
+
+        def _get_user_name(uid):
+            member = GroupMember.query.filter_by(user_id=uid).first()
+            if member:
+                return member.username or (
+                    ((member.first_name or '') + (' ' + member.last_name if member.last_name else '')).strip()
+                ) or str(uid)
+            return str(uid)
         
         # Check if user is ADMIN_ID (global admin)
         admin_id = safe_int(os.getenv('ADMIN_ID', 0))
         if admin_id and user_id == admin_id:
             session['logged_in'] = True
+            session['login_user_id'] = user_id
+            session['login_user_name'] = _get_user_name(user_id)
             return redirect('/core/select_group')
         
         # Check if user is admin in the specific group
@@ -3833,6 +3903,8 @@ def magic_login():
                 is_admin = future.result(timeout=5)
                 if is_admin:
                     session['logged_in'] = True
+                    session['login_user_id'] = user_id
+                    session['login_user_name'] = _get_user_name(user_id)
                     return redirect('/core/select_group')
             except Exception as e:
                 print(f"Error checking group admin: {e}")
@@ -3860,6 +3932,8 @@ def auth_verify_page(session_token):
             session['logged_in'] = True
             session.permanent = True  # Make session persistent
             session['clone_id'] = auth_session.clone_id
+            session['login_user_id'] = auth_session.user_id
+            session['login_user_name'] = auth_session.user_name
             return redirect('/core/select_group')
         
         return render_template('auth_verify.html', 
@@ -3894,6 +3968,8 @@ def api_check_auth_status():
             session['logged_in'] = True
             session.permanent = True  # Make session persistent (uses PERMANENT_SESSION_LIFETIME)
             session['clone_id'] = auth_session.clone_id
+            session['login_user_id'] = auth_session.user_id
+            session['login_user_name'] = auth_session.user_name
             return jsonify({
                 'status': 'verified',
                 'redirect_url': '/core/select_group'
@@ -7096,8 +7172,9 @@ async def start_all_clone_bots(flask_app):
         traceback.print_exc()
 
 
-def do_like(chat_id, message_id, emoji):
-    token = os.getenv('TG_BOT_TOKEN')
+def do_like(chat_id, message_id, emoji, token=None):
+    if not token:
+        token = os.getenv('TG_BOT_TOKEN')
     if not token or not emoji: return
     clean_emoji = emoji.strip()
     try: 
@@ -8702,8 +8779,14 @@ def _is_clone_admin(clone_id: int, user_id: int) -> bool:
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
+    tg_user = update.effective_user
     chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
+    
+    # Build a display name: prefer username, fallback to first_name + last_name
+    _display_name = tg_user.username or (
+        ((tg_user.first_name or '') + (' ' + tg_user.last_name if tg_user.last_name else '')).strip()
+    ) or str(user_id)
     
     print(f"📍 /start 调试: chat_type={chat.type}, chat_id={chat.id}, user_id={user_id}")
     
@@ -8739,6 +8822,7 @@ async def cmd_start(update: Update, context):
                 
                 auth_session = AuthSession(
                     user_id=user_id,
+                    user_name=_display_name,
                     session_token=session_token,
                     verification_code=verification_code,
                     is_verified=False,
@@ -9255,7 +9339,10 @@ async def on_message(update: Update, context):
             conf = get_group_conf(group)
             
             # 🆕 Award points for messages (if rule exists and user is registered)
-            if chat.type in ['group', 'supergroup']:
+            # Skip if this message is a checkin command to avoid double-counting
+            _checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
+            _is_checkin_msg = conf.get('checkin_open') and txt in _checkin_cmds
+            if chat.type in ['group', 'supergroup'] and not _is_checkin_msg:
                 message_rule = PointsRule.query.filter_by(
                     group_id=group.id,
                     rule_type='message',
@@ -9343,12 +9430,18 @@ async def on_message(update: Update, context):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
                     emoji = conf.get('like_emoji', '❤️')
+                    # Resolve the correct bot token: use clone bot token if this is a clone bot
+                    _like_token = None
+                    _clone_id = context.application.bot_data.get('clone_id')
+                    if _clone_id:
+                        _clone = BotClone.query.get(_clone_id)
+                        if _clone:
+                            _like_token = _clone.bot_token
                     # 在线程中执行阻塞请求，避免卡顿
-                    asyncio.get_running_loop().run_in_executor(None, do_like, chat.id, msg.message_id, emoji)
+                    asyncio.get_running_loop().run_in_executor(None, do_like, chat.id, msg.message_id, emoji, _like_token)
             
             # 2. 打卡
-            checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
-            if conf.get('checkin_open') and txt in checkin_cmds:
+            if _is_checkin_msg:
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if not db_user:
                     msg_text = sanitize_html_for_telegram(conf.get('msg_not_registered', '未认证'))
@@ -9450,6 +9543,85 @@ async def on_message(update: Update, context):
                             if del_time > 0:
                                 context.job_queue.run_once(lambda c: c.job.data.delete(), del_time, data=r)
                 return
+
+            # 2.5 积分兑换命令处理
+            if chat.type in ['group', 'supergroup']:
+                _exchange_list_cmds = ['兑换', '兑换列表', '积分兑换']
+                if txt in _exchange_list_cmds:
+                    # Show available exchange items
+                    items = PointsExchangeItem.query.filter_by(group_id=group.id, is_active=True).all()
+                    if not items:
+                        await msg.reply_html("🛒 <b>积分兑换</b>\n\n暂无可兑换商品。")
+                    else:
+                        lines = ["🛒 <b>积分兑换商品列表</b>\n"]
+                        for it in items:
+                            stock_str = f"库存: {it.stock}" if it.stock is not None else "库存: 不限"
+                            lines.append(
+                                f"🔹 <b>[{it.id}] {it.item_name}</b>\n"
+                                f"   💰 所需积分: <b>{it.points_cost}</b>  |  {stock_str}\n"
+                                + (f"   📝 {it.item_description}\n" if it.item_description else "")
+                            )
+                        lines.append("\n发送 <b>兑换 商品ID</b> 即可兑换，例如：<code>兑换 1</code>")
+                        await msg.reply_html("\n".join(lines))
+                    return
+
+                if txt.startswith('兑换 ') and len(txt) > 3:
+                    item_id_str = txt[3:].strip()
+                    if item_id_str.isdigit():
+                        item_id = int(item_id_str)
+                        item = PointsExchangeItem.query.filter_by(id=item_id, group_id=group.id, is_active=True).first()
+                        if not item:
+                            await msg.reply_html("❌ 商品不存在或已下架。")
+                            return
+                        # Check stock
+                        if item.stock is not None and item.stock <= 0:
+                            await msg.reply_html("❌ 该商品库存已用完。")
+                            return
+                        # Check user points
+                        user_points = UserPoints.query.filter_by(group_id=group.id, user_id=user.id).first()
+                        balance = user_points.points_balance if user_points else 0
+                        if balance < item.points_cost:
+                            await msg.reply_html(
+                                f"❌ 积分不足。兑换 <b>{item.item_name}</b> 需要 <b>{item.points_cost}</b> 积分，"
+                                f"您当前积分为 <b>{balance}</b>。"
+                            )
+                            return
+                        # Deduct points
+                        if not user_points:
+                            user_points = UserPoints(group_id=group.id, user_id=user.id, points_balance=0)
+                            db.session.add(user_points)
+                        user_points.points_balance -= item.points_cost
+                        # Reduce stock
+                        if item.stock is not None:
+                            item.stock -= 1
+                        # Record
+                        record = PointsExchangeRecord(
+                            group_id=group.id,
+                            user_id=user.id,
+                            item_id=item.id,
+                            points_spent=item.points_cost
+                        )
+                        db.session.add(record)
+                        # Log
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_change=-item.points_cost,
+                            reason=f"兑换商品: {item.item_name}",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
+                        # Notify user
+                        reply_lines = [
+                            f"✅ <b>兑换成功！</b>",
+                            f"🎁 商品: <b>{item.item_name}</b>",
+                            f"💰 消耗积分: <b>{item.points_cost}</b>  |  剩余积分: <b>{user_points.points_balance}</b>",
+                        ]
+                        if item.redemption_info:
+                            reply_lines.append(f"\n📋 兑换信息:\n{item.redemption_info}")
+                        await msg.reply_html("\n".join(reply_lines))
+                        return
 
             # 3. 自动回复检查 (Check points-based first, then regular auto-reply)
             if conf.get('auto_reply_open', True):

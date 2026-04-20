@@ -81,10 +81,18 @@ def run_migrations():
         "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
         # AuthSession: Add clone_id to track which clone a login session belongs to
         "ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+        # AuthSession: Add user_name to display logged-in user identity
+        "ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS user_name VARCHAR(255) NULL",
         # BotGroup: Drop old unique index on chat_id and add composite unique constraint
         "ALTER TABLE bot_groups DROP CONSTRAINT IF EXISTS bot_groups_chat_id_key",
         "ALTER TABLE bot_groups DROP INDEX IF EXISTS ix_bot_groups_chat_id",
         "CREATE UNIQUE INDEX IF NOT EXISTS _bot_group_chat_clone_uc ON bot_groups(chat_id, clone_id)",
+        # PointsExchangeItem / PointsExchangeRecord tables (created via db.create_all, listed here for clarity)
+        "CREATE TABLE IF NOT EXISTS points_exchange_items (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER REFERENCES bot_groups(id), item_name VARCHAR(255) NOT NULL, item_description TEXT, points_cost INTEGER NOT NULL DEFAULT 100, stock INTEGER, redemption_info TEXT, is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_points_exchange_items_group_id ON points_exchange_items(group_id)",
+        "CREATE TABLE IF NOT EXISTS points_exchange_records (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER REFERENCES bot_groups(id), user_id BIGINT, item_id INTEGER REFERENCES points_exchange_items(id), points_spent INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_group_id ON points_exchange_records(group_id)",
+        "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_user_id ON points_exchange_records(user_id)",
     ]
 
     with app.app_context():

@@ -975,8 +975,8 @@
                         </li>
                         {% endif %}
                         
-                        <!-- Bot Clones - Global feature, not group-specific, only visible on main instance -->
-                        {% if is_main_instance %}
+                        <!-- Bot Clones - Global feature, not group-specific, only visible on main instance and to main admins -->
+                        {% if is_main_instance and not session.get('clone_id') %}
                         <li class="nav-item">
                             <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
                                 <i class="fa-solid fa-robot"></i> 机器人克隆

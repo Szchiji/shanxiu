@@ -77,6 +77,14 @@ def run_migrations():
         "UPDATE group_members SET joined_at = COALESCE(created_at, synced_at) WHERE joined_at IS NULL",
         # BotGroup: Add members_last_sync column
         "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL",
+        # BotGroup: Add clone_id to track which bot (main or clone) owns each group
+        "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+        # AuthSession: Add clone_id to track which clone a login session belongs to
+        "ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+        # BotGroup: Drop old unique index on chat_id and add composite unique constraint
+        "ALTER TABLE bot_groups DROP CONSTRAINT IF EXISTS bot_groups_chat_id_key",
+        "ALTER TABLE bot_groups DROP INDEX IF EXISTS ix_bot_groups_chat_id",
+        "CREATE UNIQUE INDEX IF NOT EXISTS _bot_group_chat_clone_uc ON bot_groups(chat_id, clone_id)",
     ]
 
     with app.app_context():

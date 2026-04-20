@@ -5,7 +5,7 @@ import json
 class BotGroup(db.Model):
     __tablename__ = 'bot_groups'
     id = db.Column(db.Integer, primary_key=True)
-    chat_id = db.Column(db.String(50), unique=True, index=True)
+    chat_id = db.Column(db.String(50), index=True)
     title = db.Column(db.String(255))
     type = db.Column(db.String(50))
     is_active = db.Column(db.Boolean, default=True)
@@ -14,6 +14,10 @@ class BotGroup(db.Model):
     last_query_msg_id = db.Column(db.Integer, nullable=True)
     members_last_sync = db.Column(db.DateTime, nullable=True)  # Track last successful member sync
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    clone_id = db.Column(db.Integer, nullable=True)  # None = main bot group, set = clone bot group
+    __table_args__ = (
+        db.UniqueConstraint('chat_id', 'clone_id', name='_bot_group_chat_clone_uc'),
+    )
 
 class GroupUser(db.Model):
     __tablename__ = 'group_users'
@@ -44,6 +48,7 @@ class AuthSession(db.Model):
     is_verified = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
     expires_at = db.Column(db.DateTime)
+    clone_id = db.Column(db.Integer, nullable=True)  # None = main bot admin, set = clone bot admin
 
 class AutoReply(db.Model):
     """自动回复规则"""

@@ -706,7 +706,7 @@
             <div class="nav-item text-nowrap">
                 {% if session.get('logged_in') %}
                 {% if session.get('login_user_name') %}
-                <span class="nav-link px-3 text-muted d-none d-sm-inline">
+                <span class="nav-link px-3 text-muted">
                     <i class="fa-solid fa-user-circle me-1"></i>{{ session.get('login_user_name') }}
                 </span>
                 {% endif %}

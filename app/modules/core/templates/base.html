@@ -985,6 +985,16 @@
                         </li>
                         {% endif %}
                         
+                        <!-- Return to main backend - only visible when in clone backend -->
+                        {% if is_main_instance and session.get('clone_id') %}
+                        <li class="nav-item">
+                            <a href="/core/exit_clone_backend" class="nav-link">
+                                <i class="fa-solid fa-arrow-left"></i> 返回主后台
+                                <span class="feature-desc">切换回主机器人后台</span>
+                            </a>
+                        </li>
+                        {% endif %}
+                        
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">
                                 <i class="fa-solid fa-layer-group"></i> 选择群组

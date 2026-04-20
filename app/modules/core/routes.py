@@ -4348,9 +4348,19 @@ async def handle_new_chat_member(update: Update, context):
         
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
-            if not group or not group.is_active:
-                logging.warning(f"👥 [入群事件] 群组未激活或未找到: {chat.id}")
-                return
+            if not group:
+                # Auto-register: bot is in this group (receiving events), register it
+                group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                group.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+                db.session.add(group)
+                db.session.commit()
+                logging.info(f"➕ [入群事件] 自动注册群组: {chat.title} (chat_id: {chat.id})")
+            elif not group.is_active:
+                # Re-activate: bot is still in the group (receiving events)
+                group.is_active = True
+                group.title = chat.title
+                db.session.commit()
+                logging.info(f"🔄 [入群事件] 重新激活群组: {chat.title} (chat_id: {chat.id})")
             
             logging.info(f"👥 [入群事件] 在群组 {group.id} 中处理新成员")
             
@@ -9134,8 +9144,25 @@ async def on_message(update: Update, context):
         with global_flask_app.app_context():
             # 1. 自动点赞
             group = BotGroup.query.filter_by(chat_id=str(chat.id)).first()
-            if not group or not group.is_active:
-                return
+            if not group:
+                if chat.type in ['group', 'supergroup']:
+                    # Auto-register: bot is in this group (receiving messages), register it
+                    group = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True)
+                    group.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+                    db.session.add(group)
+                    db.session.commit()
+                    logging.info(f"➕ [on_message] 自动注册群组: {chat.title} (chat_id: {chat.id})")
+                else:
+                    return
+            elif not group.is_active:
+                if chat.type in ['group', 'supergroup']:
+                    # Re-activate: bot is still in the group (receiving messages)
+                    group.is_active = True
+                    group.title = chat.title
+                    db.session.commit()
+                    logging.info(f"🔄 [on_message] 重新激活群组: {chat.title} (chat_id: {chat.id})")
+                else:
+                    return
             
             conf = get_group_conf(group)
             

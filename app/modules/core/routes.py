@@ -3572,6 +3572,35 @@ def api_toggle_bot_clone():
         return jsonify({'status':'error','msg':str(e)})
 
 
+@core_bp.route('/api/enter_clone_backend', methods=['POST'])
+@require_main_instance
+def api_enter_clone_backend():
+    """切换当前会话到指定克隆机器人的后台"""
+    if not session.get('logged_in'): return jsonify({'status': 'error', 'msg': '需要登录'})
+    if session.get('clone_id'): return jsonify({'status': 'error', 'msg': '已在克隆后台，无法再次切换'})
+    d = request.json
+    if not d or 'clone_id' not in d: return jsonify({'status': 'error', 'msg': '缺少克隆ID'})
+
+    try:
+        clone = BotClone.query.get(d['clone_id'])
+        if not clone: return jsonify({'status': 'error', 'msg': '克隆不存在'})
+        session['clone_id'] = clone.id
+        return jsonify({'status': 'ok', 'redirect_url': '/core/select_group'})
+    except Exception as e:
+        logging.error(f"Error entering clone backend: {e}")
+        return jsonify({'status': 'error', 'msg': '服务器错误，请稍后再试'})
+
+
+@core_bp.route('/exit_clone_backend')
+@require_main_instance
+def exit_clone_backend():
+    """退出克隆后台，返回主机器人后台"""
+    if not session.get('logged_in'): return redirect('/core')
+    session.pop('clone_id', None)
+    session.pop('current_group_id', None)
+    return redirect('/core/bot_clones')
+
+
 @core_bp.route('/api/save_inactive_user_settings', methods=['POST'])
 def api_save_inactive_user_settings():
     """保存不活跃用户设置"""

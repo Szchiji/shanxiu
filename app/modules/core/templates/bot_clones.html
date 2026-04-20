@@ -85,6 +85,9 @@
                                 {% endif %}
                             </div>
                             <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-info text-white" onclick="enterCloneBackend({{ clone.id }})" title="进入后台">
+                                    <i class="fa-solid fa-arrow-right-to-bracket"></i> 进入后台
+                                </button>
                                 <button class="btn btn-sm btn-{{ 'warning' if clone.is_active else 'success' }}" onclick="toggleClone({{ clone.id }})" title="切换状态">
                                     <i class="fa-solid fa-{{ 'pause' if clone.is_active else 'play' }}"></i>
                                 </button>
@@ -279,6 +282,27 @@ function deleteClone(id) {
                 setTimeout(() => location.reload(), 1000);
         } else {
             alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast('网络错误', 'error');
+    });
+}
+
+function enterCloneBackend(id) {
+    if (!confirm('确定要进入该克隆机器人的后台吗？')) return;
+    fetch('/core/api/enter_clone_backend', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({clone_id: id})
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            window.location.href = result.redirect_url;
+        } else {
+            alert('❌ ' + (result.msg || '进入失败'));
         }
     })
     .catch(err => {

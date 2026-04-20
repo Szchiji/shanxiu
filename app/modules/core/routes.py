@@ -2200,6 +2200,7 @@ def api_save_scheduled_message():
         
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
+        item.message_thread_id = int(d['message_thread_id']) if d.get('message_thread_id') else None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2237,6 +2238,7 @@ def api_send_scheduled_message_now(message_id):
 
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
+        item.message_thread_id = int(d['message_thread_id']) if d.get('message_thread_id') else None
 
         db.session.commit()
 
@@ -2257,9 +2259,11 @@ def api_send_scheduled_message_now(message_id):
             'links': item.links,
             'delete_previous': item.delete_previous,
             'last_message_id': item.last_message_id,
+            'message_thread_id': item.message_thread_id,
         }
 
         async def _send_now():
+            message_thread_id = msg_snapshot.get('message_thread_id')
             # 如需删除上一条消息
             if msg_snapshot['delete_previous'] and msg_snapshot['last_message_id']:
                 try:
@@ -2292,6 +2296,8 @@ def api_send_scheduled_message_now(message_id):
                     message_id=tg_msg_id,
                     reply_markup=reply_markup
                 )
+                if message_thread_id:
+                    copy_kwargs['message_thread_id'] = message_thread_id
                 if content:
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
@@ -2302,7 +2308,8 @@ def api_send_scheduled_message_now(message_id):
                     photo=media_url,
                     caption=content,
                     parse_mode='HTML',
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif msg_snapshot['media_type'] == 'video' and media_url:
                 sent_message = await global_ptb_app.bot.send_video(
@@ -2310,7 +2317,8 @@ def api_send_scheduled_message_now(message_id):
                     video=media_url,
                     caption=content,
                     parse_mode='HTML',
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif content:
                 sent_message = await global_ptb_app.bot.send_message(
@@ -2318,7 +2326,8 @@ def api_send_scheduled_message_now(message_id):
                     text=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup,
-                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             return sent_message
 
@@ -4385,7 +4394,8 @@ async def check_scheduled_messages(context):
                             'content': msg.content,
                             'links': msg.links,
                             'delete_previous': msg.delete_previous,
-                            'last_message_id': msg.last_message_id
+                            'last_message_id': msg.last_message_id,
+                            'message_thread_id': msg.message_thread_id
                         })
                 
                 return messages_to_send
@@ -4410,6 +4420,7 @@ async def check_scheduled_messages(context):
     for msg_data in messages_to_send:
         try:
             chat_id = msg_data['chat_id']
+            message_thread_id = msg_data.get('message_thread_id')
             
             # 在发送前再次验证消息是否仍然激活（防止发送期间被停用或删除）
             is_still_active = await asyncio.get_running_loop().run_in_executor(
@@ -4451,6 +4462,8 @@ async def check_scheduled_messages(context):
                     message_id=tg_msg_id,
                     reply_markup=reply_markup
                 )
+                if message_thread_id:
+                    copy_kwargs['message_thread_id'] = message_thread_id
                 if content:
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
@@ -4461,7 +4474,8 @@ async def check_scheduled_messages(context):
                     photo=media_url,
                     caption=content,
                     parse_mode='HTML',
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif msg_data['media_type'] == 'video' and media_url:
                 sent_message = await context.bot.send_video(
@@ -4469,7 +4483,8 @@ async def check_scheduled_messages(context):
                     video=media_url,
                     caption=content,
                     parse_mode='HTML',
-                    reply_markup=reply_markup
+                    reply_markup=reply_markup,
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif content:
                 sent_message = await context.bot.send_message(
@@ -4477,7 +4492,8 @@ async def check_scheduled_messages(context):
                     text=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup,
-                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             
             # 更新发送时间和消息ID
@@ -4498,6 +4514,14 @@ async def check_scheduled_messages(context):
                 
         except Exception as e:
             print(f"Error sending scheduled message: {e}")
+            # 更新 last_sent_at 以防止立即重试失败的消息
+            def _update_failed(msg_id):
+                with global_flask_app.app_context():
+                    scheduled_msg = ScheduledMessage.query.get(msg_id)
+                    if scheduled_msg and scheduled_msg.is_active:
+                        scheduled_msg.last_sent_at = get_beijing_now()
+                        db.session.commit()
+            await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers
 

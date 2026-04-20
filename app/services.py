@@ -1,5 +1,6 @@
 from . import db
 import json
+import re
 import bleach
 
 # Telegram-supported HTML tags
@@ -19,6 +20,37 @@ def _telegram_attributes(tag, name, value):
     if tag == 'tg-emoji' and name == 'emoji-id':
         return True
     return False
+
+
+def _strip_bare_spans(text):
+    """
+    Remove bare <span> tags (those without class="tg-spoiler") while keeping
+    their text content.  <span class="tg-spoiler"> … </span> pairs are left
+    intact.  Uses a simple stack so nested spans are handled correctly.
+    """
+    _SPAN_RE = re.compile(r'(<span\s+class="tg-spoiler"[^>]*>|<span\b[^>]*>|</span>)')
+    parts = _SPAN_RE.split(text)
+    result = []
+    stack = []  # tracks 'spoiler' or 'bare' for each open <span>
+
+    for part in parts:
+        if part == '<span class="tg-spoiler">':
+            stack.append('spoiler')
+            result.append(part)
+        elif part.startswith('<span'):
+            # Any other <span …> variant (bare or with a non-tg-spoiler class)
+            stack.append('bare')
+            # intentionally not appended — tag is stripped
+        elif part == '</span>':
+            if stack:
+                kind = stack.pop()
+                if kind == 'spoiler':
+                    result.append('</span>')
+                # else bare — closing tag is also stripped
+        else:
+            result.append(part)
+
+    return ''.join(result)
 
 
 def sanitize_html_for_telegram(text):
@@ -41,10 +73,14 @@ def sanitize_html_for_telegram(text):
     if not text:
         return text
 
-    return bleach.clean(
+    cleaned = bleach.clean(
         text,
         tags=_TELEGRAM_ALLOWED_TAGS,
         attributes=_telegram_attributes,
         strip=True
     )
+    # bleach keeps <span> tags whose attributes were stripped (e.g. a span with
+    # a non-tg-spoiler class becomes a bare <span>).  Telegram rejects any
+    # <span> that does not carry class="tg-spoiler", so remove them here.
+    return _strip_bare_spans(cleaned)
 

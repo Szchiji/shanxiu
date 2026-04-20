@@ -2132,6 +2132,128 @@ def api_save_scheduled_message():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+@core_bp.route('/api/send_scheduled_message_now/<int:message_id>', methods=['POST'])
+def api_send_scheduled_message_now(message_id):
+    """保存并立即发送定时消息"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d: return jsonify({'status':'error','msg':'Missing request body'})
+
+    group_id = d.get('group_id')
+    if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    try:
+        item = ScheduledMessage.query.get(message_id)
+        if not item: return jsonify({'status':'error','msg':'Message not found'})
+        if item.group_id != group_id: return jsonify({'status':'error','msg':'Permission denied'})
+
+        # 更新消息内容（与保存逻辑相同）
+        item.media_type = d.get('media_type', 'text')
+        item.media_url = d.get('media_url', '').strip() or None
+        item.content = d.get('content', '').strip() or None
+        item.links = d.get('links', '[]')
+        item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
+        item.delete_previous = d.get('delete_previous', False)
+
+        start_time_str = d.get('start_time')
+        stop_time_str = d.get('stop_time')
+        item.start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
+        item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
+
+        item.remark = d.get('remark', '').strip() or None
+        item.auto_pin = bool(d.get('auto_pin', False))
+
+        db.session.commit()
+
+        # 获取群组 chat_id
+        group = item.group
+        if not group or not group.chat_id:
+            return jsonify({'status':'error','msg':'Group not found or missing chat_id'})
+
+        if not global_ptb_app or not global_bot_loop:
+            return jsonify({'status':'error','msg':'Bot not initialized'})
+
+        # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
+        chat_id = group.chat_id
+        msg_snapshot = {
+            'media_type': item.media_type,
+            'media_url': item.media_url,
+            'content': item.content,
+            'links': item.links,
+            'delete_previous': item.delete_previous,
+            'last_message_id': item.last_message_id,
+        }
+
+        async def _send_now():
+            # 如需删除上一条消息
+            if msg_snapshot['delete_previous'] and msg_snapshot['last_message_id']:
+                try:
+                    await global_ptb_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=msg_snapshot['last_message_id']
+                    )
+                except Exception:
+                    pass
+
+            # 构建内联键盘
+            buttons = []
+            try:
+                links = json.loads(msg_snapshot['links'] or '[]')
+                buttons = build_inline_keyboard_from_links(links)
+            except Exception:
+                pass
+
+            reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+            content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
+
+            sent_message = None
+            if msg_snapshot['media_type'] == 'image' and msg_snapshot['media_url']:
+                sent_message = await global_ptb_app.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=msg_snapshot['media_url'],
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif msg_snapshot['media_type'] == 'video' and msg_snapshot['media_url']:
+                sent_message = await global_ptb_app.bot.send_video(
+                    chat_id=chat_id,
+                    video=msg_snapshot['media_url'],
+                    caption=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            elif content:
+                sent_message = await global_ptb_app.bot.send_message(
+                    chat_id=chat_id,
+                    text=content,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
+            return sent_message
+
+        future = asyncio.run_coroutine_threadsafe(_send_now(), global_bot_loop)
+        try:
+            sent_message = future.result(timeout=30)
+        except TimeoutError:
+            return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
+        except Exception as send_err:
+            print(f"Error sending scheduled message now: {send_err}", flush=True)
+            return jsonify({'status':'error','msg':'消息发送失败，请检查机器人状态'})
+
+        # 更新发送时间，防止定时任务重复发送
+        if sent_message:
+            item.last_sent_at = get_beijing_now()
+            item.last_message_id = sent_message.message_id
+            db.session.commit()
+
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in send_scheduled_message_now: {e}", flush=True)
+        return jsonify({'status':'error','msg':'操作失败，请稍后重试'})
+
 @core_bp.route('/api/toggle_scheduled_message', methods=['POST'])
 def api_toggle_scheduled_message():
     """切换定时消息状态"""

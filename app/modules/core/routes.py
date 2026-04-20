@@ -2318,30 +2318,28 @@ def api_send_scheduled_message_now(message_id):
                 try:
                     sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    _err_lower = str(copy_err).lower()
-                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
-                        # Fallback 1: forward_message (shows "Forwarded from" header)
-                        fwd_kwargs = dict(
+                    print(f"⚠️ copy_message 失败，尝试 forward_message: {copy_err}", flush=True)
+                    # Fallback 1: forward_message (shows "Forwarded from" header)
+                    fwd_kwargs = dict(
+                        chat_id=chat_id,
+                        from_chat_id=tg_from_chat,
+                        message_id=tg_msg_id,
+                    )
+                    if message_thread_id:
+                        fwd_kwargs['message_thread_id'] = message_thread_id
+                    try:
+                        sent_message = await ptb_app.bot.forward_message(**fwd_kwargs)
+                    except Exception as fwd_err:
+                        print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
+                        # Fallback 2: send link as text with preview
+                        fallback_text = f"{content}\n{media_url}" if content else media_url
+                        sent_message = await ptb_app.bot.send_message(
                             chat_id=chat_id,
-                            from_chat_id=tg_from_chat,
-                            message_id=tg_msg_id,
+                            text=fallback_text,
+                            parse_mode='HTML',
+                            reply_markup=reply_markup,
+                            **({'message_thread_id': message_thread_id} if message_thread_id else {})
                         )
-                        if message_thread_id:
-                            fwd_kwargs['message_thread_id'] = message_thread_id
-                        try:
-                            sent_message = await ptb_app.bot.forward_message(**fwd_kwargs)
-                        except Exception:
-                            # Fallback 2: send link as text with preview
-                            fallback_text = f"{content}\n{media_url}" if content else media_url
-                            sent_message = await ptb_app.bot.send_message(
-                                chat_id=chat_id,
-                                text=fallback_text,
-                                parse_mode='HTML',
-                                reply_markup=reply_markup,
-                                **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                            )
-                    else:
-                        raise
             elif msg_snapshot['media_type'] == 'image' and media_url:
                 sent_message = await ptb_app.bot.send_photo(
                     chat_id=chat_id,
@@ -4525,32 +4523,28 @@ async def check_scheduled_messages(context):
                 try:
                     sent_message = await context.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    _err_lower = str(copy_err).lower()
-                    if any(k in _err_lower for k in ('message to copy not found', 'chat not found', 'have no rights', 'bot is not a member', 'forbidden', 'not enough rights')):
-                        print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
-                        # Fallback 1: forward_message (shows "Forwarded from" header)
-                        fwd_kwargs = dict(
+                    print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
+                    # Fallback 1: forward_message (shows "Forwarded from" header)
+                    fwd_kwargs = dict(
+                        chat_id=chat_id,
+                        from_chat_id=tg_from_chat,
+                        message_id=tg_msg_id,
+                    )
+                    if message_thread_id:
+                        fwd_kwargs['message_thread_id'] = message_thread_id
+                    try:
+                        sent_message = await context.bot.forward_message(**fwd_kwargs)
+                    except Exception as fwd_err:
+                        print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
+                        # Fallback 2: send link as text with preview so recipients can open it
+                        fallback_text = f"{content}\n{media_url}" if content else media_url
+                        sent_message = await context.bot.send_message(
                             chat_id=chat_id,
-                            from_chat_id=tg_from_chat,
-                            message_id=tg_msg_id,
+                            text=fallback_text,
+                            parse_mode='HTML',
+                            reply_markup=reply_markup,
+                            **({'message_thread_id': message_thread_id} if message_thread_id else {})
                         )
-                        if message_thread_id:
-                            fwd_kwargs['message_thread_id'] = message_thread_id
-                        try:
-                            sent_message = await context.bot.forward_message(**fwd_kwargs)
-                        except Exception as fwd_err:
-                            print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
-                            # Fallback 2: send link as text with preview so recipients can open it
-                            fallback_text = f"{content}\n{media_url}" if content else media_url
-                            sent_message = await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=fallback_text,
-                                parse_mode='HTML',
-                                reply_markup=reply_markup,
-                                **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                            )
-                    else:
-                        raise
             elif msg_data['media_type'] == 'image' and media_url:
                 sent_message = await context.bot.send_photo(
                     chat_id=chat_id,

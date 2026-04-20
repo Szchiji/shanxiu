@@ -2301,7 +2301,9 @@ def api_send_scheduled_message_now(message_id):
             media_url = msg_snapshot['media_url']
             tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
             if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
-                # t.me link: use copy_message to forward content without "Forwarded from" header
+                # t.me link: try copy_message (no "Forwarded from" header) first;
+                # fall back to forward_message, then to a text message with link preview
+                # if the bot doesn't have access to the source channel.
                 copy_kwargs = dict(
                     chat_id=chat_id,
                     from_chat_id=tg_from_chat,
@@ -2313,7 +2315,32 @@ def api_send_scheduled_message_now(message_id):
                 if content:
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
-                sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
+                try:
+                    sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
+                except Exception as copy_err:
+                    if 'message to copy not found' in str(copy_err).lower():
+                        # Fallback 1: forward_message (shows "Forwarded from" header)
+                        fwd_kwargs = dict(
+                            chat_id=chat_id,
+                            from_chat_id=tg_from_chat,
+                            message_id=tg_msg_id,
+                        )
+                        if message_thread_id:
+                            fwd_kwargs['message_thread_id'] = message_thread_id
+                        try:
+                            sent_message = await ptb_app.bot.forward_message(**fwd_kwargs)
+                        except Exception:
+                            # Fallback 2: send link as text with preview
+                            fallback_text = f"{content}\n{media_url}" if content else media_url
+                            sent_message = await ptb_app.bot.send_message(
+                                chat_id=chat_id,
+                                text=fallback_text,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup,
+                                **({'message_thread_id': message_thread_id} if message_thread_id else {})
+                            )
+                    else:
+                        raise
             elif msg_snapshot['media_type'] == 'image' and media_url:
                 sent_message = await ptb_app.bot.send_photo(
                     chat_id=chat_id,
@@ -2350,9 +2377,6 @@ def api_send_scheduled_message_now(message_id):
             return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
         except Exception as send_err:
             print(f"Error sending scheduled message now: {send_err}", flush=True)
-            err_str = str(send_err)
-            if 'message to copy not found' in err_str.lower():
-                return jsonify({'status':'error','msg':'消息发送失败：媒体链接中的源消息已被删除，请重新设置媒体链接'})
             return jsonify({'status':'error','msg':f'消息发送失败：{send_err}'})
 
         # 更新发送时间，防止定时任务重复发送
@@ -4470,7 +4494,9 @@ async def check_scheduled_messages(context):
             tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
 
             if msg_data['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
-                # t.me link: use copy_message to forward content without "Forwarded from" header
+                # t.me link: try copy_message (no "Forwarded from" header) first;
+                # fall back to forward_message, then to a text message with link preview
+                # if the bot doesn't have access to the source channel.
                 copy_kwargs = dict(
                     chat_id=chat_id,
                     from_chat_id=tg_from_chat,
@@ -4482,7 +4508,34 @@ async def check_scheduled_messages(context):
                 if content:
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
-                sent_message = await context.bot.copy_message(**copy_kwargs)
+                try:
+                    sent_message = await context.bot.copy_message(**copy_kwargs)
+                except Exception as copy_err:
+                    if 'message to copy not found' in str(copy_err).lower():
+                        print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
+                        # Fallback 1: forward_message (shows "Forwarded from" header)
+                        fwd_kwargs = dict(
+                            chat_id=chat_id,
+                            from_chat_id=tg_from_chat,
+                            message_id=tg_msg_id,
+                        )
+                        if message_thread_id:
+                            fwd_kwargs['message_thread_id'] = message_thread_id
+                        try:
+                            sent_message = await context.bot.forward_message(**fwd_kwargs)
+                        except Exception as fwd_err:
+                            print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
+                            # Fallback 2: send link as text with preview so recipients can open it
+                            fallback_text = f"{content}\n{media_url}" if content else media_url
+                            sent_message = await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=fallback_text,
+                                parse_mode='HTML',
+                                reply_markup=reply_markup,
+                                **({'message_thread_id': message_thread_id} if message_thread_id else {})
+                            )
+                    else:
+                        raise
             elif msg_data['media_type'] == 'image' and media_url:
                 sent_message = await context.bot.send_photo(
                     chat_id=chat_id,
@@ -4528,30 +4581,18 @@ async def check_scheduled_messages(context):
                 print(f"✅ 定时消息已发送到群组 {chat_id}", flush=True)
                 
         except Exception as e:
-            err_str = str(e)
             print(f"Error sending scheduled message: {e}")
-            # 如果源消息已被删除（无法复制），自动停用该定时消息以避免无限重试
-            if 'message to copy not found' in err_str.lower():
-                def _deactivate_msg(msg_id):
-                    with global_flask_app.app_context():
-                        scheduled_msg = ScheduledMessage.query.get(msg_id)
-                        if scheduled_msg and scheduled_msg.is_active:
-                            scheduled_msg.is_active = False
+            # 更新 last_sent_at 以防止立即重试失败的消息
+            # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
+            # 使调度器下次仍能重试（直到成功发送）
+            def _update_failed(msg_id):
+                with global_flask_app.app_context():
+                    scheduled_msg = ScheduledMessage.query.get(msg_id)
+                    if scheduled_msg and scheduled_msg.is_active:
+                        if scheduled_msg.repeat_interval > 0:
+                            scheduled_msg.last_sent_at = get_beijing_now()
                             db.session.commit()
-                            print(f"⚠️ 定时消息 {msg_id} 已自动停用：源消息不存在 (media_url: {scheduled_msg.media_url})", flush=True)
-                await asyncio.get_running_loop().run_in_executor(None, _deactivate_msg, msg_data['id'])
-            else:
-                # 更新 last_sent_at 以防止立即重试失败的消息
-                # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
-                # 使调度器下次仍能重试（直到成功发送）
-                def _update_failed(msg_id):
-                    with global_flask_app.app_context():
-                        scheduled_msg = ScheduledMessage.query.get(msg_id)
-                        if scheduled_msg and scheduled_msg.is_active:
-                            if scheduled_msg.repeat_interval > 0:
-                                scheduled_msg.last_sent_at = get_beijing_now()
-                                db.session.commit()
-                await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
+            await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers
 

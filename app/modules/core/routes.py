@@ -4318,6 +4318,9 @@ async def check_scheduled_messages(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     def _sync_check():
         with global_flask_app.app_context():
             try:
@@ -4339,8 +4342,15 @@ async def check_scheduled_messages(context):
                     if not msg.group or not msg.group.is_active:
                         continue
                     
-                    if msg.group.clone_id is not None:
-                        continue
+                    # Only process groups belonging to the current bot instance
+                    if current_clone_id is None:
+                        # Main bot: only handle groups not associated with any clone
+                        if msg.group.clone_id is not None:
+                            continue
+                    else:
+                        # Clone bot: only handle groups for this clone
+                        if msg.group.clone_id != current_clone_id:
+                            continue
                     
                     # 检查模块是否启用
                     conf = get_group_conf(msg.group)
@@ -7141,6 +7151,9 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("clones", cmd_clones))
 
+    # Periodic jobs for clone bot
+    app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
+
 
 async def start_all_clone_bots(flask_app):
     """
@@ -9383,7 +9396,7 @@ async def on_message(update: Update, context):
             
             conf = get_group_conf(group)
             
-            # Award points for messages (if rule exists and user is registered)
+            # Award points for messages (if rule exists) - applies to all users
             # Skip if this message is a checkin or signin command to avoid double-counting
             _checkin_cmds = [c.strip() for c in conf.get('checkin_cmd', '打卡').split(',')]
             _is_checkin_msg = conf.get('checkin_open') and txt in _checkin_cmds
@@ -9397,33 +9410,31 @@ async def on_message(update: Update, context):
                 ).first()
                 
                 if message_rule:
-                    db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
-                    if db_user:
-                        user_points = UserPoints.query.filter_by(
-                            group_id=group.id,
-                            user_id=user.id
-                        ).first()
-                        
-                        if not user_points:
-                            user_points = UserPoints(
-                                group_id=group.id,
-                                user_id=user.id,
-                                points_balance=0
-                            )
-                            db.session.add(user_points)
-                        
-                        user_points.points_balance += message_rule.points_amount
-                        
-                        # Log the points transaction
-                        points_log = PointsLog(
+                    user_points = UserPoints.query.filter_by(
+                        group_id=group.id,
+                        user_id=user.id
+                    ).first()
+                    
+                    if not user_points:
+                        user_points = UserPoints(
                             group_id=group.id,
                             user_id=user.id,
-                            points_change=message_rule.points_amount,
-                            reason="发送消息",
-                            balance_after=user_points.points_balance
+                            points_balance=0
                         )
-                        db.session.add(points_log)
-                        db.session.commit()
+                        db.session.add(user_points)
+                    
+                    user_points.points_balance += message_rule.points_amount
+                    
+                    # Log the points transaction
+                    points_log = PointsLog(
+                        group_id=group.id,
+                        user_id=user.id,
+                        points_change=message_rule.points_amount,
+                        reason="发送消息",
+                        balance_after=user_points.points_balance
+                    )
+                    db.session.add(points_log)
+                    db.session.commit()
             
             # 🆕 Track messages for active lotteries (optimized for large groups)
             # ✅ Track ALL group members, not just verified users (unverified users can participate)

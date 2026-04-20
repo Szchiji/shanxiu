@@ -758,4 +758,7 @@ DEFAULT_SYSTEM = {
     "signin_del_time": 30,
     "msg_signin_success": "🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>",
     "msg_repeat_signin": "🔄 <b>今日已签到，当前余额：{余额}</b>",
+    # 积分兑换频道商城
+    "exchange_channel_id": "",       # 展示商品列表的频道ID
+    "exchange_catalog_msg_id": None, # 已发布的商品目录消息ID（用于编辑更新）
 }

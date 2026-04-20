@@ -4523,7 +4523,7 @@ async def check_scheduled_messages(context):
                 try:
                     sent_message = await context.bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
-                    print(f"⚠️ copy_message 失败 (机器人无权访问源频道)，尝试 forward_message: {copy_err}", flush=True)
+                    print(f"⚠️ copy_message 失败，尝试 forward_message: {copy_err}", flush=True)
                     # Fallback 1: forward_message (shows "Forwarded from" header)
                     fwd_kwargs = dict(
                         chat_id=chat_id,

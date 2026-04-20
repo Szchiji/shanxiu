@@ -2247,8 +2247,20 @@ def api_send_scheduled_message_now(message_id):
         if not group or not group.chat_id:
             return jsonify({'status':'error','msg':'Group not found or missing chat_id'})
 
-        if not global_ptb_app or not global_bot_loop:
+        if not global_bot_loop:
             return jsonify({'status':'error','msg':'Bot not initialized'})
+
+        # Select the correct bot: clone bot for clone groups, main bot otherwise
+        group_clone_id = group.clone_id
+        if group_clone_id is not None:
+            clone_info = bot_clone_manager.active_clones.get(group_clone_id)
+            if not clone_info:
+                return jsonify({'status':'error','msg':'Clone bot not running'})
+            ptb_app = clone_info['app']
+        else:
+            if not global_ptb_app:
+                return jsonify({'status':'error','msg':'Bot not initialized'})
+            ptb_app = global_ptb_app
 
         # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
         chat_id = group.chat_id
@@ -2267,7 +2279,7 @@ def api_send_scheduled_message_now(message_id):
             # 如需删除上一条消息
             if msg_snapshot['delete_previous'] and msg_snapshot['last_message_id']:
                 try:
-                    await global_ptb_app.bot.delete_message(
+                    await ptb_app.bot.delete_message(
                         chat_id=chat_id,
                         message_id=msg_snapshot['last_message_id']
                     )
@@ -2301,9 +2313,9 @@ def api_send_scheduled_message_now(message_id):
                 if content:
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
-                sent_message = await global_ptb_app.bot.copy_message(**copy_kwargs)
+                sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
             elif msg_snapshot['media_type'] == 'image' and media_url:
-                sent_message = await global_ptb_app.bot.send_photo(
+                sent_message = await ptb_app.bot.send_photo(
                     chat_id=chat_id,
                     photo=media_url,
                     caption=content,
@@ -2312,7 +2324,7 @@ def api_send_scheduled_message_now(message_id):
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif msg_snapshot['media_type'] == 'video' and media_url:
-                sent_message = await global_ptb_app.bot.send_video(
+                sent_message = await ptb_app.bot.send_video(
                     chat_id=chat_id,
                     video=media_url,
                     caption=content,
@@ -2321,7 +2333,7 @@ def api_send_scheduled_message_now(message_id):
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif content:
-                sent_message = await global_ptb_app.bot.send_message(
+                sent_message = await ptb_app.bot.send_message(
                     chat_id=chat_id,
                     text=content,
                     parse_mode='HTML',

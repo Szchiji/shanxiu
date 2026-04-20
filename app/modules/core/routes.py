@@ -8638,6 +8638,22 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
         print(f"Error displaying bottom buttons: {e}")
         return None
 
+def _is_clone_admin(clone_id: int, user_id: int) -> bool:
+    """Check if user_id is an admin (owner or in admin_user_ids) of the given BotClone."""
+    with global_flask_app.app_context():
+        clone = BotClone.query.get(clone_id)
+        if not clone:
+            return False
+        if clone.owner_user_id and clone.owner_user_id == user_id:
+            return True
+        try:
+            admin_ids = json.loads(clone.admin_user_ids or '[]')
+            return user_id in admin_ids
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"⚠️ Failed to parse admin_user_ids for clone {clone_id}: {e}")
+            return False
+
+
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
@@ -8659,21 +8675,9 @@ async def cmd_start(update: Update, context):
 
     if not is_admin_user and clone_id:
         # Check if user is an admin of this clone bot
-        def _check_clone_admin():
-            with global_flask_app.app_context():
-                clone = BotClone.query.get(clone_id)
-                if not clone:
-                    return False
-                # Check owner
-                if clone.owner_user_id and clone.owner_user_id == user_id:
-                    return True
-                # Check admin_user_ids list
-                try:
-                    admin_ids = json.loads(clone.admin_user_ids or '[]')
-                    return user_id in admin_ids
-                except (json.JSONDecodeError, TypeError):
-                    return False
-        is_admin_user = await asyncio.get_running_loop().run_in_executor(None, _check_clone_admin)
+        is_admin_user = await asyncio.get_running_loop().run_in_executor(
+            None, _is_clone_admin, clone_id, user_id
+        )
 
     # Handle private chat only
     if is_admin_user:
@@ -9136,19 +9140,9 @@ async def on_message(update: Update, context):
             clone_id = context.application.bot_data.get('clone_id')
             is_clone_admin = False
             if clone_id and user.id != admin_id and txt.isdigit() and len(txt) == 6:
-                def _check_clone_admin_msg():
-                    with global_flask_app.app_context():
-                        clone = BotClone.query.get(clone_id)
-                        if not clone:
-                            return False
-                        if clone.owner_user_id and clone.owner_user_id == user.id:
-                            return True
-                        try:
-                            admin_ids = json.loads(clone.admin_user_ids or '[]')
-                            return user.id in admin_ids
-                        except (json.JSONDecodeError, TypeError):
-                            return False
-                is_clone_admin = await asyncio.get_running_loop().run_in_executor(None, _check_clone_admin_msg)
+                is_clone_admin = await asyncio.get_running_loop().run_in_executor(
+                    None, _is_clone_admin, clone_id, user.id
+                )
 
             if (user.id == admin_id or is_clone_admin) and txt.isdigit() and len(txt) == 6:
                 # Try to verify the code using constant-time comparison

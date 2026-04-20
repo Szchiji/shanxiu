@@ -47,7 +47,7 @@ CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
 MUTE_REASON_SPAM = '垃圾信息'  # Spam
 
-def get_clone_webhook_url(clone_id: int, stored_url: str = None) -> str:
+def get_clone_webhook_url(clone_id: int, stored_url=None):
     """
     获取克隆机器人的 Webhook URL。
     如果数据库中已存储 webhook_url，则直接使用；

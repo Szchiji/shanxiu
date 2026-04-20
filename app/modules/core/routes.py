@@ -1201,6 +1201,7 @@ def api_export_config(gid):
                 'start_time': sm.start_time.isoformat() if sm.start_time else None,
                 'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
                 'remark': sm.remark,
+                'auto_pin': getattr(sm, 'auto_pin', False),
                 'is_active': sm.is_active
             }
             for sm in ScheduledMessage.query.filter_by(group_id=gid).all()
@@ -1274,6 +1275,27 @@ def api_import_config(gid):
                         is_active=ar_data.get('is_active', True)
                     )
                     db.session.add(ar)
+        
+        # Import scheduled_messages (optional)
+        if 'scheduled_messages' in config and isinstance(config['scheduled_messages'], list):
+            for sm_data in config['scheduled_messages']:
+                if not isinstance(sm_data, dict):
+                    continue
+                sm = ScheduledMessage(
+                    group_id=gid,
+                    media_type=sm_data.get('media_type', 'text'),
+                    media_url=sm_data.get('media_url'),
+                    content=sm_data.get('content'),
+                    links=json.dumps(sm_data.get('links', []), ensure_ascii=False),
+                    repeat_interval=sm_data.get('repeat_interval', 0),
+                    delete_previous=sm_data.get('delete_previous', False),
+                    start_time=datetime.fromisoformat(sm_data['start_time']) if sm_data.get('start_time') else None,
+                    stop_time=datetime.fromisoformat(sm_data['stop_time']) if sm_data.get('stop_time') else None,
+                    remark=sm_data.get('remark'),
+                    auto_pin=sm_data.get('auto_pin', False),
+                    is_active=sm_data.get('is_active', True)
+                )
+                db.session.add(sm)
         
         # Import points_rules (optional)
         if 'points_rules' in config and isinstance(config['points_rules'], list):
@@ -2102,6 +2124,7 @@ def api_save_scheduled_message():
         item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
         
         item.remark = d.get('remark', '').strip() or None
+        item.auto_pin = bool(d.get('auto_pin', False))
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2148,6 +2171,16 @@ def api_export_scheduled_messages(group_id):
     """导出定时消息为XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     
+    def format_repeat_interval(minutes):
+        if not minutes or minutes == 0:
+            return '不重复'
+        if minutes % (24 * 60) == 0:
+            return f'每{minutes // (24 * 60)}天'
+        elif minutes % 60 == 0:
+            return f'每{minutes // 60}小时'
+        else:
+            return f'每{minutes}分钟'
+
     try:
         scheduled_messages = ScheduledMessage.query.filter_by(group_id=group_id).all()
         
@@ -2162,7 +2195,7 @@ def api_export_scheduled_messages(group_id):
         header_alignment = Alignment(horizontal="center", vertical="center")
         
         # Header row
-        headers = ['消息类型', '多媒体链接', '消息内容', '链接按钮', '间隔(分钟)', '删除上一条', '开始时间', '停止时间', '备注', '状态']
+        headers = ['规则编号', '发送开始时间', '发送结束时间', '重复规则', '消息内容类型', '图片或视频链接', '消息内容', '附加按钮', '按钮分页', '删除上一条', '备注', '是否自动置顶', '是否启用']
         for col_num, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_num)
             cell.value = header
@@ -2172,16 +2205,19 @@ def api_export_scheduled_messages(group_id):
         
         # Data rows
         for row_num, sm in enumerate(scheduled_messages, 2):
-            ws.cell(row=row_num, column=1, value=sm.media_type or 'text')
-            ws.cell(row=row_num, column=2, value=sm.media_url or '')
-            ws.cell(row=row_num, column=3, value=sm.content or '')
-            ws.cell(row=row_num, column=4, value=sm.links or '[]')
-            ws.cell(row=row_num, column=5, value=sm.repeat_interval or 0)
-            ws.cell(row=row_num, column=6, value='是' if sm.delete_previous else '否')
-            ws.cell(row=row_num, column=7, value=sm.start_time.strftime('%Y-%m-%d %H:%M:%S') if sm.start_time else '')
-            ws.cell(row=row_num, column=8, value=sm.stop_time.strftime('%Y-%m-%d %H:%M:%S') if sm.stop_time else '')
-            ws.cell(row=row_num, column=9, value=sm.remark or '')
-            ws.cell(row=row_num, column=10, value='启用' if sm.is_active else '暂停')
+            ws.cell(row=row_num, column=1, value=sm.id)
+            ws.cell(row=row_num, column=2, value=sm.start_time.strftime('%Y-%m-%d %H:%M:%S') if sm.start_time else '')
+            ws.cell(row=row_num, column=3, value=sm.stop_time.strftime('%Y-%m-%d %H:%M:%S') if sm.stop_time else '')
+            ws.cell(row=row_num, column=4, value=format_repeat_interval(sm.repeat_interval))
+            ws.cell(row=row_num, column=5, value=sm.media_type or 'text')
+            ws.cell(row=row_num, column=6, value=sm.media_url or '')
+            ws.cell(row=row_num, column=7, value=sm.content or '')
+            ws.cell(row=row_num, column=8, value=sm.links or '[]')
+            ws.cell(row=row_num, column=9, value='不分页')
+            ws.cell(row=row_num, column=10, value='是' if sm.delete_previous else '否')
+            ws.cell(row=row_num, column=11, value=sm.remark or '')
+            ws.cell(row=row_num, column=12, value='是' if getattr(sm, 'auto_pin', False) else '否')
+            ws.cell(row=row_num, column=13, value='是' if sm.is_active else '否')
         
         # Auto-adjust column widths
         for column in ws.columns:
@@ -2218,6 +2254,29 @@ def api_export_scheduled_messages(group_id):
 def api_import_scheduled_messages():
     """导入定时消息从XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+
+    def parse_repeat_interval(text):
+        """将重复规则文字转换为分钟数"""
+        if not text or str(text).strip() in ('不重复', '0', ''):
+            return 0
+        text = str(text).strip()
+        m = re.search(r'\d+', text)
+        if not m:
+            try:
+                return int(text)
+            except (ValueError, TypeError):
+                return 0
+        n = int(m.group())
+        if '天' in text:
+            return n * 24 * 60
+        elif '小时' in text:
+            return n * 60
+        elif '分钟' in text:
+            return n
+        try:
+            return int(text)
+        except (ValueError, TypeError):
+            return 0
     
     try:
         d = request.json
@@ -2240,54 +2299,78 @@ def api_import_scheduled_messages():
         xlsx_bytes = base64.b64decode(xlsx_content)
         wb = load_workbook(BytesIO(xlsx_bytes))
         ws = wb.active
+
+        # Detect format by reading header row
+        # New format: 规则编号, 发送开始时间, 发送结束时间, 重复规则, 消息内容类型, 图片或视频链接, 消息内容, 附加按钮, 按钮分页, 删除上一条, 备注, 是否自动置顶, 是否启用
+        # Old format: 消息类型, 多媒体链接, 消息内容, 链接按钮, 间隔(分钟), 删除上一条, 开始时间, 停止时间, 备注, 状态
+        header_row = [str(c.value or '').strip() for c in ws[1]]
+        is_new_format = len(header_row) >= 1 and header_row[0] in ('规则编号', 'ID', 'id')
         
         imported_count = 0
         skipped_count = 0
         
         # Skip header row
         for row in ws.iter_rows(min_row=2, values_only=True):
-            if not row:
+            if not row or all(v is None for v in row):
                 continue
             
             try:
-                # Create new scheduled message
                 item = ScheduledMessage(group_id=group_id)
-                item.media_type = row[0] if row[0] else 'text'
-                item.media_url = row[1] if len(row) > 1 else None
-                item.content = row[2] if len(row) > 2 else None
-                item.links = row[3] if len(row) > 3 and row[3] else '[]'
-                
-                # Handle repeat_interval - only convert to int if it's a valid number
-                item.repeat_interval = 0  # Default value
-                if len(row) > 4 and row[4]:
-                    try:
-                        item.repeat_interval = int(row[4])
-                    except (ValueError, TypeError):
-                        pass  # Keep default value of 0
-                    
-                item.delete_previous = (row[5] == '是') if len(row) > 5 and row[5] else False
-                
-                # Parse dates
-                if len(row) > 6 and row[6]:
-                    try:
-                        if isinstance(row[6], str):
-                            item.start_time = datetime.strptime(row[6], '%Y-%m-%d %H:%M:%S')
-                        else:
-                            item.start_time = row[6]
-                    except:
-                        item.start_time = None
-                
-                if len(row) > 7 and row[7]:
-                    try:
-                        if isinstance(row[7], str):
-                            item.stop_time = datetime.strptime(row[7], '%Y-%m-%d %H:%M:%S')
-                        else:
-                            item.stop_time = row[7]
-                    except:
-                        item.stop_time = None
-                
-                item.remark = row[8] if len(row) > 8 else None
-                item.is_active = (row[9] == '启用') if len(row) > 9 and row[9] else True
+
+                if is_new_format:
+                    # New format columns (0-indexed):
+                    # 0:规则编号, 1:发送开始时间, 2:发送结束时间, 3:重复规则,
+                    # 4:消息内容类型, 5:图片或视频链接, 6:消息内容, 7:附加按钮,
+                    # 8:按钮分页(skip), 9:删除上一条, 10:备注, 11:是否自动置顶, 12:是否启用
+                    def _parse_dt(val):
+                        if not val:
+                            return None
+                        if isinstance(val, str):
+                            try:
+                                return datetime.strptime(val.strip(), '%Y-%m-%d %H:%M:%S')
+                            except ValueError:
+                                return None
+                        return val
+
+                    item.start_time = _parse_dt(row[1] if len(row) > 1 else None)
+                    item.stop_time = _parse_dt(row[2] if len(row) > 2 else None)
+                    item.repeat_interval = parse_repeat_interval(row[3] if len(row) > 3 else None)
+                    item.media_type = str(row[4]).strip() if len(row) > 4 and row[4] else 'text'
+                    item.media_url = str(row[5]).strip() if len(row) > 5 and row[5] else None
+                    item.content = row[6] if len(row) > 6 else None
+                    item.links = str(row[7]).strip() if len(row) > 7 and row[7] else '[]'
+                    # column 8: 按钮分页 — skip
+                    item.delete_previous = (str(row[9]).strip() == '是') if len(row) > 9 and row[9] else False
+                    item.remark = str(row[10]).strip() if len(row) > 10 and row[10] else None
+                    item.auto_pin = (str(row[11]).strip() == '是') if len(row) > 11 and row[11] else False
+                    item.is_active = (str(row[12]).strip() == '是') if len(row) > 12 and row[12] else True
+                else:
+                    # Old format columns (0-indexed):
+                    # 0:消息类型, 1:多媒体链接, 2:消息内容, 3:链接按钮, 4:间隔(分钟),
+                    # 5:删除上一条, 6:开始时间, 7:停止时间, 8:备注, 9:状态
+                    item.media_type = str(row[0]).strip() if row[0] else 'text'
+                    item.media_url = row[1] if len(row) > 1 else None
+                    item.content = row[2] if len(row) > 2 else None
+                    item.links = str(row[3]).strip() if len(row) > 3 and row[3] else '[]'
+                    item.repeat_interval = 0
+                    if len(row) > 4 and row[4]:
+                        try:
+                            item.repeat_interval = int(row[4])
+                        except (ValueError, TypeError):
+                            pass
+                    item.delete_previous = (str(row[5]).strip() == '是') if len(row) > 5 and row[5] else False
+                    if len(row) > 6 and row[6]:
+                        try:
+                            item.start_time = datetime.strptime(str(row[6]).strip(), '%Y-%m-%d %H:%M:%S') if isinstance(row[6], str) else row[6]
+                        except Exception:
+                            item.start_time = None
+                    if len(row) > 7 and row[7]:
+                        try:
+                            item.stop_time = datetime.strptime(str(row[7]).strip(), '%Y-%m-%d %H:%M:%S') if isinstance(row[7], str) else row[7]
+                        except Exception:
+                            item.stop_time = None
+                    item.remark = row[8] if len(row) > 8 else None
+                    item.is_active = (str(row[9]).strip() == '启用') if len(row) > 9 and row[9] else True
                 
                 db.session.add(item)
                 imported_count += 1

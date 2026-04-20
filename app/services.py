@@ -1,6 +1,7 @@
 from . import db
 import json
 import re
+import html as _html
 
 def sanitize_html_for_telegram(text):
     """
@@ -22,6 +23,14 @@ def sanitize_html_for_telegram(text):
     if not text:
         return text
     
+    def _process_text(segment):
+        """Decode HTML entities in a text segment, then re-escape Telegram-special chars."""
+        if not segment:
+            return segment
+        decoded = _html.unescape(segment)
+        decoded = decoded.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return decoded
+
     # List of allowed tags (without attributes, except special cases)
     allowed_tags = {
         'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del',
@@ -40,7 +49,7 @@ def sanitize_html_for_telegram(text):
     
     for match in re.finditer(tag_pattern, text):
         # Add text before this tag
-        result_parts.append(text[last_end:match.start()])
+        result_parts.append(_process_text(text[last_end:match.start()]))
         last_end = match.end()
         
         is_closing = match.group(1)  # '/' if closing tag, '' if opening
@@ -96,6 +105,6 @@ def sanitize_html_for_telegram(text):
         # (do nothing, just skip the tag)
     
     # Add remaining text after last tag
-    result_parts.append(text[last_end:])
+    result_parts.append(_process_text(text[last_end:]))
     
     return ''.join(result_parts)

@@ -86,6 +86,7 @@ class ScheduledMessage(db.Model):
     stop_time = db.Column(db.DateTime, nullable=True)  # 停止时间
     remark = db.Column(db.Text, nullable=True)  # 备注
     auto_pin = db.Column(db.Boolean, default=False)  # 是否自动置顶
+    message_thread_id = db.Column(db.Integer, nullable=True)  # 话题ID (用于论坛话题群)
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
     created_at = db.Column(db.DateTime, default=datetime.now)

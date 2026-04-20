@@ -49,6 +49,7 @@ def run_migrations():
         "ALTER TABLE scheduled_messages ADD COLUMN stop_time TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN remark TEXT",
         "ALTER TABLE scheduled_messages ADD COLUMN auto_pin BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
         "ALTER TABLE scheduled_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
         "ALTER TABLE scheduled_messages ADD COLUMN last_sent_at TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",

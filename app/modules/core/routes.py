@@ -6921,7 +6921,10 @@ def setup_clone_handlers(app, flask_app, clone_id):
     """
     # Note: Clone bots use the same handlers as the main bot
     # But we need to add permission checks for clone_id
-    
+
+    # Store clone_id in bot_data so handlers can identify which clone is running
+    app.bot_data['clone_id'] = clone_id
+
     # Add chat member handler
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
@@ -8635,6 +8638,22 @@ async def display_bottom_buttons(chat_id, context, use_reply_keyboard=False):
         print(f"Error displaying bottom buttons: {e}")
         return None
 
+def _is_clone_admin(clone_id: int, user_id: int) -> bool:
+    """Check if user_id is an admin (owner or in admin_user_ids) of the given BotClone."""
+    with global_flask_app.app_context():
+        clone = BotClone.query.get(clone_id)
+        if not clone:
+            return False
+        if clone.owner_user_id and clone.owner_user_id == user_id:
+            return True
+        try:
+            admin_ids = json.loads(clone.admin_user_ids or '[]')
+            return user_id in admin_ids
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"⚠️ Failed to parse admin_user_ids for clone {clone_id}: {e}")
+            return False
+
+
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
@@ -8648,8 +8667,20 @@ async def cmd_start(update: Update, context):
         print(f"⚠️ /start 调试: 在群组中使用 /start 命令，忽略")
         return
     
+    # Check if this is a clone bot by looking up clone_id in bot_data
+    clone_id = context.application.bot_data.get('clone_id')
+
+    # Determine if the user is an authorized admin (global or clone-specific)
+    is_admin_user = (user_id == admin_id)
+
+    if not is_admin_user and clone_id:
+        # Check if user is an admin of this clone bot
+        is_admin_user = await asyncio.get_running_loop().run_in_executor(
+            None, _is_clone_admin, clone_id, user_id
+        )
+
     # Handle private chat only
-    if user_id == admin_id:
+    if is_admin_user:
         # Create authentication session for admin
         def _create_auth_session():
             with global_flask_app.app_context():
@@ -9105,7 +9136,15 @@ async def on_message(update: Update, context):
                 # Continue to verification code check even if forward message handling fails
             
             admin_id = safe_int(os.getenv('ADMIN_ID', 0))
-            if user.id == admin_id and txt.isdigit() and len(txt) == 6:
+            # Also allow clone bot admins to submit verification codes
+            clone_id = context.application.bot_data.get('clone_id')
+            is_clone_admin = False
+            if clone_id and user.id != admin_id and txt.isdigit() and len(txt) == 6:
+                is_clone_admin = await asyncio.get_running_loop().run_in_executor(
+                    None, _is_clone_admin, clone_id, user.id
+                )
+
+            if (user.id == admin_id or is_clone_admin) and txt.isdigit() and len(txt) == 6:
                 # Try to verify the code using constant-time comparison
                 def _verify_code():
                     with global_flask_app.app_context():

@@ -5,12 +5,12 @@
 {# 标准模态框样式 - Standard Modal Styles #}
 {% macro modal_styles() %}
 <style>
-    /* Unified Modal Styles - Light Theme */
+    /* Unified Modal Styles */
     .modal-content {
         border-radius: 15px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--border-color);
         box-shadow: 0 15px 40px rgba(0, 0, 0, 0.12);
-        background: #ffffff;
+        background: var(--bg-card);
     }
     
     .modal-header {
@@ -37,13 +37,13 @@
     
     .modal-body {
         padding: 1.5rem;
-        color: #475569;
+        color: var(--text-secondary);
     }
     
     .modal-footer {
-        border-top: 1px solid #e2e8f0;
+        border-top: 1px solid var(--border-color);
         padding: 1rem 1.5rem;
-        background: #f8fafc;
+        background: var(--bg-secondary);
         border-radius: 0 0 15px 15px;
     }
     

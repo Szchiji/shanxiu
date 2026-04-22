@@ -3132,23 +3132,33 @@ def _build_exchange_catalog_sync(group_id):
     ).order_by(PointsExchangeItem.id).all()
 
     if not items:
-        return "🛒 <b>积分兑换商城</b>\n\n暂无可兑换商品，敬请期待。", []
+        return (
+            "🏪 <b>积分兑换商城</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "🕐 暂无可兑换商品，敬请期待！"
+        ), []
 
-    lines = ["🛒 <b>积分兑换商城</b>\n"]
+    lines = [
+        "🏪 <b>积分兑换商城</b>",
+        "━━━━━━━━━━━━━━━━",
+        "",
+    ]
     buttons = []
-    for it in items:
-        stock_str = f"库存: {it.stock}" if it.stock is not None else "库存: 不限"
-        lines.append(
-            f"🔹 <b>{it.item_name}</b>\n"
-            f"   💰 所需积分: <b>{it.points_cost}</b>  |  {stock_str}\n"
-            + (f"   📝 {it.item_description}\n" if it.item_description else "")
-        )
+    for idx, it in enumerate(items, 1):
+        stock_str = f"<b>{it.stock}</b> 件" if it.stock is not None else "<b>不限量</b>"
+        block = [f"<b>{idx}. {it.item_name}</b>"]
+        block.append(f"   💎 积分: <b>{it.points_cost}</b>  ·  📦 库存: {stock_str}")
+        if it.item_description:
+            block.append(f"   📝 {it.item_description}")
+        lines.extend(block)
+        lines.append("")
         buttons.append([InlineKeyboardButton(
-            f"🛍️ 兑换「{it.item_name}」({it.points_cost}积分)",
+            f"🛒 {idx}. {it.item_name}（{it.points_cost} 积分）",
             callback_data=f"exchange_redeem_{it.id}_{group_id}"
         )])
 
-    lines.append("\n👆 点击对应按钮即可兑换，无需手动输入。")
+    lines.append("━━━━━━━━━━━━━━━━")
+    lines.append("👇 点击下方按钮一键兑换，积分不足将提示余额。")
     return "\n".join(lines), buttons
 
 
@@ -3263,15 +3273,21 @@ def _format_tg_user_display(tg_user) -> str:
 
 def _format_item_announcement_text(item):
     """格式化单个商品的上架公告文本。"""
-    stock_str = f"{item.stock}" if item.stock is not None else "不限"
+    stock_str = f"<b>{item.stock}</b> 件" if item.stock is not None else "<b>不限量</b>"
     lines = [
-        f"🆕 <b>新品上架！</b>\n",
+        "🆕 <b>新品上架！</b>",
+        "━━━━━━━━━━━━━━━━",
+        "",
         f"🎁 <b>{item.item_name}</b>",
-        f"💰 所需积分: <b>{item.points_cost}</b>  |  库存: <b>{stock_str}</b>",
+        "",
+        f"💎 所需积分: <b>{item.points_cost}</b>  ·  📦 库存: {stock_str}",
     ]
     if item.item_description:
+        lines.append("")
         lines.append(f"📝 {item.item_description}")
-    lines.append("\n👆 点击下方按钮即可兑换。")
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━")
+    lines.append("👇 点击下方按钮立即兑换！")
     return "\n".join(lines)
 
 

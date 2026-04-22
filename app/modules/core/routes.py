@@ -549,11 +549,14 @@ def page_users(gid):
         try: u.profile_dict = json.loads(u.profile_data) if u.profile_data else {}
         except: u.profile_dict = {}
     
-    # 批量查询 GroupMember 以获取昵称和用户名
+    # 批量查询 GroupMember 以获取昵称和用户名（限定本群组，避免跨群组数据污染）
     tg_ids = [u.tg_id for u in users]
     member_map = {}
     if tg_ids:
-        members_info = GroupMember.query.filter(GroupMember.user_id.in_(tg_ids)).all()
+        members_info = GroupMember.query.filter(
+            GroupMember.user_id.in_(tg_ids),
+            GroupMember.group_id == gid
+        ).all()
         member_map = {m.user_id: m for m in members_info}
     for u in users:
         m = member_map.get(u.tg_id)
@@ -2366,8 +2369,8 @@ def api_send_scheduled_message_now(message_id):
                 sent_message = await ptb_app.bot.send_photo(
                     chat_id=chat_id,
                     photo=media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup,
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
@@ -2375,8 +2378,8 @@ def api_send_scheduled_message_now(message_id):
                 sent_message = await ptb_app.bot.send_video(
                     chat_id=chat_id,
                     video=media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup,
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
@@ -4742,8 +4745,8 @@ async def check_scheduled_messages(context):
                 sent_message = await context.bot.send_photo(
                     chat_id=chat_id,
                     photo=media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup,
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
@@ -4751,8 +4754,8 @@ async def check_scheduled_messages(context):
                 sent_message = await context.bot.send_video(
                     chat_id=chat_id,
                     video=media_url,
-                    caption=content,
-                    parse_mode='HTML',
+                    caption=content if content else None,
+                    parse_mode='HTML' if content else None,
                     reply_markup=reply_markup,
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )

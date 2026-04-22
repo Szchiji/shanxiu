@@ -1119,11 +1119,14 @@
     function htmlToTemplate(html) {
         if (!html) return '';
         let text = html.replace(/<div><br><\/div>/gi, '\n');
+        text = text.replace(/<p><br><\/p>/gi, '\n');
         text = text.replace(/<div>/gi, '\n');
         text = text.replace(/<\/div>/gi, '');
+        text = text.replace(/<p>/gi, '\n');
+        text = text.replace(/<\/p>/gi, '');
         text = text.replace(/<br\s*\/?>/gi, '\n');
         text = text.replace(/\n\n+/g, '\n\n');
-        return text;
+        return text.trim();
     }
     
     // Convert template to HTML format

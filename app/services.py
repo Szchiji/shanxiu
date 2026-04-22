@@ -73,6 +73,11 @@ def sanitize_html_for_telegram(text):
     if not text:
         return text
 
+    # Replace common HTML entities that Telegram's HTML parser does not support.
+    # &nbsp; in particular appears as literal "&nbsp;" in Telegram messages if
+    # not decoded first.
+    text = text.replace('&nbsp;', ' ')
+
     cleaned = bleach.clean(
         text,
         tags=_TELEGRAM_ALLOWED_TAGS,

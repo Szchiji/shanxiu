@@ -938,12 +938,14 @@ def page_points_exchange(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
+    conf = get_group_conf(group)
     items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
     records = (PointsExchangeRecord.query
                .filter_by(group_id=gid)
                .order_by(PointsExchangeRecord.created_at.desc())
                .limit(100).all())
-    return render_template('points_exchange.html', page='points_exchange', group=group, items=items, records=records)
+    return render_template('points_exchange.html', page='points_exchange', group=group,
+                           conf=conf, items=items, records=records)
 
 @core_bp.route('/group/<int:gid>/group_lottery')
 def page_group_lottery(gid):
@@ -3086,6 +3088,138 @@ def api_delete_points_auction():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+# --- Exchange Catalog Helpers ---
+
+def _build_exchange_catalog_sync(group_id):
+    """同步构建兑换商品目录消息内容（在数据库上下文中调用）。
+    返回 (text, buttons_list)，buttons_list 是 InlineKeyboardButton 行列表。
+    """
+    items = PointsExchangeItem.query.filter_by(
+        group_id=group_id, is_active=True
+    ).order_by(PointsExchangeItem.id).all()
+
+    if not items:
+        return "🛒 <b>积分兑换商城</b>\n\n暂无可兑换商品，敬请期待。", []
+
+    lines = ["🛒 <b>积分兑换商城</b>\n"]
+    buttons = []
+    for it in items:
+        stock_str = f"库存: {it.stock}" if it.stock is not None else "库存: 不限"
+        lines.append(
+            f"🔹 <b>{it.item_name}</b>\n"
+            f"   💰 所需积分: <b>{it.points_cost}</b>  |  {stock_str}\n"
+            + (f"   📝 {it.item_description}\n" if it.item_description else "")
+        )
+        buttons.append([InlineKeyboardButton(
+            f"🛍️ 兑换「{it.item_name}」({it.points_cost}积分)",
+            callback_data=f"exchange_redeem_{it.id}_{group_id}"
+        )])
+
+    lines.append("\n👆 点击对应按钮即可兑换，无需手动输入。")
+    return "\n".join(lines), buttons
+
+
+async def _update_exchange_catalog_async(group_id, ptb_app):
+    """在管理员指定的频道中发布或更新兑换商品目录消息。"""
+    if not global_flask_app:
+        return
+
+    def _load_data():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            conf = get_group_conf(group)
+            channel_id = conf.get('exchange_channel_id', '').strip()
+            msg_id = conf.get('exchange_catalog_msg_id')
+            text, buttons = _build_exchange_catalog_sync(group_id)
+            return {'conf': conf, 'channel_id': channel_id, 'msg_id': msg_id,
+                    'text': text, 'buttons': buttons}
+
+    data = await asyncio.get_running_loop().run_in_executor(None, _load_data)
+    if not data:
+        return
+    channel_id = data['channel_id']
+    if not channel_id:
+        return  # 未配置展示频道，跳过
+
+    text = data['text']
+    msg_id = data['msg_id']
+    keyboard = InlineKeyboardMarkup(data['buttons']) if data['buttons'] else None
+    new_msg_id = None
+
+    try:
+        if msg_id:
+            try:
+                await ptb_app.bot.edit_message_text(
+                    chat_id=channel_id,
+                    message_id=int(msg_id),
+                    text=text,
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                new_msg_id = int(msg_id)
+            except Exception as edit_err:
+                # 消息已删除或无法编辑，重新发布
+                print(f"⚠️ 编辑兑换目录消息失败，重新发布 (group_id={group_id}): {edit_err}", flush=True)
+                sent = await ptb_app.bot.send_message(
+                    chat_id=channel_id, text=text,
+                    parse_mode='HTML', reply_markup=keyboard
+                )
+                new_msg_id = sent.message_id
+        else:
+            sent = await ptb_app.bot.send_message(
+                chat_id=channel_id, text=text,
+                parse_mode='HTML', reply_markup=keyboard
+            )
+            new_msg_id = sent.message_id
+    except Exception as e:
+        print(f"❌ 更新兑换商品目录失败 (group_id={group_id}): {e}", flush=True)
+        return
+
+    # 若消息ID变化则持久化
+    if new_msg_id and new_msg_id != msg_id:
+        def _save_msg_id():
+            with global_flask_app.app_context():
+                group = BotGroup.query.get(group_id)
+                if not group:
+                    return
+                conf = get_group_conf(group)
+                conf['exchange_catalog_msg_id'] = new_msg_id
+                group.config = json.dumps(conf, ensure_ascii=False)
+                try:
+                    db.session.commit()
+                except Exception as ex:
+                    db.session.rollback()
+                    print(f"❌ 保存 exchange_catalog_msg_id 失败: {ex}", flush=True)
+        await asyncio.get_running_loop().run_in_executor(None, _save_msg_id)
+
+
+def schedule_exchange_catalog_update(group_id):
+    """从 Flask 路由（同步上下文）中异步触发兑换目录更新。"""
+    if not global_bot_loop or not global_flask_app:
+        return
+
+    def _pick_app():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            if group.clone_id is not None:
+                clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+                return clone_info['app'] if clone_info else None
+            return global_ptb_app
+
+    ptb_app = _pick_app()
+    if not ptb_app:
+        print(f"⚠️ schedule_exchange_catalog_update: no bot app found for group_id={group_id}, skipping.", flush=True)
+        return
+    asyncio.run_coroutine_threadsafe(
+        _update_exchange_catalog_async(group_id, ptb_app),
+        global_bot_loop
+    )
+
+
 @core_bp.route('/api/save_exchange_item', methods=['POST'])
 def api_save_exchange_item():
     """保存积分兑换商品"""
@@ -3110,6 +3244,7 @@ def api_save_exchange_item():
         item.is_active = bool(d.get('is_active', True))
 
         db.session.commit()
+        schedule_exchange_catalog_update(d['group_id'])
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
@@ -3125,8 +3260,35 @@ def api_delete_exchange_item():
     try:
         item = PointsExchangeItem.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Item not found'})
+        group_id = item.group_id
         db.session.delete(item)
         db.session.commit()
+        schedule_exchange_catalog_update(group_id)
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+@core_bp.route('/api/save_exchange_channel', methods=['POST'])
+def api_save_exchange_channel():
+    """保存积分兑换展示频道配置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    try:
+        group = BotGroup.query.get(d['group_id'])
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        conf = get_group_conf(group)
+        new_channel = d.get('exchange_channel_id', '').strip()
+        # 频道切换时重置旧消息ID，以便在新频道重新发布
+        if new_channel != conf.get('exchange_channel_id', ''):
+            conf['exchange_catalog_msg_id'] = None
+        conf['exchange_channel_id'] = new_channel
+        group.config = json.dumps(conf, ensure_ascii=False)
+        db.session.commit()
+        if new_channel:
+            schedule_exchange_catalog_update(d['group_id'])
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
@@ -9836,6 +9998,8 @@ async def on_message(update: Update, context):
                         if item.redemption_info:
                             reply_lines.append(f"\n📋 兑换信息:\n{item.redemption_info}")
                         await msg.reply_html("\n".join(reply_lines))
+                        # 兑换成功后自动更新频道商品目录
+                        await _update_exchange_catalog_async(group.id, context.application)
                         return
 
             # 3. 自动回复检查 (Check points-based first, then regular auto-reply)
@@ -10145,6 +10309,97 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
     # 在 Executor 中运行同步 DB 操作
     return await asyncio.get_running_loop().run_in_executor(None, _sync_query)
 
+async def exchange_item_callback(update: Update, context):
+    """处理兑换商品内联按钮点击（来自频道商品目录）"""
+    query = update.callback_query
+    user = update.effective_user
+
+    # callback_data 格式: exchange_redeem_{item_id}_{group_id}
+    try:
+        parts = query.data.split('_')
+        item_id = int(parts[2])
+        group_id = int(parts[3])
+    except (IndexError, ValueError):
+        await query.answer("❌ 无效的兑换请求", show_alert=True)
+        return
+
+    if not global_flask_app:
+        await query.answer("❌ 系统错误，请稍后重试", show_alert=True)
+        return
+
+    def _do_exchange():
+        with global_flask_app.app_context():
+            item = PointsExchangeItem.query.filter_by(
+                id=item_id, group_id=group_id, is_active=True
+            ).first()
+            if not item:
+                return None, "❌ 商品不存在或已下架"
+
+            if item.stock is not None and item.stock <= 0:
+                return None, "❌ 该商品库存已用完"
+
+            user_pts = UserPoints.query.filter_by(
+                group_id=group_id, user_id=user.id
+            ).first()
+            balance = user_pts.points_balance if user_pts else 0
+
+            if balance < item.points_cost:
+                return None, (
+                    f"❌ 积分不足。\n"
+                    f"需要 {item.points_cost} 积分，当前余额 {balance} 积分"
+                )
+
+            if not user_pts:
+                user_pts = UserPoints(
+                    group_id=group_id, user_id=user.id, points_balance=0
+                )
+                db.session.add(user_pts)
+
+            user_pts.points_balance -= item.points_cost
+            if item.stock is not None:
+                item.stock -= 1
+
+            db.session.add(PointsExchangeRecord(
+                group_id=group_id,
+                user_id=user.id,
+                item_id=item.id,
+                points_spent=item.points_cost
+            ))
+            db.session.add(PointsLog(
+                group_id=group_id,
+                user_id=user.id,
+                points_change=-item.points_cost,
+                reason=f"兑换商品: {item.item_name}",
+                balance_after=user_pts.points_balance
+            ))
+            db.session.commit()
+
+            return {
+                'item_name': item.item_name,
+                'points_cost': item.points_cost,
+                'balance': user_pts.points_balance,
+                'redemption_info': item.redemption_info or '',
+            }, None
+
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _do_exchange)
+
+    if error:
+        await query.answer(error, show_alert=True)
+        return
+
+    alert = (
+        f"✅ 兑换成功！\n"
+        f"🎁 商品：{result['item_name']}\n"
+        f"💰 消耗积分：{result['points_cost']}  |  剩余积分：{result['balance']}"
+    )
+    if result['redemption_info']:
+        alert += f"\n\n📋 兑换信息：\n{result['redemption_info']}"
+
+    await query.answer(alert, show_alert=True)
+    # 兑换后自动更新目录（库存变动）
+    await _update_exchange_catalog_async(group_id, context.application)
+
+
 async def pagination_callback(update: Update, context):
     """统一的回调处理器 - 根据callback data路由到不同的处理函数"""
     query = update.callback_query
@@ -10161,6 +10416,8 @@ async def pagination_callback(update: Update, context):
         return await vote_callback(update, context)
     elif query.data.startswith('check_sub_'):
         return await handle_subscription_check_callback(update, context)
+    elif query.data.startswith('exchange_redeem_'):
+        return await exchange_item_callback(update, context)
     
     # 默认处理分页查询
     try:

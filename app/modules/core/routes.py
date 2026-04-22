@@ -3326,6 +3326,52 @@ async def _send_item_announcement_async(group_id, item_id, ptb_app):
         print(f"❌ 发送新品公告失败 (group_id={group_id}, item_id={item_id}): {e}", flush=True)
 
 
+async def _edit_item_announcement_async(group_id, item_id, ptb_app):
+    """编辑频道中已存在的单条商品公告消息，使其与最新商品信息保持同步。"""
+    if not global_flask_app:
+        return
+
+    def _load():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            conf = get_group_conf(group)
+            channel_id = conf.get('exchange_channel_id', '').strip()
+            item = PointsExchangeItem.query.get(item_id)
+            if not item or not channel_id or not item.announcement_msg_id:
+                return None
+            return {
+                'channel_id': channel_id,
+                'msg_id': item.announcement_msg_id,
+                'item_name': item.item_name,
+                'points_cost': item.points_cost,
+                'text': _format_item_announcement_text(item),
+            }
+
+    data = await asyncio.get_running_loop().run_in_executor(None, _load)
+    if not data:
+        return
+
+    button = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"🛍️ 兑换「{data['item_name']}」({data['points_cost']}积分)",
+            callback_data=f"exchange_redeem_{item_id}_{group_id}"
+        )
+    ]])
+    try:
+        await ptb_app.bot.edit_message_text(
+            chat_id=data['channel_id'],
+            message_id=int(data['msg_id']),
+            text=data['text'],
+            parse_mode='HTML',
+            reply_markup=button
+        )
+        print(f"✅ 商品公告已更新 channel={data['channel_id']} msg_id={data['msg_id']}", flush=True)
+    except Exception as e:
+        print(f"⚠️ 更新商品公告失败 (group_id={group_id}, item_id={item_id}): {e}", flush=True)
+
+
 async def _delete_item_announcement_async(channel_id, msg_id, ptb_app):
     """从展示频道删除单条商品公告消息（商品售罄时调用）。"""
     if not channel_id or not msg_id:
@@ -3335,6 +3381,30 @@ async def _delete_item_announcement_async(channel_id, msg_id, ptb_app):
         print(f"🗑️ 已删除商品公告 channel={channel_id} msg_id={msg_id}", flush=True)
     except Exception as e:
         print(f"⚠️ 删除商品公告失败 channel={channel_id} msg_id={msg_id}: {e}", flush=True)
+
+
+def schedule_item_announcement_edit(group_id, item_id):
+    """从 Flask 路由（同步上下文）异步触发单条商品公告的编辑更新。"""
+    if not global_bot_loop or not global_flask_app:
+        return
+
+    def _pick_app():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            if group.clone_id is not None:
+                clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+                return clone_info['app'] if clone_info else None
+            return global_ptb_app
+
+    ptb_app = _pick_app()
+    if not ptb_app:
+        return
+    asyncio.run_coroutine_threadsafe(
+        _edit_item_announcement_async(group_id, item_id, ptb_app),
+        global_bot_loop
+    )
 
 
 def schedule_item_announcement(group_id, item_id):
@@ -3386,9 +3456,11 @@ def api_save_exchange_item():
 
         db.session.commit()
         schedule_exchange_catalog_update(d['group_id'])
-        # 新上架商品自动发送单独公告
+        # 新上架商品自动发送单独公告；更新已有商品时同步编辑已发送的公告消息
         if is_new_item and item.is_active:
             schedule_item_announcement(d['group_id'], item.id)
+        elif not is_new_item and item.announcement_msg_id:
+            schedule_item_announcement_edit(d['group_id'], item.id)
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()

@@ -49,6 +49,20 @@
             font-size: 1.1rem;
         }
     }
+
+    /* User avatar */
+    .user-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: #fff;
+        flex-shrink: 0;
+    }
 </style>
 
 <div class="page-header">
@@ -150,13 +164,20 @@
                     {% for member in members %}
                     <tr>
                         <td>
-                            <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
-                            {% if member.username %}
-                            <small class="text-muted">@{{ member.username }}</small>
-                            {% endif %}
-                            {% if member.is_bot %}
-                            <span class="badge bg-info ms-1">🤖</span>
-                            {% endif %}
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="user-avatar" data-uid="{{ member.user_id }}">
+                                    {{ ((member.first_name or member.username or '#')[:1])|upper }}
+                                </div>
+                                <div>
+                                    <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
+                                    {% if member.username %}
+                                    <small class="text-muted">@{{ member.username }}</small>
+                                    {% endif %}
+                                    {% if member.is_bot %}
+                                    <span class="badge bg-info ms-1">🤖</span>
+                                    {% endif %}
+                                </div>
+                            </div>
                         </td>
                         <td><code>{{ member.user_id }}</code></td>
                         <td>
@@ -265,6 +286,15 @@
 </div>
 
 <script>
+// Avatar color assignment based on user ID
+(function() {
+    const COLORS = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#14b8a6','#f97316','#84cc16'];
+    document.querySelectorAll('.user-avatar[data-uid]').forEach(function(el) {
+        const uid = parseInt(el.dataset.uid, 10) || 0;
+        el.style.backgroundColor = COLORS[Math.abs(uid) % COLORS.length];
+    });
+})();
+
 let currentAdjustUserId = null;
 
 function showAdjustPointsModal(userId, userName) {

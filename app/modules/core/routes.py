@@ -3253,6 +3253,113 @@ def schedule_exchange_catalog_update(group_id):
     )
 
 
+def _format_tg_user_display(tg_user) -> str:
+    """返回 Telegram 用户的展示字符串：@username (ID: xxx) 或 昵称 (ID: xxx)。"""
+    if tg_user.username:
+        return f"@{tg_user.username} (ID: {tg_user.id})"
+    name = (tg_user.first_name or '') + (' ' + tg_user.last_name if tg_user.last_name else '')
+    return f"{name.strip() or '用户'} (ID: {tg_user.id})"
+
+
+def _format_item_announcement_text(item):
+    """格式化单个商品的上架公告文本。"""
+    stock_str = f"{item.stock}" if item.stock is not None else "不限"
+    lines = [
+        f"🆕 <b>新品上架！</b>\n",
+        f"🎁 <b>{item.item_name}</b>",
+        f"💰 所需积分: <b>{item.points_cost}</b>  |  库存: <b>{stock_str}</b>",
+    ]
+    if item.item_description:
+        lines.append(f"📝 {item.item_description}")
+    lines.append("\n👆 点击下方按钮即可兑换。")
+    return "\n".join(lines)
+
+
+async def _send_item_announcement_async(group_id, item_id, ptb_app):
+    """向兑换展示频道发送单条商品上架公告，并将消息 ID 存入 announcement_msg_id。"""
+    if not global_flask_app:
+        return
+
+    def _load():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            conf = get_group_conf(group)
+            channel_id = conf.get('exchange_channel_id', '').strip()
+            item = PointsExchangeItem.query.get(item_id)
+            if not item or not item.is_active:
+                return None
+            return {'channel_id': channel_id, 'item_name': item.item_name,
+                    'points_cost': item.points_cost, 'text': _format_item_announcement_text(item)}
+
+    data = await asyncio.get_running_loop().run_in_executor(None, _load)
+    if not data or not data['channel_id']:
+        return
+
+    button = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"🛍️ 兑换「{data['item_name']}」({data['points_cost']}积分)",
+            callback_data=f"exchange_redeem_{item_id}_{group_id}"
+        )
+    ]])
+    try:
+        sent = await ptb_app.bot.send_message(
+            chat_id=data['channel_id'],
+            text=data['text'],
+            parse_mode='HTML',
+            reply_markup=button
+        )
+
+        def _save_msg_id():
+            with global_flask_app.app_context():
+                it = PointsExchangeItem.query.get(item_id)
+                if it:
+                    it.announcement_msg_id = sent.message_id
+                    try:
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+        await asyncio.get_running_loop().run_in_executor(None, _save_msg_id)
+        print(f"✅ 新品公告已发送 channel={data['channel_id']} msg_id={sent.message_id}", flush=True)
+    except Exception as e:
+        print(f"❌ 发送新品公告失败 (group_id={group_id}, item_id={item_id}): {e}", flush=True)
+
+
+async def _delete_item_announcement_async(channel_id, msg_id, ptb_app):
+    """从展示频道删除单条商品公告消息（商品售罄时调用）。"""
+    if not channel_id or not msg_id:
+        return
+    try:
+        await ptb_app.bot.delete_message(chat_id=channel_id, message_id=int(msg_id))
+        print(f"🗑️ 已删除商品公告 channel={channel_id} msg_id={msg_id}", flush=True)
+    except Exception as e:
+        print(f"⚠️ 删除商品公告失败 channel={channel_id} msg_id={msg_id}: {e}", flush=True)
+
+
+def schedule_item_announcement(group_id, item_id):
+    """从 Flask 路由（同步上下文）异步触发单条商品上架公告。"""
+    if not global_bot_loop or not global_flask_app:
+        return
+
+    def _pick_app():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None
+            if group.clone_id is not None:
+                clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+                return clone_info['app'] if clone_info else None
+            return global_ptb_app
+
+    ptb_app = _pick_app()
+    if not ptb_app:
+        return
+    asyncio.run_coroutine_threadsafe(
+        _send_item_announcement_async(group_id, item_id, ptb_app),
+        global_bot_loop
+    )
+
 @core_bp.route('/api/save_exchange_item', methods=['POST'])
 def api_save_exchange_item():
     """保存积分兑换商品"""
@@ -3261,7 +3368,8 @@ def api_save_exchange_item():
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
 
     try:
-        if d.get('id'):
+        is_new_item = not d.get('id')
+        if not is_new_item:
             item = PointsExchangeItem.query.get(d['id'])
             if not item: return jsonify({'status':'error','msg':'Item not found'})
         else:
@@ -3278,6 +3386,9 @@ def api_save_exchange_item():
 
         db.session.commit()
         schedule_exchange_catalog_update(d['group_id'])
+        # 新上架商品自动发送单独公告
+        if is_new_item and item.is_active:
+            schedule_item_announcement(d['group_id'], item.id)
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
@@ -10014,9 +10125,15 @@ async def on_message(update: Update, context):
                             user_points = UserPoints(group_id=group.id, user_id=user.id, points_balance=0)
                             db.session.add(user_points)
                         user_points.points_balance -= item.points_cost
-                        # Reduce stock
+                        # Reduce stock and auto-deactivate when sold out
+                        item_deactivated = False
                         if item.stock is not None:
                             item.stock -= 1
+                            if item.stock <= 0:
+                                item.is_active = False
+                                item_deactivated = True
+                        # Snapshot before commit
+                        item_announcement_msg_id = item.announcement_msg_id
                         # Record
                         record = PointsExchangeRecord(
                             group_id=group.id,
@@ -10035,15 +10152,24 @@ async def on_message(update: Update, context):
                         )
                         db.session.add(points_log)
                         db.session.commit()
+                        # Build redeemer display string
+                        redeemer_display = _format_tg_user_display(update.effective_user)
                         # Notify user
                         reply_lines = [
                             f"✅ <b>兑换成功！</b>",
-                            f"🎁 商品: <b>{item.item_name}</b>",
-                            f"💰 消耗积分: <b>{item.points_cost}</b>  |  剩余积分: <b>{user_points.points_balance}</b>",
+                            f"👤 兑换人：{redeemer_display}",
+                            f"🎁 商品：<b>{item.item_name}</b>",
+                            f"💰 消耗积分：<b>{item.points_cost}</b>  |  剩余积分：<b>{user_points.points_balance}</b>",
                         ]
                         if item.redemption_info:
-                            reply_lines.append(f"\n📋 兑换信息:\n{item.redemption_info}")
+                            reply_lines.append(f"\n📋 兑换信息：\n{item.redemption_info}")
                         await msg.reply_html("\n".join(reply_lines))
+                        # 如商品售罄，删除单条公告并停用
+                        if item_deactivated:
+                            _exch_channel = conf.get('exchange_channel_id', '').strip()
+                            await _delete_item_announcement_async(
+                                _exch_channel, item_announcement_msg_id, context.application
+                            )
                         # 兑换成功后自动更新频道商品目录
                         await _update_exchange_catalog_async(group.id, context.application)
                         return
@@ -10402,8 +10528,19 @@ async def exchange_item_callback(update: Update, context):
                 db.session.add(user_pts)
 
             user_pts.points_balance -= item.points_cost
+            item_deactivated = False
             if item.stock is not None:
                 item.stock -= 1
+                if item.stock <= 0:
+                    item.is_active = False
+                    item_deactivated = True
+
+            # Snapshot announcement info and channel before commit
+            announcement_msg_id = item.announcement_msg_id
+            channel_id = ''
+            grp = BotGroup.query.get(group_id)
+            if grp:
+                channel_id = get_group_conf(grp).get('exchange_channel_id', '').strip()
 
             db.session.add(PointsExchangeRecord(
                 group_id=group_id,
@@ -10425,6 +10562,9 @@ async def exchange_item_callback(update: Update, context):
                 'points_cost': item.points_cost,
                 'balance': user_pts.points_balance,
                 'redemption_info': item.redemption_info or '',
+                'item_deactivated': item_deactivated,
+                'announcement_msg_id': announcement_msg_id,
+                'channel_id': channel_id,
             }, None
 
     result, error = await asyncio.get_running_loop().run_in_executor(None, _do_exchange)
@@ -10435,6 +10575,7 @@ async def exchange_item_callback(update: Update, context):
 
     alert = (
         f"✅ 兑换成功！\n"
+        f"👤 兑换人：{_format_tg_user_display(user)}\n"
         f"🎁 商品：{result['item_name']}\n"
         f"💰 消耗积分：{result['points_cost']}  |  剩余积分：{result['balance']}"
     )
@@ -10442,7 +10583,12 @@ async def exchange_item_callback(update: Update, context):
         alert += f"\n\n📋 兑换信息：\n{result['redemption_info']}"
 
     await query.answer(alert, show_alert=True)
-    # 兑换后自动更新目录（库存变动）
+
+    # If item sold out, delete its individual announcement and update catalog
+    if result.get('item_deactivated'):
+        await _delete_item_announcement_async(
+            result['channel_id'], result['announcement_msg_id'], context.application
+        )
     await _update_exchange_catalog_async(group_id, context.application)
 
 

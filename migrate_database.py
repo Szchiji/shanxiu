@@ -94,6 +94,8 @@ def run_migrations():
         "CREATE TABLE IF NOT EXISTS points_exchange_records (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER REFERENCES bot_groups(id), user_id BIGINT, item_id INTEGER REFERENCES points_exchange_items(id), points_spent INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_group_id ON points_exchange_records(group_id)",
         "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_user_id ON points_exchange_records(user_id)",
+        # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
+        "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
     ]
 
     with app.app_context():

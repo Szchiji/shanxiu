@@ -321,6 +321,7 @@ class PointsExchangeItem(db.Model):
     stock = db.Column(db.Integer, nullable=True)  # NULL = unlimited stock
     redemption_info = db.Column(db.Text, nullable=True)  # 兑换后显示给用户的信息
     is_active = db.Column(db.Boolean, default=True)
+    announcement_msg_id = db.Column(db.BigInteger, nullable=True)  # individual "new item" announcement message ID in channel
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 

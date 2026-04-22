@@ -900,15 +900,18 @@
     // Convert contenteditable HTML to template format (with \n)
     function htmlToTemplate(html) {
         if (!html) return '';
-        // Replace <div> tags with newlines
+        // Replace <div> and <p> tags with newlines
         let text = html.replace(/<div><br><\/div>/gi, '\n');
+        text = text.replace(/<p><br><\/p>/gi, '\n');
         text = text.replace(/<div>/gi, '\n');
         text = text.replace(/<\/div>/gi, '');
+        text = text.replace(/<p>/gi, '\n');
+        text = text.replace(/<\/p>/gi, '');
         // Replace <br> tags with newlines
         text = text.replace(/<br\s*\/?>/gi, '\n');
-        // Clean up multiple consecutive newlines (but keep at least one)
+        // Clean up multiple consecutive newlines (but keep at most two)
         text = text.replace(/\n\n+/g, '\n\n');
-        return text;
+        return text.trim();
     }
 
     function loadMsg() { 

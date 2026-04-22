@@ -10170,21 +10170,15 @@ async def on_message(update: Update, context):
             if chat.type in ['group', 'supergroup']:
                 _exchange_list_cmds = ['兑换', '兑换列表', '积分兑换']
                 if txt in _exchange_list_cmds:
-                    # Show available exchange items
-                    items = PointsExchangeItem.query.filter_by(group_id=group.id, is_active=True).all()
-                    if not items:
-                        await msg.reply_html("🛒 <b>积分兑换</b>\n\n暂无可兑换商品。")
+                    # Show available exchange items with inline buttons (reuse catalog builder)
+                    catalog_text, catalog_buttons = _build_exchange_catalog_sync(group.id)
+                    if catalog_buttons:
+                        await msg.reply_html(
+                            catalog_text,
+                            reply_markup=InlineKeyboardMarkup(catalog_buttons)
+                        )
                     else:
-                        lines = ["🛒 <b>积分兑换商品列表</b>\n"]
-                        for it in items:
-                            stock_str = f"库存: {it.stock}" if it.stock is not None else "库存: 不限"
-                            lines.append(
-                                f"🔹 <b>[{it.id}] {it.item_name}</b>\n"
-                                f"   💰 所需积分: <b>{it.points_cost}</b>  |  {stock_str}\n"
-                                + (f"   📝 {it.item_description}\n" if it.item_description else "")
-                            )
-                        lines.append("\n发送 <b>兑换 商品ID</b> 即可兑换，例如：<code>兑换 1</code>")
-                        await msg.reply_html("\n".join(lines))
+                        await msg.reply_html(catalog_text)
                     return
 
                 if txt.startswith('兑换 ') and len(txt) > 3:

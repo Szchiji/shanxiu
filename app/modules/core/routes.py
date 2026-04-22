@@ -2274,6 +2274,7 @@ def api_send_scheduled_message_now(message_id):
             'delete_previous': item.delete_previous,
             'last_message_id': item.last_message_id,
             'message_thread_id': item.message_thread_id,
+            'auto_pin': item.auto_pin,
         }
 
         async def _send_now():
@@ -2369,6 +2370,16 @@ def api_send_scheduled_message_now(message_id):
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
+            # 自动置顶
+            if sent_message and msg_snapshot.get('auto_pin'):
+                try:
+                    await ptb_app.bot.pin_chat_message(
+                        chat_id=chat_id,
+                        message_id=sent_message.message_id,
+                        disable_notification=True
+                    )
+                except Exception as pin_err:
+                    print(f"⚠️ 置顶消息失败 (send_now, chat_id={chat_id}): {pin_err}", flush=True)
             return sent_message
 
         future = asyncio.run_coroutine_threadsafe(_send_now(), global_bot_loop)
@@ -4608,7 +4619,8 @@ async def check_scheduled_messages(context):
                             'links': msg.links,
                             'delete_previous': msg.delete_previous,
                             'last_message_id': msg.last_message_id,
-                            'message_thread_id': msg.message_thread_id
+                            'message_thread_id': msg.message_thread_id,
+                            'auto_pin': msg.auto_pin,
                         })
                 
                 return messages_to_send
@@ -4749,6 +4761,18 @@ async def check_scheduled_messages(context):
                 await asyncio.get_running_loop().run_in_executor(
                     None, _update_sent, msg_data['id'], sent_message.message_id
                 )
+
+                # 自动置顶
+                if msg_data.get('auto_pin'):
+                    try:
+                        await context.bot.pin_chat_message(
+                            chat_id=chat_id,
+                            message_id=sent_message.message_id,
+                            disable_notification=True
+                        )
+                    except Exception as pin_err:
+                        print(f"⚠️ 置顶消息失败 (chat_id={chat_id}): {pin_err}", flush=True)
+
                 print(f"✅ 定时消息已发送到群组 {chat_id}", flush=True)
                 
         except Exception as e:

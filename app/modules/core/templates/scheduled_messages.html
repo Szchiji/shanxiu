@@ -590,13 +590,13 @@
                 <tr data-id="{{ item.id }}"
                     data-media-type="{{ item.media_type }}"
                     data-media-url="{{ item.media_url or '' }}"
-                    data-content="{{ item.content or ''|e }}"
-                    data-links="{{ item.links or '[]'|e }}"
+                    data-content="{{ (item.content or '')|e }}"
+                    data-links="{{ (item.links or '[]')|e }}"
                     data-repeat-interval="{{ item.repeat_interval or 0 }}"
                     data-delete-previous="{{ 'true' if item.delete_previous else 'false' }}"
                     data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
                     data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
-                    data-remark="{{ item.remark or ''|e }}"
+                    data-remark="{{ (item.remark or '')|e }}"
                     data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
                     data-message-thread-id="{{ item.message_thread_id or '' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
@@ -1137,9 +1137,10 @@
     // Format datetime for input
     function formatDatetimeLocal(dateStr) {
         if (!dateStr) return '';
-        const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return '';
-        return date.toISOString().slice(0, 16);
+        // dateStr comes from server already in Beijing time ("YYYY-MM-DDTHH:MM:SS").
+        // Slice directly to avoid browser UTC conversion (which would shift by +8 h).
+        if (dateStr.length >= 16) return dateStr.slice(0, 16);
+        return '';
     }
     
     // Modal operations

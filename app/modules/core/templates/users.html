@@ -172,6 +172,20 @@
         }
     }
 
+    /* User avatar (generated initials-based) */
+    .user-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.85rem;
+        color: #fff;
+        flex-shrink: 0;
+    }
+
     /* Mobile-specific button adjustments */
     .btn-add-new {
         padding: 0.4rem 0.8rem;
@@ -255,7 +269,7 @@
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4">TG ID</th>
+                    <th class="ps-3 ps-md-4">用户</th>
                     {% for f in fields %}
                     <th>{{ f.label }}</th>
                     {% endfor %}
@@ -267,7 +281,22 @@
             <tbody id="userTable">
                 {% for user in users %}
                 <tr>
-                    <td class="ps-3 ps-md-4 fw-bold">{{ user.tg_id }}</td>
+                    <td class="ps-3 ps-md-4">
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="user-avatar" data-uid="{{ user.tg_id }}">
+                                {{ (user.tg_display_name[:1] or '#')|upper }}
+                            </div>
+                            <div>
+                                {% if user.tg_display_name %}
+                                <div class="fw-bold" style="font-size:0.9rem;">{{ user.tg_display_name }}</div>
+                                {% endif %}
+                                {% if user.tg_username %}
+                                <small class="text-muted">@{{ user.tg_username }}</small>
+                                {% endif %}
+                                <small class="text-muted d-block" style="font-size:0.75rem;">ID: {{ user.tg_id }}</small>
+                            </div>
+                        </div>
+                    </td>
                     {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
                     <td>
                         {% if user.is_banned %}
@@ -302,6 +331,15 @@
 {{ pagination(current_page, total_pages, per_page, total_users) }}
 
 <script>
+    // Avatar color assignment based on user ID
+    (function() {
+        const COLORS = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#14b8a6','#f97316','#84cc16'];
+        document.querySelectorAll('.user-avatar[data-uid]').forEach(function(el) {
+            const uid = parseInt(el.dataset.uid, 10) || 0;
+            el.style.backgroundColor = COLORS[Math.abs(uid) % COLORS.length];
+        });
+    })();
+
     // Helper function to convert server datetime format (YYYY-MM-DD HH:MM:SS) to datetime-local format (YYYY-MM-DDTHH:MM)
     function formatDatetimeForInput(serverDatetime) {
         if (!serverDatetime) return '';

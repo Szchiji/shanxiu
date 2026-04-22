@@ -549,6 +549,17 @@ def page_users(gid):
         try: u.profile_dict = json.loads(u.profile_data) if u.profile_data else {}
         except: u.profile_dict = {}
     
+    # 批量查询 GroupMember 以获取昵称和用户名
+    tg_ids = [u.tg_id for u in users]
+    member_map = {}
+    if tg_ids:
+        members_info = GroupMember.query.filter(GroupMember.user_id.in_(tg_ids)).all()
+        member_map = {m.user_id: m for m in members_info}
+    for u in users:
+        m = member_map.get(u.tg_id)
+        u.tg_display_name = f"{m.first_name or ''} {m.last_name or ''}".strip() if m else ''
+        u.tg_username = m.username if m else ''
+
     return render_template('users.html', page='users', group=group, users=users, fields=get_group_fields(group), 
                          current_page=page, total_pages=total_pages, per_page=per_page, total_users=total_users, search=search_query)
 
@@ -1043,9 +1054,17 @@ def page_sync_message_logs(gid):
     
     total_pages = math.ceil(total / per_page) if total > 0 else 1
     
+    # 批量查询 GroupMember 以获取昵称
+    log_user_ids = [l.user_id for l in logs if l.user_id]
+    log_member_map = {}
+    if log_user_ids:
+        log_members = GroupMember.query.filter(GroupMember.user_id.in_(log_user_ids)).all()
+        log_member_map = {m.user_id: m for m in log_members}
+    
     return render_template('sync_message_logs.html', page='sync_message_logs', group=group,
                          logs=logs, current_page=page, per_page=per_page,
-                         total_pages=total_pages, total_items=total)
+                         total_pages=total_pages, total_items=total,
+                         log_member_map=log_member_map)
 
 @core_bp.route('/bot_clones')
 @require_main_instance

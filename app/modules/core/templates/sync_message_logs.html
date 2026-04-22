@@ -164,6 +164,20 @@
         margin-bottom: 1rem;
         opacity: 0.5;
     }
+
+    /* User avatar */
+    .user-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.8rem;
+        color: #fff;
+        flex-shrink: 0;
+    }
 </style>
 
 <div class="page-header">
@@ -199,13 +213,22 @@
                         {{ log.synced_at.strftime('%m-%d %H:%M') if log.synced_at else '-' }}
                     </td>
                     <td class="hide-mobile">
-                        {% if log.username %}
-                            @{{ log.username }}
-                        {% elif log.user_id %}
-                            ID: {{ log.user_id }}
-                        {% else %}
-                            -
-                        {% endif %}
+                        {% set m = log_member_map.get(log.user_id) if log.user_id else none %}
+                        {% set display_name = ((m.first_name or '') ~ ' ' ~ (m.last_name or '')).strip() if m else '' %}
+                        {% set initial = (display_name[:1] or log.username[:1] if log.username else '#')|upper %}
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="user-avatar" data-uid="{{ log.user_id or 0 }}">{{ initial }}</div>
+                            <div>
+                                {% if display_name %}
+                                <div style="font-size:0.85rem;font-weight:600;">{{ display_name }}</div>
+                                {% endif %}
+                                {% if log.username %}
+                                <small class="text-muted">@{{ log.username }}</small>
+                                {% elif log.user_id %}
+                                <small class="text-muted">ID: {{ log.user_id }}</small>
+                                {% endif %}
+                            </div>
+                        </div>
                     </td>
                     <td class="hide-mobile">
                         <span class="badge bg-secondary">{{ log.message_type }}</span>
@@ -247,4 +270,14 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+(function() {
+    const COLORS = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#14b8a6','#f97316','#84cc16'];
+    document.querySelectorAll('.user-avatar[data-uid]').forEach(function(el) {
+        const uid = parseInt(el.dataset.uid, 10) || 0;
+        el.style.backgroundColor = COLORS[Math.abs(uid) % COLORS.length];
+    });
+})();
+</script>
 {% endblock %}

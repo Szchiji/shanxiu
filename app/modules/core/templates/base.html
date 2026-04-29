@@ -842,7 +842,7 @@
                         
                         <!-- User Management -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'group_members', 'fields', 'settings'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'group_members', 'fields', 'settings', 'report_settings'] %}active{% endif %}" 
                                id="managementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fa-solid fa-user-check"></i> 👥 用户管理
                             </a>
@@ -869,6 +869,12 @@
                                     <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
                                         <i class="fa-solid fa-sliders"></i> 功能配置
                                         <span class="feature-desc">配置打卡、查询等核心功能</span>
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="/admin/report_settings" class="dropdown-item {% if page == 'report_settings' %}active{% endif %}">
+                                        <i class="fa-solid fa-flag"></i> 报告系统设置
+                                        <span class="feature-desc">配置故障报告系统设置</span>
                                     </a>
                                 </li>
                             </ul>
@@ -1095,14 +1101,6 @@
                         </li>
                         {% endif %}
 
-                        <!-- Report System -->
-                        <li class="nav-item">
-                            <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-flag"></i> 📋 报告系统
-                                <span class="feature-desc">配置故障报告系统设置</span>
-                            </a>
-                        </li>
-                        
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">
                                 <i class="fa-solid fa-layer-group"></i> 选择群组

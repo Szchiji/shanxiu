@@ -77,5 +77,8 @@ def create_app():
     # 📦 注册模块
     from app.modules.core.routes import core_bp
     app.register_blueprint(core_bp)
+
+    from app.modules.report import report_admin_bp
+    app.register_blueprint(report_admin_bp)
     
     return app

@@ -119,7 +119,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ 请发送一张图片。')
         return STEP_PHOTO
 
-    submitter_id = update.effective_user.id
+    submitter_id = update.effective_user.id if update.effective_user else None
     target_user_id = context.user_data.get(_TARGET_KEY)
     fault_time = context.user_data.get('fault_time', '')
     fault_desc = context.user_data.get('fault_desc', '')

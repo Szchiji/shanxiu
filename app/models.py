@@ -738,11 +738,21 @@ class SystemConfig(db.Model):
         config = cls.query.filter_by(key_name=key_name).first()
         return config.value if config else default_value
 
+    @classmethod
+    def set_value(cls, key_name, value):
+        from app import db as _db
+        obj = cls.query.filter_by(key_name=key_name).first()
+        if obj:
+            obj.value = value
+        else:
+            _db.session.add(cls(key_name=key_name, value=value))
+
 
 class UserReport(db.Model):
     __tablename__ = 'user_reports'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.BigInteger, nullable=False)
+    submitter_id = db.Column(db.BigInteger, nullable=True)
     fault_time = db.Column(db.String(100))
     fault_desc = db.Column(db.Text)
     process_result = db.Column(db.Text)

@@ -60,14 +60,14 @@ def _db_get_config(flask_app, key: str, default: str = '') -> str:
 
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point: /start report_<user_id>"""
+    import re as _re
     text = update.message.text or ''
-    # Extract target user_id from deep-link payload
-    parts = text.split('report_', 1)
-    if len(parts) < 2 or not parts[1].strip().isdigit():
+    m = _re.search(r'/start report_(\d+)', text)
+    if not m:
         await update.message.reply_text('❌ 链接无效，请重新点击报告链接。')
         return ConversationHandler.END
 
-    target_user_id = int(parts[1].strip())
+    target_user_id = int(m.group(1))
     context.user_data[_TARGET_KEY] = target_user_id
 
     flask_app = _get_flask_app(context)
@@ -131,6 +131,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from app import db
             report = UserReport(
                 user_id=target_user_id,
+                submitter_id=submitter_id,
                 fault_time=fault_time,
                 fault_desc=fault_desc,
                 process_result=process_result,
@@ -192,13 +193,14 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point: /start view_<user_id>"""
+    import re as _re
     text = update.message.text or ''
-    parts = text.split('view_', 1)
-    if len(parts) < 2 or not parts[1].strip().isdigit():
+    m = _re.search(r'/start view_(\d+)', text)
+    if not m:
         await update.message.reply_text('❌ 链接无效，请重新点击查看链接。')
         return
 
-    target_user_id = int(parts[1].strip())
+    target_user_id = int(m.group(1))
     flask_app = _get_flask_app(context)
     if flask_app is None:
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
@@ -229,7 +231,7 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
         line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'
         if r.channel_msg_id and channel:
             # Build a link to the channel message
-            chan = channel.lstrip('@')
+            chan = channel.removeprefix('@')
             link = f'https://t.me/{chan}/{r.channel_msg_id}'
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
         lines.append(line)
@@ -269,6 +271,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return {
                 'id': r.id,
                 'user_id': r.user_id,
+                'submitter_id': r.submitter_id,
                 'fault_time': r.fault_time,
                 'fault_desc': r.fault_desc,
                 'process_result': r.process_result,
@@ -305,7 +308,18 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_caption(
             f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。'
         )
-        # Notify submitter – we don't track who submitted so skip for now
+        submitter_id = report.get('submitter_id')
+        if submitter_id:
+            try:
+                await query.get_bot().send_message(
+                    chat_id=submitter_id,
+                    text=(
+                        f'❌ 抱歉，您提交的报告 #{report_id} 未通过审核。\n\n'
+                        '请确保描述清晰并包含清晰的现场图片，欢迎重新提交。'
+                    ),
+                )
+            except Exception as e:
+                logger.warning(f'Failed to notify submitter {submitter_id} of rejection: {e}')
         return
 
     # approve
@@ -345,6 +359,22 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_caption(
         f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。'
     )
+    submitter_id = report.get('submitter_id')
+    if submitter_id:
+        try:
+            channel = _db_get_config(flask_app, 'report_channel', '')
+            msg = f'🎉 您提交的报告 #{report_id} 已审核通过'
+            if channel_msg_id and channel:
+                chan = channel.removeprefix('@')
+                link = f'https://t.me/{chan}/{channel_msg_id}'
+                msg += f'！\n\n👉 <a href="{link}">点击查看已发布报告</a>'
+            await query.get_bot().send_message(
+                chat_id=submitter_id,
+                text=msg,
+                parse_mode='HTML',
+            )
+        except Exception as e:
+            logger.warning(f'Failed to notify submitter {submitter_id} of approval: {e}')
 
 
 # ──────────────────────────────────────────────────────────────────────────────

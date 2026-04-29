@@ -19,11 +19,7 @@ def report_settings():
     if request.method == 'POST':
         for key in _CONFIG_KEYS:
             val = request.form.get(key, '').strip()
-            obj = SystemConfig.query.filter_by(key_name=key).first()
-            if obj:
-                obj.value = val
-            else:
-                db.session.add(SystemConfig(key_name=key, value=val))
+            SystemConfig.set_value(key, val)
         db.session.commit()
         flash('✅ 系统配置已保存！')
         return redirect(url_for('report_admin.report_settings'))

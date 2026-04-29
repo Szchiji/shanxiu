@@ -25,4 +25,4 @@ def report_settings():
         return redirect(url_for('report_admin.report_settings'))
 
     current = {k: SystemConfig.get_value(k, _DEFAULTS.get(k, '')) for k in _CONFIG_KEYS}
-    return render_template('admin_settings.html', settings=current)
+    return render_template('admin_settings.html', settings=current, page='report_settings')

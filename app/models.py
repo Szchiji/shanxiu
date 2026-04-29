@@ -727,6 +727,41 @@ class GroupMember(db.Model):
     group = db.relationship('BotGroup', backref='group_members', lazy=True)
 
 
+class SystemConfig(db.Model):
+    __tablename__ = 'system_config'
+    id = db.Column(db.Integer, primary_key=True)
+    key_name = db.Column(db.String(50), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=False)
+
+    @classmethod
+    def get_value(cls, key_name, default_value=""):
+        config = cls.query.filter_by(key_name=key_name).first()
+        return config.value if config else default_value
+
+    @classmethod
+    def set_value(cls, key_name, value):
+        from app import db as _db
+        obj = cls.query.filter_by(key_name=key_name).first()
+        if obj:
+            obj.value = value
+        else:
+            _db.session.add(cls(key_name=key_name, value=value))
+
+
+class UserReport(db.Model):
+    __tablename__ = 'user_reports'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.BigInteger, nullable=False)
+    submitter_id = db.Column(db.BigInteger, nullable=True)
+    fault_time = db.Column(db.String(100))
+    fault_desc = db.Column(db.Text)
+    process_result = db.Column(db.Text)
+    photo_file_id = db.Column(db.String(255))
+    channel_msg_id = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(20), default='pending')
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+
 DEFAULT_FIELDS = [
     {"key": "name", "label": "昵称", "type": "text"},
     {"key": "region", "label": "地区", "type": "select", "options": ["福田","南山"]},

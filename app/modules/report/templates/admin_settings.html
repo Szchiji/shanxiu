@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>报告系统设置</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+          crossorigin="anonymous">
+</head>
+<body class="bg-light">
+<div class="container py-4" style="max-width:700px">
+    <h2 class="mb-4">⚙️ 报告系统设置</h2>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-success">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="POST">
+        <div class="card mb-4">
+            <div class="card-header">📢 频道与群组配置</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">管理员审核群组 ID</label>
+                    <input type="text" class="form-control" name="admin_group_id"
+                           value="{{ settings.admin_group_id }}"
+                           placeholder="例如 -1001234567890">
+                    <div class="form-text">报告提交后，审核消息将发送到此群组。</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">报告展示频道 ID / 用户名</label>
+                    <input type="text" class="form-control" name="report_channel"
+                           value="{{ settings.report_channel }}"
+                           placeholder="例如 @shanxiu_reports 或 -1009876543210">
+                    <div class="form-text">审核通过的报告将发布到此频道。</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">🤖 机器人问答模板</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">问题 1（故障时间）</label>
+                    <input type="text" class="form-control" name="question_1"
+                           value="{{ settings.question_1 }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">问题 2（故障现象）</label>
+                    <input type="text" class="form-control" name="question_2"
+                           value="{{ settings.question_2 }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">问题 3（处理结果）</label>
+                    <input type="text" class="form-control" name="question_3"
+                           value="{{ settings.question_3 }}">
+                </div>
+                <p class="text-muted small">注：第四步将固定要求用户发送现场照片，无需在此设置。</p>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">💾 保存所有设置</button>
+    </form>
+</div>
+</body>
+</html>

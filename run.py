@@ -95,6 +95,25 @@ def fix_database_schema(app):
             "UPDATE group_members SET joined_at = COALESCE(created_at, synced_at) WHERE joined_at IS NULL",
             # BotGroup: Add members_last_sync column to track last successful group member sync
             "ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS members_last_sync TIMESTAMP NULL",
+            # Report module: ensure system_config and user_reports tables exist
+            # (db.create_all() handles this, but keep as a safety net for existing deployments)
+            """CREATE TABLE IF NOT EXISTS system_config (
+                id SERIAL PRIMARY KEY,
+                key_name VARCHAR(50) UNIQUE NOT NULL,
+                value TEXT NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS user_reports (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                submitter_id BIGINT,
+                fault_time VARCHAR(100),
+                fault_desc TEXT,
+                process_result TEXT,
+                photo_file_id VARCHAR(255),
+                channel_msg_id INTEGER,
+                status VARCHAR(20) DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

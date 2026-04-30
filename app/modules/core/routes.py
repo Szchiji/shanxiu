@@ -1645,6 +1645,11 @@ def api_save_user():
                 for f in fields:
                     val = p.get(f['key'], '')
                     text = text.replace(f"{{{f['label']}}}", str(val))
+                # Inject report deep-link variables
+                if global_ptb_app and global_ptb_app.bot.username:
+                    _bu = global_ptb_app.bot.username
+                    text = text.replace('{写报告链接}', f'https://t.me/{_bu}?start=report_{u.tg_id}')
+                    text = text.replace('{查报告链接}', f'https://t.me/{_bu}?start=view_{u.tg_id}')
                 text = sanitize_html_for_telegram(text)
                 asyncio.run_coroutine_threadsafe(
                     global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
@@ -1987,6 +1992,12 @@ def api_push_user():
         for f in fields:
             val = p.get(f['key'], '')
             text = text.replace(f"{{{f['label']}}}", str(val))
+
+        # Inject report deep-link variables
+        if global_ptb_app and global_ptb_app.bot.username:
+            _bu = global_ptb_app.bot.username
+            text = text.replace('{写报告链接}', f'https://t.me/{_bu}?start=report_{user.tg_id}')
+            text = text.replace('{查报告链接}', f'https://t.me/{_bu}?start=view_{user.tg_id}')
 
         # Sanitize HTML before sending to Telegram
         text = sanitize_html_for_telegram(text)

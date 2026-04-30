@@ -74,7 +74,9 @@ def _ensure_report_tables(db):
                     _logger.warning("Could not drop orphaned sequence %r: %s", seq_name, e)
 
         try:
-            model_cls.__table__.create(bind=db.engine)
+            # SQLAlchemy 2.0 requires a Connection object, not an Engine, for DDL.
+            with db.engine.begin() as conn:
+                model_cls.__table__.create(conn, checkfirst=True)
             print(f"✅ 创建表 {table_name} 成功", flush=True)
         except Exception as e:
             _logger.error("Failed to create table %r: %s", table_name, e)
@@ -162,6 +164,15 @@ def fix_database_schema(app):
             "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
             # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
             "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
+            # system_config: Ensure id column exists.
+            # Older deployments created this table without an id column, causing all ORM
+            # queries (set_value / get_value) to fail silently and roll back, which made
+            # report-system settings appear to vanish after saving.
+            # SERIAL in PostgreSQL assigns a sequence default and fills existing rows automatically,
+            # so this is safe to run on a populated table.
+            "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
+            # user_reports: Store dynamic question answers as JSON
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly

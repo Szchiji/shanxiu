@@ -1637,7 +1637,7 @@ def api_save_user():
             if conf.get('auto_push_on_add') and conf.get('push_channel_id') and global_ptb_app and global_bot_loop:
                 cid = conf['push_channel_id']
                 tpl = conf.get('push_template', '用户: {tg_id}')
-                text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online else '🔴').replace('{序号}', str(u.id))
+                text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
                 p = json.loads(u.profile_data or '{}')
                 for k, v in p.items():
                     text = text.replace(f'{{{k}}}', str(v))
@@ -1651,7 +1651,7 @@ def api_save_user():
                     global_bot_loop
                 )
         except Exception as e:
-            logging.warning(f'Auto push on add failed: {e}')
+            logging.warning(f'Auto push on add failed for group={gid} user={uid}: {e}')
 
     return jsonify({'status':'ok'})
 

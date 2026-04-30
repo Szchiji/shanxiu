@@ -27,6 +27,59 @@ def init_database(app):
         except Exception as e:
             print(f"❌ 数据库初始化失败: {e}", flush=True)
             raise
+        # Extra safety: create report-module tables in case db.create_all() missed them
+        # (e.g. due to a PostgreSQL orphaned-sequence conflict on the primary key column).
+        _ensure_report_tables(db)
+
+
+def _ensure_report_tables(db):
+    """
+    Create system_config and user_reports tables if they do not exist.
+
+    Using raw SERIAL DDL can silently fail on PostgreSQL when an orphaned sequence
+    (system_config_id_seq / user_reports_id_seq) was left behind by a previously
+    aborted table-creation attempt.  This function:
+      1. Detects whether each table is missing.
+      2. On PostgreSQL, drops any orphaned sequence before creating the table so
+         that the SERIAL column does not trigger a "relation already exists" error.
+      3. Uses SQLAlchemy's Table.create() which generates the correct
+         dialect-specific DDL.
+    """
+    import re
+    import logging
+    from sqlalchemy import inspect as sa_inspect
+    from app.models import SystemConfig, UserReport
+
+    _logger = logging.getLogger(__name__)
+    is_postgres = 'postgresql' in str(db.engine.url)
+    inspector = sa_inspect(db.engine)
+
+    for model_cls in (SystemConfig, UserReport):
+        table_name = model_cls.__tablename__
+        if inspector.has_table(table_name):
+            continue  # table already exists – nothing to do
+
+        if is_postgres:
+            # Drop any orphaned sequence left over from a failed previous attempt.
+            # Validate sequence name to prevent SQL injection (only allow safe identifier chars).
+            seq_name = f'{table_name}_id_seq'
+            if not re.match(r'^[a-zA-Z0-9_]+$', seq_name):
+                _logger.error("Skipping sequence drop: unsafe name %r", seq_name)
+            else:
+                try:
+                    with db.engine.connect() as conn:
+                        conn.execute(text(f'DROP SEQUENCE IF EXISTS "{seq_name}"'))
+                        conn.commit()
+                except Exception as e:
+                    _logger.warning("Could not drop orphaned sequence %r: %s", seq_name, e)
+
+        try:
+            model_cls.__table__.create(bind=db.engine)
+            print(f"✅ 创建表 {table_name} 成功", flush=True)
+        except Exception as e:
+            _logger.error("Failed to create table %r: %s", table_name, e)
+            print(f"⚠️ 创建表 {table_name} 失败: {e}", flush=True)
+
 
 def fix_database_schema(app):
     """Add missing columns to existing tables (synchronous, runs before server starts)."""
@@ -109,25 +162,6 @@ def fix_database_schema(app):
             "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
             # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
             "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
-            # Report module: ensure system_config and user_reports tables exist
-            # (db.create_all() handles this, but keep as a safety net for existing deployments)
-            """CREATE TABLE IF NOT EXISTS system_config (
-                id SERIAL PRIMARY KEY,
-                key_name VARCHAR(50) UNIQUE NOT NULL,
-                value TEXT NOT NULL
-            )""",
-            """CREATE TABLE IF NOT EXISTS user_reports (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                submitter_id BIGINT,
-                fault_time VARCHAR(100),
-                fault_desc TEXT,
-                process_result TEXT,
-                photo_file_id VARCHAR(255),
-                channel_msg_id INTEGER,
-                status VARCHAR(20) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly
@@ -139,7 +173,13 @@ def fix_database_schema(app):
             except Exception:
                 # Column/index likely already exists, which is fine
                 pass
-        
+
+        # Ensure report module tables exist using SQLAlchemy (handles PostgreSQL sequences properly).
+        # Raw SERIAL DDL can fail if an orphaned sequence was left behind by a previously aborted
+        # table creation.  Using Table.create(checkfirst=True) lets SQLAlchemy generate the correct
+        # dialect-specific DDL and avoids the sequence name conflict.
+        _ensure_report_tables(db)
+
         print("✅ 数据库结构检查完成", flush=True)
 
 def run_flask():

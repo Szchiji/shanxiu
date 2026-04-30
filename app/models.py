@@ -735,17 +735,40 @@ class SystemConfig(db.Model):
 
     @classmethod
     def get_value(cls, key_name, default_value=""):
-        config = cls.query.filter_by(key_name=key_name).first()
-        return config.value if config else default_value
+        from app import db as _db
+        from sqlalchemy.exc import OperationalError, ProgrammingError
+        try:
+            config = cls.query.filter_by(key_name=key_name).first()
+            return config.value if config else default_value
+        except (OperationalError, ProgrammingError):
+            _db.session.rollback()
+            return default_value
 
     @classmethod
     def set_value(cls, key_name, value):
         from app import db as _db
-        obj = cls.query.filter_by(key_name=key_name).first()
-        if obj:
-            obj.value = value
-        else:
-            _db.session.add(cls(key_name=key_name, value=value))
+        from sqlalchemy.exc import OperationalError, ProgrammingError
+        import logging
+        _logger = logging.getLogger(__name__)
+        try:
+            obj = cls.query.filter_by(key_name=key_name).first()
+            if obj:
+                obj.value = value
+            else:
+                _db.session.add(cls(key_name=key_name, value=value))
+        except (OperationalError, ProgrammingError) as e:
+            _db.session.rollback()
+            _logger.warning("system_config table unavailable (%s), attempting db.create_all() and retrying", e)
+            # Table may not exist yet — create it and retry once
+            try:
+                _db.create_all()
+                obj = cls.query.filter_by(key_name=key_name).first()
+                if obj:
+                    obj.value = value
+                else:
+                    _db.session.add(cls(key_name=key_name, value=value))
+            except Exception as retry_err:
+                _logger.error("Failed to create system_config table and retry set_value: %s", retry_err)
 
 
 class UserReport(db.Model):

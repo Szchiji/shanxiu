@@ -96,6 +96,8 @@ def run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_user_id ON points_exchange_records(user_id)",
         # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
         "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
+        # system_config: Ensure id column exists (older deployments may have created the table without it)
+        "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
     ]
 
     with app.app_context():

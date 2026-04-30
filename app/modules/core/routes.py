@@ -398,6 +398,16 @@ def get_group_fields(group):
         except: pass
     return DEFAULT_FIELDS
 
+
+def _inject_report_links(text: str, tg_id) -> str:
+    """Replace {写报告链接} and {查报告链接} placeholders with Bot deep-links."""
+    if global_ptb_app and global_ptb_app.bot.username:
+        bot_username = global_ptb_app.bot.username
+        text = text.replace('{写报告链接}', f'https://t.me/{bot_username}?start=report_{tg_id}')
+        text = text.replace('{查报告链接}', f'https://t.me/{bot_username}?start=view_{tg_id}')
+    return text
+
+
 # --- Web Routes ---
 @core_bp.route('/')
 def index(): return redirect('/core/select_group') if session.get('logged_in') else render_template('base.html', page='login')
@@ -1646,10 +1656,7 @@ def api_save_user():
                     val = p.get(f['key'], '')
                     text = text.replace(f"{{{f['label']}}}", str(val))
                 # Inject report deep-link variables
-                if global_ptb_app and global_ptb_app.bot.username:
-                    _bu = global_ptb_app.bot.username
-                    text = text.replace('{写报告链接}', f'https://t.me/{_bu}?start=report_{u.tg_id}')
-                    text = text.replace('{查报告链接}', f'https://t.me/{_bu}?start=view_{u.tg_id}')
+                text = _inject_report_links(text, u.tg_id)
                 text = sanitize_html_for_telegram(text)
                 asyncio.run_coroutine_threadsafe(
                     global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
@@ -1994,10 +2001,7 @@ def api_push_user():
             text = text.replace(f"{{{f['label']}}}", str(val))
 
         # Inject report deep-link variables
-        if global_ptb_app and global_ptb_app.bot.username:
-            _bu = global_ptb_app.bot.username
-            text = text.replace('{写报告链接}', f'https://t.me/{_bu}?start=report_{user.tg_id}')
-            text = text.replace('{查报告链接}', f'https://t.me/{_bu}?start=view_{user.tg_id}')
+        text = _inject_report_links(text, user.tg_id)
 
         # Sanitize HTML before sending to Telegram
         text = sanitize_html_for_telegram(text)

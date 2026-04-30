@@ -452,7 +452,12 @@
                     </div>
                     
                     <label class="small text-muted fw-bold text-success">推送频道 ID</label>
-                    <input id="push_channel_id" class="form-control" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
+                    <input id="push_channel_id" class="form-control mb-3" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
+
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="auto_push_on_add" {{ 'checked' if conf.auto_push_on_add }}>
+                        <label class="small text-muted fw-bold">添加认证用户时自动推送</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -982,6 +987,7 @@
                 scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,
 
                 push_channel_id: document.getElementById('push_channel_id').value,
+                auto_push_on_add: document.getElementById('auto_push_on_add').checked,
                 custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 
                 online_emoji: "{{ conf.online_emoji }}", 
                 offline_emoji: "{{ conf.offline_emoji }}"

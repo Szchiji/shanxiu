@@ -1594,6 +1594,7 @@ def api_save_user():
     if not uid: return jsonify({'status':'error','msg':'No ID'})
     
     u = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
+    is_new_user = u is None
     if not u:
         u = GroupUser(group_id=gid, tg_id=uid)
         db.session.add(u)
@@ -1627,6 +1628,31 @@ def api_save_user():
             unban_user_in_group(gid, u.tg_id)
 
     db.session.commit()
+
+    # 添加新认证用户时自动推送到频道
+    if is_new_user:
+        try:
+            group = BotGroup.query.get(gid)
+            conf = get_group_conf(group)
+            if conf.get('auto_push_on_add') and conf.get('push_channel_id') and global_ptb_app and global_bot_loop:
+                cid = conf['push_channel_id']
+                tpl = conf.get('push_template', '用户: {tg_id}')
+                text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online else '🔴').replace('{序号}', str(u.id))
+                p = json.loads(u.profile_data or '{}')
+                for k, v in p.items():
+                    text = text.replace(f'{{{k}}}', str(v))
+                fields = get_group_fields(group)
+                for f in fields:
+                    val = p.get(f['key'], '')
+                    text = text.replace(f"{{{f['label']}}}", str(val))
+                text = sanitize_html_for_telegram(text)
+                asyncio.run_coroutine_threadsafe(
+                    global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
+                    global_bot_loop
+                )
+        except Exception as e:
+            logging.warning(f'Auto push on add failed: {e}')
+
     return jsonify({'status':'ok'})
 
 @core_bp.route('/api/delete_user', methods=['POST'])

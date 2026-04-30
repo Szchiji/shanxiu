@@ -814,6 +814,7 @@ DEFAULT_SYSTEM = {
     "msg_private_start": "👋 你好！我是打卡机器人。",  # 私聊 /start 消息
     "template": "{onlineEmoji} {昵称} | {地区}",
     "push_template": "<b>👤 名片推送</b>\n昵称：{昵称}\n<a href='tg://user?id={tg_id}'>联系我</a>",
+    "auto_push_on_add": False,  # 添加认证用户时自动推送
     "custom_buttons": "[]", # 🆕 初始化为空数组
     # 积分签到（独立于认证用户打卡）
     "signin_open": False, "signin_cmd": "签到",

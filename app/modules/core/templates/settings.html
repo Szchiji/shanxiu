@@ -452,7 +452,12 @@
                     </div>
                     
                     <label class="small text-muted fw-bold text-success">推送频道 ID</label>
-                    <input id="push_channel_id" class="form-control" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
+                    <input id="push_channel_id" class="form-control mb-3" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
+
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="auto_push_on_add" {{ 'checked' if conf.auto_push_on_add }}>
+                        <label class="small text-muted fw-bold">添加认证用户时自动推送</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -501,6 +506,8 @@
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                     <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{积分}', event)" title="本次签到获得积分">+积分</span>
                     <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{余额}', event)" title="签到后总余额">余额</span>
+                    <span class="badge-variable badge bg-danger text-white border" onmousedown="insert('{写报告链接}', event)" title="填写报告的 Bot 深链接">✏️写报告</span>
+                    <span class="badge-variable badge bg-secondary text-white border" onmousedown="insert('{查报告链接}', event)" title="查看历史报告的 Bot 深链接">📋查报告</span>
                 </div>
                 
                 <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
@@ -982,6 +989,7 @@
                 scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,
 
                 push_channel_id: document.getElementById('push_channel_id').value,
+                auto_push_on_add: document.getElementById('auto_push_on_add').checked,
                 custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 
                 online_emoji: "{{ conf.online_emoji }}", 
                 offline_emoji: "{{ conf.offline_emoji }}"

@@ -398,6 +398,16 @@ def get_group_fields(group):
         except: pass
     return DEFAULT_FIELDS
 
+
+def _inject_report_links(text: str, tg_id) -> str:
+    """Replace {写报告链接} and {查报告链接} placeholders with Bot deep-links."""
+    if global_ptb_app and global_ptb_app.bot.username:
+        bot_username = global_ptb_app.bot.username
+        text = text.replace('{写报告链接}', f'https://t.me/{bot_username}?start=report_{tg_id}')
+        text = text.replace('{查报告链接}', f'https://t.me/{bot_username}?start=view_{tg_id}')
+    return text
+
+
 # --- Web Routes ---
 @core_bp.route('/')
 def index(): return redirect('/core/select_group') if session.get('logged_in') else render_template('base.html', page='login')
@@ -1594,6 +1604,7 @@ def api_save_user():
     if not uid: return jsonify({'status':'error','msg':'No ID'})
     
     u = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
+    is_new_user = u is None
     if not u:
         u = GroupUser(group_id=gid, tg_id=uid)
         db.session.add(u)
@@ -1627,6 +1638,33 @@ def api_save_user():
             unban_user_in_group(gid, u.tg_id)
 
     db.session.commit()
+
+    # 添加新认证用户时自动推送到频道
+    if is_new_user:
+        try:
+            group = BotGroup.query.get(gid)
+            conf = get_group_conf(group)
+            if conf.get('auto_push_on_add') and conf.get('push_channel_id') and global_ptb_app and global_bot_loop:
+                cid = conf['push_channel_id']
+                tpl = conf.get('push_template', '用户: {tg_id}')
+                text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
+                p = json.loads(u.profile_data or '{}')
+                for k, v in p.items():
+                    text = text.replace(f'{{{k}}}', str(v))
+                fields = get_group_fields(group)
+                for f in fields:
+                    val = p.get(f['key'], '')
+                    text = text.replace(f"{{{f['label']}}}", str(val))
+                # Inject report deep-link variables
+                text = _inject_report_links(text, u.tg_id)
+                text = sanitize_html_for_telegram(text)
+                asyncio.run_coroutine_threadsafe(
+                    global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
+                    global_bot_loop
+                )
+        except Exception as e:
+            logging.warning(f'Auto push on add failed for group={gid} user={uid}: {e}')
+
     return jsonify({'status':'ok'})
 
 @core_bp.route('/api/delete_user', methods=['POST'])
@@ -1961,6 +1999,9 @@ def api_push_user():
         for f in fields:
             val = p.get(f['key'], '')
             text = text.replace(f"{{{f['label']}}}", str(val))
+
+        # Inject report deep-link variables
+        text = _inject_report_links(text, user.tg_id)
 
         # Sanitize HTML before sending to Telegram
         text = sanitize_html_for_telegram(text)

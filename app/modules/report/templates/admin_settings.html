@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container py-4" style="max-width:700px">
+<div class="container py-4" style="max-width:760px">
     <h2 class="mb-4">⚙️ 报告系统设置</h2>
 
     {% with messages = get_flashed_messages() %}
@@ -11,7 +11,11 @@
       {% endif %}
     {% endwith %}
 
-    <form method="POST">
+    <form method="POST" id="reportSettingsForm" onsubmit="serializeQuestions()">
+        {# Hidden field that receives the serialised questions JSON #}
+        <input type="hidden" name="questions_json" id="questions_json">
+
+        {# ── Section 1: Channel & Group ── #}
         <div class="card mb-4">
             <div class="card-header">📢 频道与群组配置</div>
             <div class="card-body">
@@ -32,29 +36,142 @@
             </div>
         </div>
 
+        {# ── Section 2: Dynamic Questions ── #}
         <div class="card mb-4">
-            <div class="card-header">🤖 机器人问答模板</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>🤖 机器人问答模板</span>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQuestion()">
+                    ＋ 添加问题
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <div id="questionList" class="list-group list-group-flush">
+                    {% for q in questions %}
+                    <div class="list-group-item question-row">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="text-muted drag-handle" style="cursor:grab;font-size:1.2rem">⠿</span>
+                            <input type="text" class="form-control q-text"
+                                   value="{{ q.text }}" placeholder="输入问题内容…" required>
+                            <div class="form-check form-switch ms-2 mb-0 text-nowrap">
+                                <input class="form-check-input q-required" type="checkbox"
+                                       {% if q.required %}checked{% endif %}>
+                                <label class="form-check-label small">必填</label>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                                    onclick="removeQuestion(this)" title="删除此问题">🗑</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% if not questions %}
+                <div id="emptyHint" class="text-muted small p-3">暂无问题，点击「添加问题」开始配置。</div>
+                {% endif %}
+            </div>
+            <div class="card-footer text-muted small">
+                拖拽 ⠿ 可调整顺序；未勾选「必填」时，用户在 Bot 中可输入 <code>-</code> 跳过该步骤。
+            </div>
+        </div>
+
+        {# ── Section 3: Push Content ── #}
+        <div class="card mb-4">
+            <div class="card-header">📣 推送展示内容设置</div>
             <div class="card-body">
                 <div class="mb-3">
-                    <label class="form-label">问题 1（故障时间）</label>
-                    <input type="text" class="form-control" name="question_1"
-                           value="{{ settings.question_1 }}">
+                    <label class="form-label">频道推送模板</label>
+                    <textarea class="form-control font-monospace" name="report_push_template"
+                              rows="6" style="font-size:.85rem">{{ settings.report_push_template }}</textarea>
+                    <div class="form-text">
+                        可用占位符：<code>{report_id}</code> – 报告编号；
+                        <code>{answers}</code> – 所有问答内容（自动格式化）。
+                        支持 Telegram HTML 标签（<code>&lt;b&gt;</code>、<code>&lt;a&gt;</code> 等）。
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">问题 2（故障现象）</label>
-                    <input type="text" class="form-control" name="question_2"
-                           value="{{ settings.question_2 }}">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="reportPushMedia"
+                           name="report_push_media"
+                           {% if settings.report_push_media != 'false' %}checked{% endif %}>
+                    <label class="form-check-label" for="reportPushMedia">
+                        推送时附带多媒体（现场照片）
+                    </label>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">问题 3（处理结果）</label>
-                    <input type="text" class="form-control" name="question_3"
-                           value="{{ settings.question_3 }}">
+                <div class="form-text mt-1">
+                    关闭后，Bot 将跳过拍照步骤，频道推送仅发送文字内容。
                 </div>
-                <p class="text-muted small">注：第四步将固定要求用户发送现场照片，无需在此设置。</p>
             </div>
         </div>
 
         <button type="submit" class="btn btn-primary">💾 保存所有设置</button>
     </form>
 </div>
+
+<script>
+/* ── Drag-to-reorder via HTML5 DnD ── */
+(function () {
+    let draggingEl = null;
+    const list = document.getElementById('questionList');
+
+    list.addEventListener('dragstart', e => {
+        draggingEl = e.target.closest('.question-row');
+        if (draggingEl) draggingEl.classList.add('opacity-50');
+    });
+    list.addEventListener('dragover', e => {
+        e.preventDefault();
+        const target = e.target.closest('.question-row');
+        if (target && target !== draggingEl) {
+            const rect = target.getBoundingClientRect();
+            const after = e.clientY > rect.top + rect.height / 2;
+            list.insertBefore(draggingEl, after ? target.nextSibling : target);
+        }
+    });
+    list.addEventListener('dragend', () => {
+        if (draggingEl) { draggingEl.classList.remove('opacity-50'); draggingEl = null; }
+    });
+    // Make rows draggable when handle is grabbed
+    list.addEventListener('mousedown', e => {
+        if (e.target.classList.contains('drag-handle')) {
+            e.target.closest('.question-row').draggable = true;
+        }
+    });
+    list.addEventListener('mouseup', e => {
+        const row = e.target.closest('.question-row');
+        if (row) row.draggable = false;
+    });
+})();
+
+function addQuestion() {
+    const list = document.getElementById('questionList');
+    const hint = document.getElementById('emptyHint');
+    if (hint) hint.remove();
+
+    const row = document.createElement('div');
+    row.className = 'list-group-item question-row';
+    row.innerHTML = `
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-muted drag-handle" style="cursor:grab;font-size:1.2rem">⠿</span>
+            <input type="text" class="form-control q-text" placeholder="输入问题内容…" required>
+            <div class="form-check form-switch ms-2 mb-0 text-nowrap">
+                <input class="form-check-input q-required" type="checkbox" checked>
+                <label class="form-check-label small">必填</label>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                    onclick="removeQuestion(this)" title="删除此问题">🗑</button>
+        </div>`;
+    list.appendChild(row);
+    row.querySelector('.q-text').focus();
+}
+
+function removeQuestion(btn) {
+    btn.closest('.question-row').remove();
+}
+
+function serializeQuestions() {
+    const questions = [];
+    document.querySelectorAll('.question-row').forEach(row => {
+        const text = row.querySelector('.q-text').value.trim();
+        const required = row.querySelector('.q-required').checked;
+        if (text) questions.push({ text, required });
+    });
+    document.getElementById('questions_json').value = JSON.stringify(questions);
+}
+</script>
 {% endblock %}

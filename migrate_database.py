@@ -98,6 +98,8 @@ def run_migrations():
         "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
         # system_config: Ensure id column exists (older deployments may have created the table without it)
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
+        # user_reports: Store dynamic question answers as JSON
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
     ]
 
     with app.app_context():

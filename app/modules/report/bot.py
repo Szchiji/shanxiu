@@ -2,10 +2,10 @@
 Report module – Telegram bot handlers.
 
 Conversation flow (triggered by /start report_<user_id>):
-  STEP_TIME   → ask fault time
-  STEP_DESC   → ask fault description
-  STEP_RESULT → ask process result
-  STEP_PHOTO  → ask for a photo, then save & notify admins
+  Questions are loaded dynamically from SystemConfig key ``report_questions``
+  (JSON array of ``{"text": str, "required": bool}``).
+  After all questions the bot optionally asks for a photo depending on
+  the ``report_push_media`` config flag.
 
 View flow (triggered by /start view_<user_id>):
   Lists all approved reports for the target user and links to channel messages.
@@ -15,6 +15,7 @@ Audit callbacks (inline keyboard in admin group):
   audit_reject_<id>   → update status, notify submitter
 """
 
+import json
 import logging
 import asyncio
 
@@ -34,10 +35,16 @@ from telegram.ext import (
 logger = logging.getLogger(__name__)
 
 # Conversation states
-STEP_TIME, STEP_DESC, STEP_RESULT, STEP_PHOTO = range(4)
+STEP_QUESTION, STEP_PHOTO = range(2)
 
 # Key used to store the target user_id inside conversation user_data
 _TARGET_KEY = '_report_target_user_id'
+
+_DEFAULT_QUESTIONS = [
+    {"text": "请问故障发生的时间是？", "required": True},
+    {"text": "请描述具体的故障现象？", "required": True},
+    {"text": "最终的处理结果是什么？", "required": True},
+]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -52,6 +59,132 @@ def _db_get_config(flask_app, key: str, default: str = '') -> str:
     with flask_app.app_context():
         from app.models import SystemConfig
         return SystemConfig.get_value(key, default)
+
+
+def _load_questions(flask_app) -> list:
+    """Return the configured question list, falling back to defaults."""
+    raw = _db_get_config(flask_app, 'report_questions', '')
+    try:
+        qs = json.loads(raw) if raw else _DEFAULT_QUESTIONS
+        return qs if qs else _DEFAULT_QUESTIONS
+    except (ValueError, TypeError):
+        return _DEFAULT_QUESTIONS
+
+
+def _push_media_enabled(flask_app) -> bool:
+    """Return True if channel push should include the photo."""
+    val = _db_get_config(flask_app, 'report_push_media', 'true')
+    return val.lower() != 'false'
+
+
+def _build_answers_block(answers: list) -> str:
+    """Format a list of {question, answer} dicts as a readable text block."""
+    lines = []
+    for item in answers:
+        q = item.get('question', '')
+        a = item.get('answer', '')
+        lines.append(f'❓ {q}\n💬 {a}')
+    return '\n\n'.join(lines)
+
+
+def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
+    """Build the channel-push caption from the configured template."""
+    template = _db_get_config(
+        flask_app,
+        'report_push_template',
+        '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
+    )
+    answers_block = _build_answers_block(answers)
+    return template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
+
+
+def _prompt_for_question(questions: list, idx: int, total: int) -> str:
+    q = questions[idx]
+    optional_hint = '' if q.get('required', True) else '（选填，输入 - 可跳过）'
+    return f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared save-and-notify helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _save_and_notify(update: Update, context: ContextTypes.DEFAULT_TYPE, photo_file_id):
+    flask_app = _get_flask_app(context)
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    raw_answers = context.user_data.get('answers', [])
+
+    # Build structured answers list
+    answers = [
+        {"question": questions[i]["text"], "answer": raw_answers[i]}
+        for i in range(min(len(questions), len(raw_answers)))
+    ]
+
+    submitter_id = update.effective_user.id if update.effective_user else None
+    target_user_id = context.user_data.get(_TARGET_KEY)
+
+    def _save():
+        with flask_app.app_context():
+            from app.models import UserReport
+            from app import db
+            r = UserReport(
+                user_id=target_user_id,
+                submitter_id=submitter_id,
+                # Legacy columns – populated from first three answers for backward compat
+                fault_time=raw_answers[0] if len(raw_answers) > 0 else '',
+                fault_desc=raw_answers[1] if len(raw_answers) > 1 else '',
+                process_result=raw_answers[2] if len(raw_answers) > 2 else '',
+                photo_file_id=photo_file_id,
+                answers=json.dumps(answers, ensure_ascii=False),
+                status='pending',
+            )
+            db.session.add(r)
+            db.session.commit()
+            return r.id
+
+    loop = asyncio.get_running_loop()
+    report_id = await loop.run_in_executor(None, _save)
+
+    # Notify admin group
+    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '')
+    if admin_group_id_str:
+        try:
+            admin_group_id = int(admin_group_id_str)
+            answers_block = _build_answers_block(answers)
+            caption = (
+                f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
+                f"👤 针对用户 ID：<code>{target_user_id}</code>\n\n"
+                f"{answers_block}\n\n"
+                f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton('✅ 通过', callback_data=f'audit_approve_{report_id}'),
+                    InlineKeyboardButton('❌ 驳回', callback_data=f'audit_reject_{report_id}'),
+                ]
+            ])
+            if photo_file_id:
+                await update.get_bot().send_photo(
+                    chat_id=admin_group_id,
+                    photo=photo_file_id,
+                    caption=caption,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+            else:
+                await update.get_bot().send_message(
+                    chat_id=admin_group_id,
+                    text=caption,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+        except Exception as e:
+            logger.error(f'Failed to notify admin group: {e}')
+
+    await update.message.reply_text(
+        '🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。'
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -75,31 +208,44 @@ async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return ConversationHandler.END
 
-    q1 = _db_get_config(flask_app, 'question_1', '请问故障发生的时间是？')
-    await update.message.reply_text(f'📝 开始填写报告（共4步）\n\n第1步：{q1}')
-    return STEP_TIME
+    questions = _load_questions(flask_app)
+    context.user_data['questions'] = questions
+    context.user_data['answers'] = []
+    context.user_data['current_q_idx'] = 0
+
+    total = len(questions)
+    await update.message.reply_text(
+        f'📝 开始填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total)
+    )
+    return STEP_QUESTION
 
 
-async def report_step_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['fault_time'] = update.message.text.strip()
+async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flask_app = _get_flask_app(context)
-    q2 = _db_get_config(flask_app, 'question_2', '请描述具体的故障现象？') if flask_app else '请描述具体的故障现象？'
-    await update.message.reply_text(f'第2步：{q2}')
-    return STEP_DESC
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    idx = context.user_data.get('current_q_idx', 0)
+    answer = update.message.text.strip()
 
+    # Handle optional-skip marker
+    if answer == '-' and not questions[idx].get('required', True):
+        answer = ''
 
-async def report_step_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['fault_desc'] = update.message.text.strip()
-    flask_app = _get_flask_app(context)
-    q3 = _db_get_config(flask_app, 'question_3', '最终的处理结果是什么？') if flask_app else '最终的处理结果是什么？'
-    await update.message.reply_text(f'第3步：{q3}')
-    return STEP_RESULT
+    context.user_data['answers'].append(answer)
+    idx += 1
+    context.user_data['current_q_idx'] = idx
 
+    total = len(questions)
+    if idx < total:
+        await update.message.reply_text(_prompt_for_question(questions, idx, total))
+        return STEP_QUESTION
 
-async def report_step_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['process_result'] = update.message.text.strip()
-    await update.message.reply_text('第4步：请发送现场照片 📷')
-    return STEP_PHOTO
+    # All questions answered – check if photo is needed
+    if flask_app and _push_media_enabled(flask_app):
+        await update.message.reply_text(f'第{total + 1}步：请发送现场照片 📷')
+        return STEP_PHOTO
+
+    # No photo required – save and finish directly
+    return await _save_and_notify(update, context, None)
 
 
 async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,66 +265,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ 请发送一张图片。')
         return STEP_PHOTO
 
-    submitter_id = update.effective_user.id if update.effective_user else None
-    target_user_id = context.user_data.get(_TARGET_KEY)
-    fault_time = context.user_data.get('fault_time', '')
-    fault_desc = context.user_data.get('fault_desc', '')
-    process_result = context.user_data.get('process_result', '')
-
-    def _save_report():
-        with flask_app.app_context():
-            from app.models import UserReport
-            from app import db
-            report = UserReport(
-                user_id=target_user_id,
-                submitter_id=submitter_id,
-                fault_time=fault_time,
-                fault_desc=fault_desc,
-                process_result=process_result,
-                photo_file_id=photo_file_id,
-                status='pending',
-            )
-            db.session.add(report)
-            db.session.commit()
-            return report.id
-
-    loop = asyncio.get_running_loop()
-    report_id = await loop.run_in_executor(None, _save_report)
-
-    # Notify admin group
-    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '')
-    if admin_group_id_str:
-        try:
-            admin_group_id = int(admin_group_id_str)
-            caption = (
-                f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
-                f"👤 针对用户 ID：<code>{target_user_id}</code>\n"
-                f"⏰ 故障时间：{fault_time}\n"
-                f"🔧 故障现象：{fault_desc}\n"
-                f"✅ 处理结果：{process_result}\n\n"
-                f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
-            )
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton('✅ 通过', callback_data=f'audit_approve_{report_id}'),
-                    InlineKeyboardButton('❌ 驳回', callback_data=f'audit_reject_{report_id}'),
-                ]
-            ])
-            await update.get_bot().send_photo(
-                chat_id=admin_group_id,
-                photo=photo_file_id,
-                caption=caption,
-                parse_mode='HTML',
-                reply_markup=keyboard,
-            )
-        except Exception as e:
-            logger.error(f'Failed to notify admin group: {e}')
-
-    await update.message.reply_text(
-        '🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。'
-    )
-    context.user_data.clear()
-    return ConversationHandler.END
+    return await _save_and_notify(update, context, photo_file_id)
 
 
 async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -268,15 +355,27 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             r = UserReport.query.get(report_id)
             if r is None:
                 return None
+            answers = []
+            if r.answers:
+                try:
+                    answers = json.loads(r.answers)
+                except (ValueError, TypeError):
+                    pass
+            # Fall back to legacy columns when answers JSON is absent
+            if not answers:
+                if r.fault_time:
+                    answers.append({"question": "故障时间", "answer": r.fault_time})
+                if r.fault_desc:
+                    answers.append({"question": "故障现象", "answer": r.fault_desc})
+                if r.process_result:
+                    answers.append({"question": "处理结果", "answer": r.process_result})
             return {
                 'id': r.id,
                 'user_id': r.user_id,
                 'submitter_id': r.submitter_id,
-                'fault_time': r.fault_time,
-                'fault_desc': r.fault_desc,
-                'process_result': r.process_result,
                 'photo_file_id': r.photo_file_id,
                 'status': r.status,
+                'answers': answers,
             }
 
     loop = asyncio.get_running_loop()
@@ -322,24 +421,27 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f'Failed to notify submitter {submitter_id} of rejection: {e}')
         return
 
-    # approve
+    # approve – build caption from template
     channel = _db_get_config(flask_app, 'report_channel', '')
     channel_msg_id = None
+    push_media = _push_media_enabled(flask_app)
+    caption = _build_push_caption(flask_app, report_id, report['answers'])
 
-    if channel and report['photo_file_id']:
-        caption = (
-            f'📋 <b>认证用户报告 #{report_id}</b>\n\n'
-            f'⏰ 故障时间：{report["fault_time"]}\n'
-            f'🔧 故障现象：{report["fault_desc"]}\n'
-            f'✅ 处理结果：{report["process_result"]}'
-        )
+    if channel:
         try:
-            sent = await query.get_bot().send_photo(
-                chat_id=channel,
-                photo=report['photo_file_id'],
-                caption=caption,
-                parse_mode='HTML',
-            )
+            if push_media and report['photo_file_id']:
+                sent = await query.get_bot().send_photo(
+                    chat_id=channel,
+                    photo=report['photo_file_id'],
+                    caption=caption,
+                    parse_mode='HTML',
+                )
+            else:
+                sent = await query.get_bot().send_message(
+                    chat_id=channel,
+                    text=caption,
+                    parse_mode='HTML',
+                )
             channel_msg_id = sent.message_id
         except Exception as e:
             logger.error(f'Failed to publish report to channel: {e}')
@@ -389,9 +491,7 @@ report_conv_handler = ConversationHandler(
         )
     ],
     states={
-        STEP_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_time)],
-        STEP_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_desc)],
-        STEP_RESULT: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_result)],
+        STEP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_question)],
         STEP_PHOTO: [
             MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo)
         ],

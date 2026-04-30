@@ -784,6 +784,8 @@ class UserReport(db.Model):
     channel_msg_id = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    # Stores all dynamic question answers as JSON: [{"question": "...", "answer": "..."}, ...]
+    answers = db.Column(db.Text, nullable=True)
 
 
 DEFAULT_FIELDS = [

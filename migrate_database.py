@@ -7,6 +7,7 @@ Usage:
 """
 from app import create_app, db
 from sqlalchemy import text
+import re
 import sys
 
 app = create_app()
@@ -129,6 +130,29 @@ def run_migrations():
             f"✅ 数据库迁移完成 (执行: {success_count}, 跳过: {skip_count})",
             flush=True,
         )
+
+        # system_config: Drop NOT NULL constraints from any legacy columns not in the current
+        # ORM model so that new ORM inserts (which only supply id, key_name, value) succeed.
+        if 'postgresql' in str(db.engine.url):
+            from sqlalchemy import inspect as sa_inspect
+            try:
+                inspector = sa_inspect(db.engine)
+                if inspector.has_table('system_config'):
+                    known_cols = {'id', 'key_name', 'value'}
+                    for col in inspector.get_columns('system_config'):
+                        if col['name'] not in known_cols and not col.get('nullable', True):
+                            col_name = col['name']
+                            # Validate column name to prevent SQL injection
+                            if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
+                                continue
+                            try:
+                                with db.engine.connect() as conn:
+                                    conn.execute(text(f'ALTER TABLE system_config ALTER COLUMN "{col_name}" DROP NOT NULL'))
+                                    conn.commit()
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':

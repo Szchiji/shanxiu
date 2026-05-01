@@ -29,9 +29,11 @@
                     {% if settings.admin_group_id %}
                     <div class="mt-1 small">
                         当前已配置：<code>{{ settings.admin_group_id }}</code>
+                        {% set ns = namespace(found=false) %}
                         {% for g in all_groups %}
-                          {% if g.chat_id == settings.admin_group_id %}
+                          {% if not ns.found and g.chat_id == settings.admin_group_id %}
                             &nbsp;→&nbsp;<b>{{ g.title }}</b>
+                            {% set ns.found = true %}
                           {% endif %}
                         {% endfor %}
                     </div>
@@ -58,13 +60,15 @@
                            id="report_channel"
                            value="{{ settings.report_channel }}"
                            placeholder="例如 @shanxiu_reports 或 -1009876543210">
-                    <div class="form-text">审核通过的报告将发布到此频道。</div>
+                    <div class="form-text">审核通过的报告将发布到此频道。输入机器人已加入频道的数字 ID，或从下方列表中选择。</div>
                     {% if settings.report_channel %}
                     <div class="mt-1 small">
                         当前已配置：<code>{{ settings.report_channel }}</code>
+                        {% set ns = namespace(found=false) %}
                         {% for g in all_groups %}
-                          {% if g.chat_id == settings.report_channel %}
+                          {% if not ns.found and g.chat_id == settings.report_channel %}
                             &nbsp;→&nbsp;<b>{{ g.title }}</b>
+                            {% set ns.found = true %}
                           {% endif %}
                         {% endfor %}
                     </div>

@@ -7,6 +7,11 @@ Conversation flow (triggered by /start report_<user_id>):
   After all questions the bot optionally asks for a photo depending on
   the ``report_push_media`` config flag.
 
+  States:
+    STEP_QUESTION – collecting text answers one by one
+    STEP_PHOTO    – waiting for the user to send a photo (or skip)
+    STEP_CONFIRM  – showing a summary and waiting for confirm/cancel
+
 View flow (triggered by /start view_<user_id>):
   Lists all approved reports for the target user and links to channel messages.
 
@@ -35,7 +40,7 @@ from telegram.ext import (
 logger = logging.getLogger(__name__)
 
 # Conversation states
-STEP_QUESTION, STEP_PHOTO = range(2)
+STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM = range(3)
 
 # Key used to store the target user_id inside conversation user_data
 _TARGET_KEY = '_report_target_user_id'
@@ -88,103 +93,30 @@ def _build_answers_block(answers: list) -> str:
 
 
 def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
-    """Build the channel-push caption from the configured template."""
+    """Build the channel-push caption from the configured template.
+
+    Supported placeholders:
+      {report_id} – numeric report ID
+      {answers}   – all Q&A pairs formatted as a block
+      {q1}, {q2}, … {qN} – individual answer for question N (1-indexed)
+    """
     template = _db_get_config(
         flask_app,
         'report_push_template',
         '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
     )
     answers_block = _build_answers_block(answers)
-    return template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
+    result = template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
+    # Replace individual answer placeholders {q1}, {q2}, …
+    for i, item in enumerate(answers, 1):
+        result = result.replace(f'{{q{i}}}', item.get('answer', ''))
+    return result
 
 
 def _prompt_for_question(questions: list, idx: int, total: int) -> str:
     q = questions[idx]
     optional_hint = '' if q.get('required', True) else '（选填，输入 - 可跳过）'
     return f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Shared save-and-notify helper
-# ──────────────────────────────────────────────────────────────────────────────
-
-async def _save_and_notify(update: Update, context: ContextTypes.DEFAULT_TYPE, photo_file_id):
-    flask_app = _get_flask_app(context)
-    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
-    raw_answers = context.user_data.get('answers', [])
-
-    # Build structured answers list
-    answers = [
-        {"question": questions[i]["text"], "answer": raw_answers[i]}
-        for i in range(min(len(questions), len(raw_answers)))
-    ]
-
-    submitter_id = update.effective_user.id if update.effective_user else None
-    target_user_id = context.user_data.get(_TARGET_KEY)
-
-    def _save():
-        with flask_app.app_context():
-            from app.models import UserReport
-            from app import db
-            r = UserReport(
-                user_id=target_user_id,
-                submitter_id=submitter_id,
-                # Legacy columns – populated from first three answers for backward compat
-                fault_time=raw_answers[0] if len(raw_answers) > 0 else '',
-                fault_desc=raw_answers[1] if len(raw_answers) > 1 else '',
-                process_result=raw_answers[2] if len(raw_answers) > 2 else '',
-                photo_file_id=photo_file_id,
-                answers=json.dumps(answers, ensure_ascii=False),
-                status='pending',
-            )
-            db.session.add(r)
-            db.session.commit()
-            return r.id
-
-    loop = asyncio.get_running_loop()
-    report_id = await loop.run_in_executor(None, _save)
-
-    # Notify admin group
-    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '')
-    if admin_group_id_str:
-        try:
-            admin_group_id = int(admin_group_id_str)
-            answers_block = _build_answers_block(answers)
-            caption = (
-                f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
-                f"👤 针对用户 ID：<code>{target_user_id}</code>\n\n"
-                f"{answers_block}\n\n"
-                f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
-            )
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton('✅ 通过', callback_data=f'audit_approve_{report_id}'),
-                    InlineKeyboardButton('❌ 驳回', callback_data=f'audit_reject_{report_id}'),
-                ]
-            ])
-            if photo_file_id:
-                await update.get_bot().send_photo(
-                    chat_id=admin_group_id,
-                    photo=photo_file_id,
-                    caption=caption,
-                    parse_mode='HTML',
-                    reply_markup=keyboard,
-                )
-            else:
-                await update.get_bot().send_message(
-                    chat_id=admin_group_id,
-                    text=caption,
-                    parse_mode='HTML',
-                    reply_markup=keyboard,
-                )
-        except Exception as e:
-            logger.error(f'Failed to notify admin group: {e}')
-
-    await update.message.reply_text(
-        '🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。'
-    )
-    context.user_data.clear()
-    return ConversationHandler.END
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -226,6 +158,11 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
     idx = context.user_data.get('current_q_idx', 0)
     answer = update.message.text.strip()
 
+    # Validate required questions: reject empty or whitespace-only answers
+    if questions[idx].get('required', True) and not answer:
+        await update.message.reply_text('⚠️ 此项为必填，请输入有效内容。')
+        return STEP_QUESTION
+
     # Handle optional-skip marker
     if answer == '-' and not questions[idx].get('required', True):
         answer = ''
@@ -241,11 +178,40 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # All questions answered – check if photo is needed
     if flask_app and _push_media_enabled(flask_app):
-        await update.message.reply_text(f'第{total + 1}步：请发送现场照片 📷')
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
+        ]])
+        await update.message.reply_text(
+            f'第{total + 1}步：请发送现场照片 📷\n\n如没有照片，可点击下方按钮跳过。',
+            reply_markup=keyboard,
+        )
         return STEP_PHOTO
 
-    # No photo required – save and finish directly
-    return await _save_and_notify(update, context, None)
+    # No photo required – go to confirmation summary
+    return await _show_confirm(update, context)
+
+
+async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a summary of all answers and ask the user to confirm or cancel."""
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    raw_answers = context.user_data.get('answers', [])
+    photo_file_id = context.user_data.get('photo_file_id')
+
+    lines = ['📝 <b>请确认以下报告内容：</b>\n']
+    for i, q in enumerate(questions):
+        ans = raw_answers[i] if i < len(raw_answers) else ''
+        ans_display = ans if ans else '<i>（已跳过）</i>'
+        lines.append(f'❓ {q["text"]}\n💬 {ans_display}')
+    if photo_file_id:
+        lines.append('\n📷 已附带现场照片')
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton('✅ 确认提交', callback_data='report_confirm_submit'),
+        InlineKeyboardButton('✏️ 重新填写', callback_data='report_restart'),
+    ]])
+    msg = '\n\n'.join(lines)
+    await update.message.reply_text(msg, parse_mode='HTML', reply_markup=keyboard)
+    return STEP_CONFIRM
 
 
 async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -262,10 +228,146 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.document.mime_type.startswith('image/'):
         photo_file_id = update.message.document.file_id
     else:
-        await update.message.reply_text('❌ 请发送一张图片。')
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
+        ]])
+        await update.message.reply_text('❌ 请发送一张图片，或点击下方按钮跳过拍照步骤。',
+                                        reply_markup=keyboard)
         return STEP_PHOTO
 
-    return await _save_and_notify(update, context, photo_file_id)
+    context.user_data['photo_file_id'] = photo_file_id
+    return await _show_confirm(update, context)
+
+
+async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline-keyboard actions from the confirmation/skip/restart screen."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ''
+
+    if data == 'report_skip_photo':
+        context.user_data['photo_file_id'] = None
+        return await _show_confirm_from_callback(query, context)
+
+    if data == 'report_restart':
+        # Restart from question 0 keeping the same target user and questions
+        context.user_data['answers'] = []
+        context.user_data['current_q_idx'] = 0
+        context.user_data.pop('photo_file_id', None)
+        questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+        total = len(questions)
+        await query.edit_message_text(
+            f'📝 重新填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total)
+        )
+        return STEP_QUESTION
+
+    if data == 'report_confirm_submit':
+        photo_file_id = context.user_data.get('photo_file_id')
+        # Replace the confirm message with a "submitting…" notice
+        await query.edit_message_text('⏳ 正在提交报告，请稍候…')
+        return await _save_and_notify_from_callback(query, context, photo_file_id)
+
+    return STEP_CONFIRM
+
+
+async def _show_confirm_from_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    """Same as _show_confirm but edits an existing message instead of sending a new one."""
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    raw_answers = context.user_data.get('answers', [])
+    photo_file_id = context.user_data.get('photo_file_id')
+
+    lines = ['📝 <b>请确认以下报告内容：</b>\n']
+    for i, q in enumerate(questions):
+        ans = raw_answers[i] if i < len(raw_answers) else ''
+        ans_display = ans if ans else '<i>（已跳过）</i>'
+        lines.append(f'❓ {q["text"]}\n💬 {ans_display}')
+    if photo_file_id:
+        lines.append('\n📷 已附带现场照片')
+    else:
+        lines.append('\n📷 无现场照片')
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton('✅ 确认提交', callback_data='report_confirm_submit'),
+        InlineKeyboardButton('✏️ 重新填写', callback_data='report_restart'),
+    ]])
+    await query.edit_message_text('\n\n'.join(lines), parse_mode='HTML', reply_markup=keyboard)
+    return STEP_CONFIRM
+
+
+async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TYPE, photo_file_id):
+    """Like _save_and_notify but called from a CallbackQuery (no update.message)."""
+    flask_app = _get_flask_app(context)
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    raw_answers = context.user_data.get('answers', [])
+
+    answers = [
+        {"question": questions[i]["text"], "answer": raw_answers[i]}
+        for i in range(min(len(questions), len(raw_answers)))
+    ]
+
+    submitter_id = query.from_user.id if query.from_user else None
+    target_user_id = context.user_data.get(_TARGET_KEY)
+
+    def _save():
+        with flask_app.app_context():
+            from app.models import UserReport
+            from app import db
+            r = UserReport(
+                user_id=target_user_id,
+                submitter_id=submitter_id,
+                fault_time=raw_answers[0] if len(raw_answers) > 0 else '',
+                fault_desc=raw_answers[1] if len(raw_answers) > 1 else '',
+                process_result=raw_answers[2] if len(raw_answers) > 2 else '',
+                photo_file_id=photo_file_id,
+                answers=json.dumps(answers, ensure_ascii=False),
+                status='pending',
+            )
+            db.session.add(r)
+            db.session.commit()
+            return r.id
+
+    loop = asyncio.get_running_loop()
+    report_id = await loop.run_in_executor(None, _save)
+
+    # Notify admin group
+    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '')
+    if admin_group_id_str:
+        try:
+            admin_group_id = int(admin_group_id_str)
+            answers_block = _build_answers_block(answers)
+            caption = (
+                f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
+                f"👤 针对用户 ID：<code>{target_user_id}</code>\n\n"
+                f"{answers_block}\n\n"
+                f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton('✅ 通过', callback_data=f'audit_approve_{report_id}'),
+                    InlineKeyboardButton('❌ 驳回', callback_data=f'audit_reject_{report_id}'),
+                ]
+            ])
+            if photo_file_id:
+                await query.get_bot().send_photo(
+                    chat_id=admin_group_id,
+                    photo=photo_file_id,
+                    caption=caption,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+            else:
+                await query.get_bot().send_message(
+                    chat_id=admin_group_id,
+                    text=caption,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+        except Exception as e:
+            logger.error(f'Failed to notify admin group: {e}')
+
+    await query.edit_message_text('🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。')
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -511,7 +613,16 @@ report_conv_handler = ConversationHandler(
     states={
         STEP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_question)],
         STEP_PHOTO: [
-            MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo)
+            MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo),
+            # Text fallback: tell the user to send a photo (or skip)
+            MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_photo),
+            # Inline-keyboard: skip photo or restart
+            CallbackQueryHandler(report_confirm_callback,
+                                 pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
+        ],
+        STEP_CONFIRM: [
+            CallbackQueryHandler(report_confirm_callback,
+                                 pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
         ],
     },
     fallbacks=[

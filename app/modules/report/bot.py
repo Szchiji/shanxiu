@@ -438,24 +438,39 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_reports():
         with flask_app.app_context():
-            from app.models import UserReport, SystemConfig
+            from app.models import UserReport, SystemConfig, GroupMember
             reports = UserReport.query.filter_by(
                 user_id=target_user_id, status='approved'
             ).order_by(UserReport.created_at.desc()).all()
             channel = SystemConfig.get_value('report_channel', '')
-            return reports, channel
+            member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            return reports, channel, member
 
     loop = asyncio.get_running_loop()
-    reports, channel = await loop.run_in_executor(None, _get_reports)
+    reports, channel, member = await loop.run_in_executor(None, _get_reports)
+
+    # Build a human-readable identity string
+    def _user_identity(member) -> str:
+        parts = []
+        if member:
+            name = ' '.join(filter(None, [member.first_name, member.last_name]))
+            if name:
+                parts.append(name)
+            if member.username:
+                parts.append(f'@{member.username}')
+        parts.append(f'ID: {target_user_id}')
+        return ' ｜ '.join(parts)
+
+    identity = _user_identity(member)
 
     if not reports:
         await update.message.reply_text(
-            f'📭 该认证用户（ID: {target_user_id}）目前还没有任何历史报告。\n\n'
+            f'📭 该认证用户（{identity}）目前还没有任何历史报告。\n\n'
             '要不要成为第一个给 TA 写报告的人？'
         )
         return
 
-    lines = [f'📋 <b>用户 {target_user_id} 的历史报告（共 {len(reports)} 份）：</b>\n']
+    lines = [f'📋 <b>{identity} 的历史报告（共 {len(reports)} 份）：</b>\n']
     for i, r in enumerate(reports, 1):
         date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
         line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'

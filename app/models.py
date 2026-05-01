@@ -763,10 +763,13 @@ class SystemConfig(db.Model):
         repaired = False
         try:
             inspector = sa_inspect(_db.engine)
+            pk_cols = set(inspector.get_pk_constraint('system_config').get('constrained_columns', []))
             for col in inspector.get_columns('system_config'):
                 if col['name'] in known_cols or col.get('nullable', True):
                     continue
                 col_name = col['name']
+                if col_name in pk_cols:
+                    continue  # primary key columns cannot have NOT NULL dropped
                 # Validate column name before interpolating into DDL to prevent SQL injection.
                 # ALTER COLUMN does not support parameterised identifiers, so regex guard is
                 # the standard approach here.

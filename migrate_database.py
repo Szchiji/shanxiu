@@ -102,6 +102,14 @@ def run_migrations():
         # system_config: Ensure key_name and value columns exist (older deployments may be missing them)
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS key_name VARCHAR(50) DEFAULT ''",
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS value TEXT DEFAULT ''",
+        # system_config: Move the primary key from the legacy 'key' column to the new 'id'
+        # column.  Older deployments created this table with 'key VARCHAR PRIMARY KEY'.
+        # PostgreSQL forbids DROP NOT NULL on a primary-key column, so we must first drop
+        # the old PK constraint and make 'id' the primary key before we can make 'key'
+        # nullable in the next step.  Both statements are caught-and-skipped if already
+        # applied (e.g. PK already on 'id') or not applicable (SQLite).
+        "ALTER TABLE system_config DROP CONSTRAINT IF EXISTS system_config_pkey",
+        "ALTER TABLE system_config ADD PRIMARY KEY (id)",
         # system_config: Drop NOT NULL from the legacy 'key' column.
         # Older deployments created this table with a 'key' NOT NULL column.  The current ORM
         # model only knows about id/key_name/value, so an INSERT leaves 'key' as NULL and
@@ -146,9 +154,12 @@ def run_migrations():
                 inspector = sa_inspect(db.engine)
                 if inspector.has_table('system_config'):
                     known_cols = {'id', 'key_name', 'value'}
+                    pk_cols = set(inspector.get_pk_constraint('system_config').get('constrained_columns', []))
                     for col in inspector.get_columns('system_config'):
                         if col['name'] not in known_cols and not col.get('nullable', True):
                             col_name = col['name']
+                            if col_name in pk_cols:
+                                continue  # primary key columns cannot have NOT NULL dropped
                             # Validate column name to prevent SQL injection
                             if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                                 continue

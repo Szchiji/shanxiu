@@ -46,10 +46,15 @@ STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM = range(3)
 _TARGET_KEY = '_report_target_user_id'
 
 _DEFAULT_QUESTIONS = [
-    {"text": "请问故障发生的时间是？", "required": True},
-    {"text": "请描述具体的故障现象？", "required": True},
-    {"text": "最终的处理结果是什么？", "required": True},
+    {"text": "请问故障发生的时间是？", "required": True,
+     "hint": "例如：2024-01-15 14:30"},
+    {"text": "请描述具体的故障现象？", "required": True,
+     "hint": "例如：设备无法启动，屏幕显示错误代码 E01"},
+    {"text": "最终的处理结果是什么？", "required": True,
+     "hint": "例如：已更换电源模块，设备恢复正常"},
 ]
+
+_DEFAULT_PHOTO_PROMPT = '请发送现场照片 📷（必填，请拍摄真实现场照片）'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -118,7 +123,37 @@ def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
 def _prompt_for_question(questions: list, idx: int, total: int) -> str:
     q = questions[idx]
     optional_hint = '' if q.get('required', True) else '（选填，输入 - 可跳过）'
-    return f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
+    text = f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
+    hint = q.get('hint', '').strip()
+    if hint:
+        text += f'\n\n💡 填写提示：{hint}'
+    return text
+
+
+def _get_photo_prompt(flask_app) -> str:
+    """Return the configured photo-step prompt text."""
+    return _db_get_config(flask_app, 'report_photo_prompt', _DEFAULT_PHOTO_PROMPT)
+
+
+def _build_channel_link(channel: str, msg_id: int) -> str:
+    """Build a t.me link for a channel message.
+
+    For public channels (e.g., @channelname or channelname), returns
+    ``https://t.me/channelname/msg_id``.
+    For private channels whose ID starts with ``-100``, returns
+    ``https://t.me/c/{numeric_id}/msg_id`` which works for private channels.
+    """
+    chan = channel.strip()
+    stripped = chan.lstrip('-')
+    if stripped.isdigit():
+        # Numeric ID – private or supergroup channel
+        numeric_id = stripped
+        if numeric_id.startswith('100'):
+            numeric_id = numeric_id[3:]
+        return f'https://t.me/c/{numeric_id}/{msg_id}'
+    # Public username
+    chan = chan.removeprefix('@')
+    return f'https://t.me/{chan}/{msg_id}'
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -181,13 +216,8 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # All questions answered – check if photo is needed
     if flask_app and _push_media_enabled(flask_app):
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
-        ]])
-        await update.message.reply_text(
-            f'第{total + 1}步：请发送现场照片 📷\n\n如没有照片，可点击下方按钮跳过。',
-            reply_markup=keyboard,
-        )
+        photo_prompt = _get_photo_prompt(flask_app)
+        await update.message.reply_text(f'第{total + 1}步：{photo_prompt}')
         return STEP_PHOTO
 
     # No photo required – go to confirmation summary
@@ -231,11 +261,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.document.mime_type.startswith('image/'):
         photo_file_id = update.message.document.file_id
     else:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
-        ]])
-        await update.message.reply_text('❌ 请发送一张图片，或点击下方按钮跳过拍照步骤。',
-                                        reply_markup=keyboard)
+        await update.message.reply_text('❌ 请发送一张图片（照片为必填项，请拍摄真实现场照片后发送）。')
         return STEP_PHOTO
 
     context.user_data['photo_file_id'] = photo_file_id
@@ -249,7 +275,8 @@ async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     data = query.data or ''
 
     if data == 'report_skip_photo':
-        context.user_data['photo_file_id'] = None
+        # The skip button is no longer shown, but handle any stale callbacks
+        # gracefully by re-displaying the confirmation screen.
         return await _show_confirm_from_callback(query, context)
 
     if data == 'report_restart':
@@ -411,31 +438,44 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_reports():
         with flask_app.app_context():
-            from app.models import UserReport, SystemConfig
+            from app.models import UserReport, SystemConfig, GroupMember
             reports = UserReport.query.filter_by(
                 user_id=target_user_id, status='approved'
             ).order_by(UserReport.created_at.desc()).all()
             channel = SystemConfig.get_value('report_channel', '')
-            return reports, channel
+            member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            return reports, channel, member
 
     loop = asyncio.get_running_loop()
-    reports, channel = await loop.run_in_executor(None, _get_reports)
+    reports, channel, member = await loop.run_in_executor(None, _get_reports)
+
+    # Build a human-readable identity string
+    def _user_identity(member) -> str:
+        parts = []
+        if member:
+            name = ' '.join(filter(None, [member.first_name, member.last_name]))
+            if name:
+                parts.append(name)
+            if member.username:
+                parts.append(f'@{member.username}')
+        parts.append(f'ID: {target_user_id}')
+        return ' ｜ '.join(parts)
+
+    identity = _user_identity(member)
 
     if not reports:
         await update.message.reply_text(
-            f'📭 该认证用户（ID: {target_user_id}）目前还没有任何历史报告。\n\n'
+            f'📭 该认证用户（{identity}）目前还没有任何历史报告。\n\n'
             '要不要成为第一个给 TA 写报告的人？'
         )
         return
 
-    lines = [f'📋 <b>用户 {target_user_id} 的历史报告（共 {len(reports)} 份）：</b>\n']
+    lines = [f'📋 <b>{identity} 的历史报告（共 {len(reports)} 份）：</b>\n']
     for i, r in enumerate(reports, 1):
         date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
         line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'
         if r.channel_msg_id and channel:
-            # Build a link to the channel message
-            chan = channel.removeprefix('@')
-            link = f'https://t.me/{chan}/{r.channel_msg_id}'
+            link = _build_channel_link(channel, r.channel_msg_id)
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
         lines.append(line)
 
@@ -591,8 +631,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             channel = _db_get_config(flask_app, 'report_channel', '')
             msg = f'🎉 您提交的报告 #{report_id} 已审核通过'
             if channel_msg_id and channel:
-                chan = channel.removeprefix('@')
-                link = f'https://t.me/{chan}/{channel_msg_id}'
+                link = _build_channel_link(channel, channel_msg_id)
                 msg += f'！\n\n👉 <a href="{link}">点击查看已发布报告</a>'
             await query.get_bot().send_message(
                 chat_id=submitter_id,

@@ -116,6 +116,11 @@
                             <button type="button" class="btn btn-sm btn-outline-danger ms-1"
                                     onclick="removeQuestion(this)" title="删除此问题">🗑</button>
                         </div>
+                        <div class="mt-2 ps-4">
+                            <input type="text" class="form-control form-control-sm q-hint"
+                                   value="{{ q.hint or '' }}"
+                                   placeholder="💡 填写提示（选填）：告诉用户该如何回答此问题，例如：请输入 YYYY-MM-DD 格式的日期">
+                        </div>
                     </div>
                     {% endfor %}
                 </div>
@@ -125,7 +130,7 @@
             </div>
             <div class="card-footer text-muted small">
                 拖拽 ⠿ 可调整顺序；未勾选「必填」时，用户在 Bot 中可输入 <code>-</code> 跳过该步骤。
-                问题内容支持任意文字与 Emoji，例如：<em>请发送现场照片描述 📷</em>
+                每道题下方可填写「填写提示」，用户回答时会看到该提示，帮助其正确填写内容。
             </div>
         </div>
 
@@ -133,6 +138,13 @@
         <div class="card mb-4">
             <div class="card-header">📣 推送展示内容设置</div>
             <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">拍照步骤提示语</label>
+                    <input type="text" class="form-control" name="report_photo_prompt"
+                           value="{{ settings.report_photo_prompt }}"
+                           placeholder="例如：请发送现场照片 📷（必填，请拍摄真实现场照片）">
+                    <div class="form-text">用户完成所有问答后，Bot 将发送此提示引导其上传照片。</div>
+                </div>
                 <div class="mb-3">
                     <label class="form-label">频道推送模板</label>
                     <textarea class="form-control font-monospace" name="report_push_template"
@@ -213,6 +225,10 @@ function addQuestion() {
             </div>
             <button type="button" class="btn btn-sm btn-outline-danger ms-1"
                     onclick="removeQuestion(this)" title="删除此问题">🗑</button>
+        </div>
+        <div class="mt-2 ps-4">
+            <input type="text" class="form-control form-control-sm q-hint"
+                   placeholder="💡 填写提示（选填）：告诉用户该如何回答此问题，例如：请输入 YYYY-MM-DD 格式的日期">
         </div>`;
     list.appendChild(row);
     row.querySelector('.q-text').focus();
@@ -227,7 +243,9 @@ function serializeQuestions() {
     document.querySelectorAll('.question-row').forEach(row => {
         const text = row.querySelector('.q-text').value.trim();
         const required = row.querySelector('.q-required').checked;
-        if (text) questions.push({ text, required });
+        const hintEl = row.querySelector('.q-hint');
+        const hint = hintEl ? hintEl.value.trim() : '';
+        if (text) questions.push({ text, required, hint });
     });
     document.getElementById('questions_json').value = JSON.stringify(questions);
 }

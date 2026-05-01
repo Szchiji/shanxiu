@@ -9550,20 +9550,29 @@ async def cmd_start(update: Update, context):
                 start_msg_enabled = conf.get('start_msg_open', False)
                 
                 # Query StartMessage table for active user messages
+                # Search across all active groups for this bot so the message is found
+                # regardless of which group was most recently updated
                 start_msg_data = None
-                if start_msg_enabled and group:
-                    start_msg = StartMessage.query.filter_by(
-                        group_id=group.id,
-                        message_type='user',
-                        is_active=True
-                    ).first()
+                if start_msg_enabled:
+                    start_msg = (
+                        StartMessage.query
+                        .join(BotGroup, StartMessage.group_id == BotGroup.id)
+                        .filter(
+                            BotGroup.clone_id == bot_clone_id,
+                            BotGroup.is_active,
+                            StartMessage.message_type == 'user',
+                            StartMessage.is_active
+                        )
+                        .order_by(StartMessage.id.desc())
+                        .first()
+                    )
                     
                     if start_msg:
                         # Return structured data from StartMessage table
                         try:
                             links = json.loads(start_msg.links) if start_msg.links else []
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {group.id}: {e}", flush=True)
+                            print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {start_msg.group_id}: {e}", flush=True)
                             links = []
                         
                         start_msg_data = {

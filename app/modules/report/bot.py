@@ -269,10 +269,13 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Always clear report state first, regardless of what happens next.
     context.user_data.clear()
     text = update.message.text or ''
     # When a plain /start (without report_ param) is sent mid-conversation,
-    # forward directly to cmd_start so the user reaches admin welcome in one step.
+    # forward directly to cmd_start so the user reaches admin welcome in one step
+    # instead of having to send /start twice.  cmd_start does not use user_data,
+    # so clearing it above is safe before forwarding.
     if text.startswith('/start') and 'report_' not in text:
         cmd_start_fn = context.application.bot_data.get('cmd_start')
         if cmd_start_fn:

@@ -7,6 +7,7 @@ Usage:
 """
 from app import create_app, db
 from sqlalchemy import text
+import re
 import sys
 
 app = create_app()
@@ -140,8 +141,11 @@ def run_migrations():
                     known_cols = {'id', 'key_name', 'value'}
                     for col in inspector.get_columns('system_config'):
                         if col['name'] not in known_cols and not col.get('nullable', True):
+                            col_name = col['name']
+                            # Validate column name to prevent SQL injection
+                            if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
+                                continue
                             try:
-                                col_name = col['name']
                                 with db.engine.connect() as conn:
                                     conn.execute(text(f'ALTER TABLE system_config ALTER COLUMN "{col_name}" DROP NOT NULL'))
                                     conn.commit()

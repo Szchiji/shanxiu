@@ -97,7 +97,7 @@ def _fix_system_config_extra_columns(db):
 
     This repair is idempotent and only applies to PostgreSQL databases.
     """
-    import logging
+    import re
     from sqlalchemy import inspect as sa_inspect
 
     _logger = logging.getLogger(__name__)
@@ -118,6 +118,10 @@ def _fix_system_config_extra_columns(db):
             if col.get('nullable', True):
                 continue  # already nullable, nothing to do
             col_name = col['name']
+            # Validate column name to prevent SQL injection (only allow safe identifier chars)
+            if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
+                _logger.warning("system_config: skipping unsafe column name %r", col_name)
+                continue
             try:
                 with db.engine.connect() as conn:
                     conn.execute(text(f'ALTER TABLE system_config ALTER COLUMN "{col_name}" DROP NOT NULL'))

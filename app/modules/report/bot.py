@@ -130,9 +130,10 @@ def _build_channel_link(channel: str, msg_id: int) -> str:
     ``https://t.me/c/{numeric_id}/msg_id`` which works for private channels.
     """
     chan = channel.strip()
-    if chan.lstrip('-').isdigit():
+    stripped = chan.lstrip('-')
+    if stripped.isdigit():
         # Numeric ID – private or supergroup channel
-        numeric_id = chan.lstrip('-')
+        numeric_id = stripped
         if numeric_id.startswith('100'):
             numeric_id = numeric_id[3:]
         return f'https://t.me/c/{numeric_id}/{msg_id}'
@@ -261,7 +262,8 @@ async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     data = query.data or ''
 
     if data == 'report_skip_photo':
-        # Skip is no longer offered; treat as a no-op and re-show confirmation.
+        # The skip button is no longer shown, but handle any stale callbacks
+        # gracefully by re-displaying the confirmation screen.
         return await _show_confirm_from_callback(query, context)
 
     if data == 'report_restart':

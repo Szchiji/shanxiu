@@ -221,6 +221,16 @@ def fix_database_schema(app):
             # SERIAL in PostgreSQL assigns a sequence default and fills existing rows automatically,
             # so this is safe to run on a populated table.
             "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
+            # system_config: Ensure key_name and value columns exist (older deployments may be missing them)
+            "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS key_name VARCHAR(50) DEFAULT ''",
+            "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS value TEXT DEFAULT ''",
+            # system_config: Drop NOT NULL from the legacy 'key' column.
+            # Older deployments created this table with a 'key' NOT NULL column.  The current ORM
+            # model only knows about id/key_name/value, so an INSERT leaves 'key' as NULL and
+            # PostgreSQL raises a NotNullViolation.  Making the column nullable is safe: the
+            # column is no longer used by any application code.  If the 'key' column does not
+            # exist, PostgreSQL raises an error that is caught and ignored by the loop above.
+            "ALTER TABLE system_config ALTER COLUMN key DROP NOT NULL",
             # user_reports: Store dynamic question answers as JSON
             "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
         ]

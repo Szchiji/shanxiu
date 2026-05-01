@@ -7586,12 +7586,6 @@ async def run_bot(app_instance):
     # Store Flask app in bot_data so report handlers can access the DB
     app.bot_data['flask_app'] = app_instance
 
-    # 🆕 Report module handlers (group=1, run before catch-all handlers)
-    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
-    app.add_handler(report_conv_handler, group=1)
-    app.add_handler(view_reports_handler, group=1)
-    app.add_handler(audit_callback_handler, group=1)
-
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
     # 🆕 New member/leave handlers (must come before general message handler)
@@ -7612,7 +7606,15 @@ async def run_bot(app_instance):
     # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     
-    # Callback query handler
+    # Report module handlers – registered BEFORE catch-all handlers so that
+    # audit_callback_handler runs before pagination_callback (same group=0),
+    # and report_conv_handler / view_reports_handler run before cmd_start.
+    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
+    app.add_handler(audit_callback_handler)   # must be before CallbackQueryHandler(pagination_callback)
+    app.add_handler(report_conv_handler)      # must be before CommandHandler("start", cmd_start)
+    app.add_handler(view_reports_handler)     # must be before CommandHandler("start", cmd_start)
+
+    # Callback query handler (catch-all – runs after audit_callback_handler)
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     
     # Command handlers

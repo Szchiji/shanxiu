@@ -146,9 +146,12 @@ def run_migrations():
                 inspector = sa_inspect(db.engine)
                 if inspector.has_table('system_config'):
                     known_cols = {'id', 'key_name', 'value'}
+                    pk_cols = set(inspector.get_pk_constraint('system_config').get('constrained_columns', []))
                     for col in inspector.get_columns('system_config'):
                         if col['name'] not in known_cols and not col.get('nullable', True):
                             col_name = col['name']
+                            if col_name in pk_cols:
+                                continue  # primary key columns cannot have NOT NULL dropped
                             # Validate column name to prevent SQL injection
                             if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                                 continue

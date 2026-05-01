@@ -111,6 +111,7 @@ def _fix_system_config_extra_columns(db):
             return
 
         known_cols = {'id', 'key_name', 'value'}
+        pk_cols = set(inspector.get_pk_constraint('system_config').get('constrained_columns', []))
         columns = inspector.get_columns('system_config')
         for col in columns:
             if col['name'] in known_cols:
@@ -118,6 +119,8 @@ def _fix_system_config_extra_columns(db):
             if col.get('nullable', True):
                 continue  # already nullable, nothing to do
             col_name = col['name']
+            if col_name in pk_cols:
+                continue  # primary key columns cannot have NOT NULL dropped
             # Validate column name to prevent SQL injection (only allow safe identifier chars)
             if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                 _logger.warning("system_config: skipping unsafe column name %r", col_name)

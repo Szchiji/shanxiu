@@ -140,7 +140,7 @@ def run_migrations():
 
         # system_config: Drop NOT NULL constraints from any legacy columns not in the current
         # ORM model so that new ORM inserts (which only supply id, key_name, value) succeed.
-        if 'postgresql' in str(db.engine.url):
+        if db.engine.dialect.name == 'postgresql':
             from sqlalchemy import inspect as sa_inspect
             try:
                 inspector = sa_inspect(db.engine)

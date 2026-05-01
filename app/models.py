@@ -752,18 +752,24 @@ class SystemConfig(db.Model):
         Older deployments may have created this table with extra NOT NULL columns (e.g. a
         legacy ``key`` column) that cause INSERTs to fail because the model only supplies
         id, key_name, and value.  This helper is idempotent and safe to call at runtime.
+
+        Returns True if at least one column was successfully repaired, False otherwise.
         """
         import re
         from sqlalchemy import inspect as sa_inspect, text as sa_text
-        if 'postgresql' not in str(_db.engine.url):
-            return
+        if _db.engine.dialect.name != 'postgresql':
+            return False
         known_cols = {'id', 'key_name', 'value'}
+        repaired = False
         try:
             inspector = sa_inspect(_db.engine)
             for col in inspector.get_columns('system_config'):
                 if col['name'] in known_cols or col.get('nullable', True):
                     continue
                 col_name = col['name']
+                # Validate column name before interpolating into DDL to prevent SQL injection.
+                # ALTER COLUMN does not support parameterised identifiers, so regex guard is
+                # the standard approach here.
                 if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                     _logger.warning("system_config: skipping unsafe column name %r", col_name)
                     continue
@@ -774,12 +780,14 @@ class SystemConfig(db.Model):
                         ))
                         conn.commit()
                     _logger.info("system_config: dropped NOT NULL on legacy column %r", col_name)
+                    repaired = True
                 except Exception as alter_err:
                     _logger.warning(
                         "system_config: could not drop NOT NULL on column %r: %s", col_name, alter_err
                     )
         except Exception as inspect_err:
             _logger.warning("system_config: schema inspection failed: %s", inspect_err)
+        return repaired
 
     @classmethod
     def set_value(cls, key_name, value):
@@ -800,15 +808,21 @@ class SystemConfig(db.Model):
                         _db.session.add(cls(key_name=key_name, value=value))
                 except IntegrityError as insert_err:
                     err_lower = str(insert_err).lower()
-                    if 'not-null' in err_lower or 'notnullviolation' in err_lower or 'not null' in err_lower:
+                    if 'notnullviolation' in err_lower or 'not null' in err_lower:
                         _logger.warning(
                             "system_config: NOT NULL violation on insert for key %r — "
                             "repairing legacy schema and retrying",
                             key_name,
                         )
-                        cls._repair_extra_not_null_columns(_db, _logger)
-                        # After repairing, add the row to the outer session for the caller's commit.
-                        _db.session.add(cls(key_name=key_name, value=value))
+                        repaired = cls._repair_extra_not_null_columns(_db, _logger)
+                        if repaired:
+                            # After repairing, add the row to the outer session for the caller's commit.
+                            _db.session.add(cls(key_name=key_name, value=value))
+                        else:
+                            _logger.error(
+                                "system_config: schema repair failed; key %r will not be saved",
+                                key_name,
+                            )
                     else:
                         raise
         except (InternalError, OperationalError, ProgrammingError, IntegrityError) as e:

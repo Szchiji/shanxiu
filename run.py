@@ -102,7 +102,7 @@ def _fix_system_config_extra_columns(db):
 
     _logger = logging.getLogger(__name__)
 
-    if 'postgresql' not in str(db.engine.url):
+    if db.engine.dialect.name != 'postgresql':
         return  # SQLite and other dialects don't need this
 
     try:

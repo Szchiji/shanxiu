@@ -7585,6 +7585,8 @@ async def run_bot(app_instance):
 
     # Store Flask app in bot_data so report handlers can access the DB
     app.bot_data['flask_app'] = app_instance
+    # Store cmd_start so report_cancel fallback can invoke it when user sends /start mid-report
+    app.bot_data['cmd_start'] = cmd_start
 
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     

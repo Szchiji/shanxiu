@@ -270,6 +270,13 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    text = update.message.text or ''
+    # When a plain /start (without report_ param) is sent mid-conversation,
+    # forward directly to cmd_start so the user reaches admin welcome in one step.
+    if text.startswith('/start') and 'report_' not in text:
+        cmd_start_fn = context.application.bot_data.get('cmd_start')
+        if cmd_start_fn:
+            return await cmd_start_fn(update, context)
     await update.message.reply_text('❌ 已取消报告填写。')
     return ConversationHandler.END
 

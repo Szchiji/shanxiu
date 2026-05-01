@@ -102,6 +102,13 @@ def run_migrations():
         # system_config: Ensure key_name and value columns exist (older deployments may be missing them)
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS key_name VARCHAR(50) DEFAULT ''",
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS value TEXT DEFAULT ''",
+        # system_config: Drop NOT NULL from the legacy 'key' column.
+        # Older deployments created this table with a 'key' NOT NULL column.  The current ORM
+        # model only knows about id/key_name/value, so an INSERT leaves 'key' as NULL and
+        # PostgreSQL raises a NotNullViolation.  Making the column nullable is safe.
+        # If the 'key' column does not exist, PostgreSQL raises an error that is caught
+        # and ignored by the loop above.
+        "ALTER TABLE system_config ALTER COLUMN key DROP NOT NULL",
         # Remove rows with no valid key_name before adding unique index to avoid duplicates
         "DELETE FROM system_config WHERE key_name IS NULL OR key_name = ''",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_system_config_key_name ON system_config(key_name)",

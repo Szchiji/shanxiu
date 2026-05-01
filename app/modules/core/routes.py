@@ -805,7 +805,8 @@ def page_start_messages(gid):
     
     return render_template('start_messages.html', page='start_messages', group=group,
                           start_messages=start_messages, start_messages_json=start_messages_json,
-                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items,
+                          conf=get_group_conf(group))
 
 @core_bp.route('/group/<int:gid>/entry_exit_settings')
 def page_entry_exit_settings(gid):
@@ -9550,20 +9551,29 @@ async def cmd_start(update: Update, context):
                 start_msg_enabled = conf.get('start_msg_open', False)
                 
                 # Query StartMessage table for active user messages
+                # Search across all active groups for this bot so the message is found
+                # regardless of which group was most recently updated
                 start_msg_data = None
-                if start_msg_enabled and group:
-                    start_msg = StartMessage.query.filter_by(
-                        group_id=group.id,
-                        message_type='user',
-                        is_active=True
-                    ).first()
+                if start_msg_enabled:
+                    start_msg = (
+                        StartMessage.query
+                        .join(BotGroup, StartMessage.group_id == BotGroup.id)
+                        .filter(
+                            BotGroup.clone_id == bot_clone_id,
+                            BotGroup.is_active,
+                            StartMessage.message_type == 'user',
+                            StartMessage.is_active
+                        )
+                        .order_by(StartMessage.id.desc())
+                        .first()
+                    )
                     
                     if start_msg:
                         # Return structured data from StartMessage table
                         try:
                             links = json.loads(start_msg.links) if start_msg.links else []
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {group.id}: {e}", flush=True)
+                            print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {start_msg.group_id}: {e}", flush=True)
                             links = []
                         
                         start_msg_data = {

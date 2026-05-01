@@ -218,6 +218,44 @@
     </div>
 </div>
 
+<!-- 私聊专属说明 -->
+<div class="alert alert-info d-flex align-items-center mb-3" role="alert">
+    <i class="fa-solid fa-mobile-screen-button me-2 fs-5"></i>
+    <div>💡 以下消息仅在用户<strong>私聊机器人</strong>发送 <code>/start</code> 时触发，与群组内的消息无关。</div>
+</div>
+
+<!-- 私聊全局设置卡片 -->
+<div class="card mb-4 shadow-sm border-0">
+    <div class="card-header fw-bold py-3 border-0" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white;">
+        <i class="fa-solid fa-sliders me-2"></i>私聊全局设置
+    </div>
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-4">
+                <div class="form-check form-switch d-flex align-items-center gap-2 mb-0 p-0">
+                    <input class="form-check-input flex-shrink-0" type="checkbox" id="start_msg_open"
+                           {{ 'checked' if conf.get('start_msg_open', True) }}
+                           style="width: 2.5em; height: 1.4em; cursor: pointer;">
+                    <label class="form-check-label fw-bold ms-2" for="start_msg_open">启用私聊欢迎消息</label>
+                </div>
+                <div class="text-muted small mt-1">关闭后机器人不回复私聊 /start</div>
+            </div>
+            <div class="col-md-8">
+                <label class="fw-bold small mb-1" for="msg_private_start">兜底消息 <span class="text-muted fw-normal">（无匹配自定义消息时发送）</span></label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="msg_private_start"
+                           value="{{ conf.get('msg_private_start', '👋 你好！我是打卡机器人。') }}"
+                           placeholder="👋 你好！我是打卡机器人。">
+                    <button class="btn btn-primary" type="button" onclick="savePrivateSettings()">
+                        <i class="fa-solid fa-floppy-disk me-1"></i>保存
+                    </button>
+                </div>
+                <div class="text-muted small mt-1">支持 HTML 格式（如 <code>&lt;b&gt;加粗&lt;/b&gt;</code>）</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="table-container">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
@@ -422,6 +460,7 @@
     const groupId = {{ group.id }};
     let allItems = {{ start_messages_json|safe }};
     let currentLinks = [];
+    const existingConf = {{ conf | tojson | safe }};
     
     // Pagination functions
     function updateUrl(params) {
@@ -817,6 +856,32 @@
             }
         } catch (e) {
             alert('网络请求错误');
+        }
+    }
+
+    async function savePrivateSettings() {
+        const mergedConfig = Object.assign({}, existingConf, {
+            start_msg_open: document.getElementById('start_msg_open').checked,
+            msg_private_start: document.getElementById('msg_private_start').value
+        });
+        const data = {
+            group_id: groupId,
+            config: mergedConfig
+        };
+        try {
+            const res = await fetch('/core/api/save_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if (result && result.status === 'ok') {
+                alert('私聊设置已保存');
+            } else {
+                alert('保存失败，请重试');
+            }
+        } catch (e) {
+            alert('网络请求错误，保存失败');
         }
     }
 </script>

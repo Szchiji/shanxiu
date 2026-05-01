@@ -880,11 +880,27 @@
                             </ul>
                         </li>
                         
-                        <!-- Messages & Automation -->
+                        <!-- Private Chat Settings -->
                         <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['auto_replies', 'scheduled_messages', 'start_messages', 'group_bottom_button'] %}active{% endif %}" 
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['start_messages'] %}active{% endif %}"
+                               id="privateDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="fa-solid fa-mobile-screen-button"></i> 📱 私聊设置
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="privateDropdown">
+                                <li>
+                                    <a href="/core/group/{{ current_group.id }}/start_messages" class="dropdown-item {% if page == 'start_messages' %}active{% endif %}">
+                                        <i class="fa-solid fa-rocket"></i> /start 消息
+                                        <span class="feature-desc">设置用户私聊机器人发送 /start 时的回复</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <!-- Group Automation -->
+                        <li class="nav-item dropdown">
+                            <a href="#" class="nav-link dropdown-toggle {% if page in ['auto_replies', 'scheduled_messages', 'group_bottom_button'] %}active{% endif %}" 
                                id="messagesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-message"></i> 💬 消息 & 自动化
+                                <i class="fa-solid fa-robot"></i> 🤖 群组自动化
                             </a>
                             <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="messagesDropdown">
                                 <li>
@@ -897,12 +913,6 @@
                                     <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="dropdown-item {% if page == 'scheduled_messages' %}active{% endif %}">
                                         <i class="fa-solid fa-clock"></i> 定时消息
                                         <span class="feature-desc">定时发送消息到群组</span>
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/start_messages" class="dropdown-item {% if page == 'start_messages' %}active{% endif %}">
-                                        <i class="fa-solid fa-rocket"></i> /start 消息
-                                        <span class="feature-desc">设置用户点击 /start 时的回复</span>
                                     </a>
                                 </li>
                                 <li>

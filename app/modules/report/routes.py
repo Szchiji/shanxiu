@@ -5,19 +5,23 @@ from app import db
 from app.models import BotGroup, SystemConfig
 from . import report_admin_bp
 
-_SIMPLE_CONFIG_KEYS = ['admin_group_id', 'report_channel', 'report_push_template']
+_SIMPLE_CONFIG_KEYS = ['admin_group_id', 'report_channel', 'report_push_template', 'report_photo_prompt']
 
 _DEFAULTS = {
     'admin_group_id': '',
     'report_channel': '',
     'report_push_template': '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
     'report_push_media': 'true',
+    'report_photo_prompt': '请发送现场照片 📷（必填，请拍摄真实现场照片）',
 }
 
 _DEFAULT_QUESTIONS = [
-    {"text": "请问故障发生的时间是？", "required": True},
-    {"text": "请描述具体的故障现象？", "required": True},
-    {"text": "最终的处理结果是什么？", "required": True},
+    {"text": "请问故障发生的时间是？", "required": True,
+     "hint": "例如：2024-01-15 14:30"},
+    {"text": "请描述具体的故障现象？", "required": True,
+     "hint": "例如：设备无法启动，屏幕显示错误代码 E01"},
+    {"text": "最终的处理结果是什么？", "required": True,
+     "hint": "例如：已更换电源模块，设备恢复正常"},
 ]
 
 
@@ -56,7 +60,11 @@ def report_settings():
             questions = json.loads(questions_raw)
             # Normalise: keep only text + required, discard empty items
             questions = [
-                {"text": q.get("text", "").strip(), "required": bool(q.get("required", True))}
+                {
+                    "text": q.get("text", "").strip(),
+                    "required": bool(q.get("required", True)),
+                    "hint": q.get("hint", "").strip(),
+                }
                 for q in questions
                 if q.get("text", "").strip()
             ]

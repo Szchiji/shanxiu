@@ -46,10 +46,15 @@ STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM = range(3)
 _TARGET_KEY = '_report_target_user_id'
 
 _DEFAULT_QUESTIONS = [
-    {"text": "请问故障发生的时间是？", "required": True},
-    {"text": "请描述具体的故障现象？", "required": True},
-    {"text": "最终的处理结果是什么？", "required": True},
+    {"text": "请问故障发生的时间是？", "required": True,
+     "hint": "例如：2024-01-15 14:30"},
+    {"text": "请描述具体的故障现象？", "required": True,
+     "hint": "例如：设备无法启动，屏幕显示错误代码 E01"},
+    {"text": "最终的处理结果是什么？", "required": True,
+     "hint": "例如：已更换电源模块，设备恢复正常"},
 ]
+
+_DEFAULT_PHOTO_PROMPT = '请发送现场照片 📷（必填，请拍摄真实现场照片）'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -118,7 +123,16 @@ def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
 def _prompt_for_question(questions: list, idx: int, total: int) -> str:
     q = questions[idx]
     optional_hint = '' if q.get('required', True) else '（选填，输入 - 可跳过）'
-    return f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
+    text = f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
+    hint = q.get('hint', '').strip()
+    if hint:
+        text += f'\n\n💡 填写提示：{hint}'
+    return text
+
+
+def _get_photo_prompt(flask_app) -> str:
+    """Return the configured photo-step prompt text."""
+    return _db_get_config(flask_app, 'report_photo_prompt', _DEFAULT_PHOTO_PROMPT)
 
 
 def _build_channel_link(channel: str, msg_id: int) -> str:
@@ -202,9 +216,8 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # All questions answered – check if photo is needed
     if flask_app and _push_media_enabled(flask_app):
-        await update.message.reply_text(
-            f'第{total + 1}步：请发送现场照片 📷（必填，请拍摄真实现场照片）',
-        )
+        photo_prompt = _get_photo_prompt(flask_app)
+        await update.message.reply_text(f'第{total + 1}步：{photo_prompt}')
         return STEP_PHOTO
 
     # No photo required – go to confirmation summary

@@ -98,6 +98,12 @@ def run_migrations():
         "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
         # system_config: Ensure id column exists (older deployments may have created the table without it)
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
+        # system_config: Ensure key_name and value columns exist (older deployments may be missing them)
+        "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS key_name VARCHAR(50) DEFAULT ''",
+        "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS value TEXT DEFAULT ''",
+        # Remove rows with no valid key_name before adding unique index to avoid duplicates
+        "DELETE FROM system_config WHERE key_name IS NULL OR key_name = ''",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_system_config_key_name ON system_config(key_name)",
         # user_reports: Store dynamic question answers as JSON
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
     ]

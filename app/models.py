@@ -747,22 +747,24 @@ class SystemConfig(db.Model):
     @classmethod
     def set_value(cls, key_name, value):
         from app import db as _db
-        from sqlalchemy.exc import InternalError, OperationalError, ProgrammingError
+        from sqlalchemy.exc import InternalError, OperationalError, ProgrammingError, IntegrityError
         import logging
         _logger = logging.getLogger(__name__)
         try:
-            obj = cls.query.filter_by(key_name=key_name).first()
+            with _db.session.no_autoflush:
+                obj = cls.query.filter_by(key_name=key_name).first()
             if obj:
                 obj.value = value
             else:
                 _db.session.add(cls(key_name=key_name, value=value))
-        except (InternalError, OperationalError, ProgrammingError) as e:
+        except (InternalError, OperationalError, ProgrammingError, IntegrityError) as e:
             _db.session.rollback()
             _logger.warning("system_config table unavailable (%s), attempting db.create_all() and retrying", e)
             # Table may not exist yet — create it and retry once
             try:
                 _db.create_all()
-                obj = cls.query.filter_by(key_name=key_name).first()
+                with _db.session.no_autoflush:
+                    obj = cls.query.filter_by(key_name=key_name).first()
                 if obj:
                     obj.value = value
                 else:

@@ -83,6 +83,52 @@ def _ensure_report_tables(db):
             print(f"⚠️ 创建表 {table_name} 失败: {e}", flush=True)
 
 
+def _fix_system_config_extra_columns(db):
+    """
+    Drop NOT NULL constraints from any columns in system_config that are not part of the
+    current ORM model (id, key_name, value).
+
+    Older deployments may have created this table with additional NOT NULL columns (e.g. a
+    per-group chat_id) that are unknown to the current model.  When the ORM inserts a new
+    row it only supplies the three model columns; PostgreSQL then rejects the statement
+    because the extra column receives NULL, violating its NOT NULL constraint.  Making
+    those legacy columns nullable (DROP NOT NULL) is safe: the column value will simply be
+    NULL for all rows written by the current code.
+
+    This repair is idempotent and only applies to PostgreSQL databases.
+    """
+    import logging
+    from sqlalchemy import inspect as sa_inspect
+
+    _logger = logging.getLogger(__name__)
+
+    if 'postgresql' not in str(db.engine.url):
+        return  # SQLite and other dialects don't need this
+
+    try:
+        inspector = sa_inspect(db.engine)
+        if not inspector.has_table('system_config'):
+            return
+
+        known_cols = {'id', 'key_name', 'value'}
+        columns = inspector.get_columns('system_config')
+        for col in columns:
+            if col['name'] in known_cols:
+                continue
+            if col.get('nullable', True):
+                continue  # already nullable, nothing to do
+            col_name = col['name']
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE system_config ALTER COLUMN "{col_name}" DROP NOT NULL'))
+                    conn.commit()
+                _logger.info("system_config: dropped NOT NULL on legacy column %r", col_name)
+            except Exception as e:
+                _logger.warning("system_config: could not drop NOT NULL on column %r: %s", col_name, e)
+    except Exception as e:
+        _logger.warning("system_config extra-column repair failed: %s", e)
+
+
 def fix_database_schema(app):
     """Add missing columns to existing tables (synchronous, runs before server starts)."""
     with app.app_context():
@@ -184,6 +230,13 @@ def fix_database_schema(app):
             except Exception:
                 # Column/index likely already exists, which is fine
                 pass
+
+        # system_config: Drop NOT NULL constraints from any columns that the current ORM model
+        # does not define.  Older deployments may have created this table with extra NOT NULL
+        # columns (e.g. a per-group chat_id) that cause ORM INSERTs to fail because the model
+        # only supplies id, key_name, and value.  Making those legacy columns nullable lets the
+        # current ORM write rows without knowing the original schema.
+        _fix_system_config_extra_columns(db)
 
         # Ensure report module tables exist using SQLAlchemy (handles PostgreSQL sequences properly).
         # Raw SERIAL DDL can fail if an orphaned sequence was left behind by a previously aborted

@@ -130,6 +130,26 @@ def run_migrations():
             flush=True,
         )
 
+        # system_config: Drop NOT NULL constraints from any legacy columns not in the current
+        # ORM model so that new ORM inserts (which only supply id, key_name, value) succeed.
+        if 'postgresql' in str(db.engine.url):
+            from sqlalchemy import inspect as sa_inspect
+            try:
+                inspector = sa_inspect(db.engine)
+                if inspector.has_table('system_config'):
+                    known_cols = {'id', 'key_name', 'value'}
+                    for col in inspector.get_columns('system_config'):
+                        if col['name'] not in known_cols and not col.get('nullable', True):
+                            try:
+                                col_name = col['name']
+                                with db.engine.connect() as conn:
+                                    conn.execute(text(f'ALTER TABLE system_config ALTER COLUMN "{col_name}" DROP NOT NULL'))
+                                    conn.commit()
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
 
 if __name__ == '__main__':
     try:

@@ -805,7 +805,8 @@ def page_start_messages(gid):
     
     return render_template('start_messages.html', page='start_messages', group=group,
                           start_messages=start_messages, start_messages_json=start_messages_json,
-                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items)
+                          current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items,
+                          conf=get_group_conf(group))
 
 @core_bp.route('/group/<int:gid>/entry_exit_settings')
 def page_entry_exit_settings(gid):

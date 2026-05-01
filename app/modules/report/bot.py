@@ -108,6 +108,8 @@ def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
     answers_block = _build_answers_block(answers)
     result = template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
     # Replace individual answer placeholders {q1}, {q2}, …
+    # Answers are always appended in question order; skipped optional questions
+    # append '' so the list index always maps 1-to-1 with the question number.
     for i, item in enumerate(answers, 1):
         result = result.replace(f'{{q{i}}}', item.get('answer', ''))
     return result
@@ -158,8 +160,9 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
     idx = context.user_data.get('current_q_idx', 0)
     answer = update.message.text.strip()
 
-    # Validate required questions: reject empty or whitespace-only answers
-    if questions[idx].get('required', True) and not answer:
+    # Validate required questions: reject empty/whitespace-only answers.
+    # `answer` is already stripped above, so `answer == ''` is the correct check.
+    if questions[idx].get('required', True) and answer == '':
         await update.message.reply_text('⚠️ 此项为必填，请输入有效内容。')
         return STEP_QUESTION
 
@@ -382,6 +385,7 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmd_start_fn = context.application.bot_data.get('cmd_start')
         if cmd_start_fn:
             return await cmd_start_fn(update, context)
+        logger.warning('report_cancel: cmd_start not found in bot_data; falling back to cancel message')
     await update.message.reply_text('❌ 已取消报告填写。')
     return ConversationHandler.END
 

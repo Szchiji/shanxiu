@@ -7604,17 +7604,18 @@ async def run_bot(app_instance):
     
     # 🆕 Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
-    
-    # General message handler (processes text messages)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    
-    # Report module handlers – registered BEFORE catch-all handlers so that
-    # audit_callback_handler runs before pagination_callback (same group=0),
-    # and report_conv_handler / view_reports_handler run before cmd_start.
+
+    # Report module handlers – registered BEFORE the general text handler so that
+    # report_conv_handler can intercept text replies in STEP_QUESTION state before
+    # on_message consumes them.  audit_callback_handler must also precede the
+    # catch-all CallbackQueryHandler(pagination_callback).
     from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
     app.add_handler(audit_callback_handler)   # must be before CallbackQueryHandler(pagination_callback)
-    app.add_handler(report_conv_handler)      # must be before CommandHandler("start", cmd_start)
+    app.add_handler(report_conv_handler)      # must be before on_message and CommandHandler("start", …)
     app.add_handler(view_reports_handler)     # must be before CommandHandler("start", cmd_start)
+
+    # General message handler (processes text messages)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     # Callback query handler (catch-all – runs after audit_callback_handler)
     app.add_handler(CallbackQueryHandler(pagination_callback)) 

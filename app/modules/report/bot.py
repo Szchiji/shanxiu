@@ -121,6 +121,26 @@ def _prompt_for_question(questions: list, idx: int, total: int) -> str:
     return f'第{idx + 1}/{total}步：{q["text"]}{optional_hint}'
 
 
+def _build_channel_link(channel: str, msg_id: int) -> str:
+    """Build a t.me link for a channel message.
+
+    For public channels (e.g., @channelname or channelname), returns
+    ``https://t.me/channelname/msg_id``.
+    For private channels whose ID starts with ``-100``, returns
+    ``https://t.me/c/{numeric_id}/msg_id`` which works for private channels.
+    """
+    chan = channel.strip()
+    if chan.lstrip('-').isdigit():
+        # Numeric ID – private or supergroup channel
+        numeric_id = chan.lstrip('-')
+        if numeric_id.startswith('100'):
+            numeric_id = numeric_id[3:]
+        return f'https://t.me/c/{numeric_id}/{msg_id}'
+    # Public username
+    chan = chan.removeprefix('@')
+    return f'https://t.me/{chan}/{msg_id}'
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ConversationHandler – write a report
 # ──────────────────────────────────────────────────────────────────────────────
@@ -181,12 +201,8 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # All questions answered – check if photo is needed
     if flask_app and _push_media_enabled(flask_app):
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
-        ]])
         await update.message.reply_text(
-            f'第{total + 1}步：请发送现场照片 📷\n\n如没有照片，可点击下方按钮跳过。',
-            reply_markup=keyboard,
+            f'第{total + 1}步：请发送现场照片 📷（必填，请拍摄真实现场照片）',
         )
         return STEP_PHOTO
 
@@ -231,11 +247,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.document.mime_type.startswith('image/'):
         photo_file_id = update.message.document.file_id
     else:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton('⏭ 跳过拍照', callback_data='report_skip_photo'),
-        ]])
-        await update.message.reply_text('❌ 请发送一张图片，或点击下方按钮跳过拍照步骤。',
-                                        reply_markup=keyboard)
+        await update.message.reply_text('❌ 请发送一张图片（照片为必填项，请拍摄真实现场照片后发送）。')
         return STEP_PHOTO
 
     context.user_data['photo_file_id'] = photo_file_id
@@ -249,7 +261,7 @@ async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     data = query.data or ''
 
     if data == 'report_skip_photo':
-        context.user_data['photo_file_id'] = None
+        # Skip is no longer offered; treat as a no-op and re-show confirmation.
         return await _show_confirm_from_callback(query, context)
 
     if data == 'report_restart':
@@ -433,9 +445,7 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
         line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'
         if r.channel_msg_id and channel:
-            # Build a link to the channel message
-            chan = channel.removeprefix('@')
-            link = f'https://t.me/{chan}/{r.channel_msg_id}'
+            link = _build_channel_link(channel, r.channel_msg_id)
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
         lines.append(line)
 
@@ -591,8 +601,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             channel = _db_get_config(flask_app, 'report_channel', '')
             msg = f'🎉 您提交的报告 #{report_id} 已审核通过'
             if channel_msg_id and channel:
-                chan = channel.removeprefix('@')
-                link = f'https://t.me/{chan}/{channel_msg_id}'
+                link = _build_channel_link(channel, channel_msg_id)
                 msg += f'！\n\n👉 <a href="{link}">点击查看已发布报告</a>'
             await query.get_bot().send_message(
                 chat_id=submitter_id,

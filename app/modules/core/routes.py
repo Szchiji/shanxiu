@@ -3980,12 +3980,11 @@ def api_save_bot_clone():
         
         db.session.commit()
         
-        # If clone was running and was edited, restart it
+        # If clone was running and was edited, restart or stop it depending on new is_active state
         if was_running and clone_id and global_bot_loop and global_flask_app:
             try:
-                # Check if not expired
                 now = get_beijing_now()
-                if not clone.expiration_date or clone.expiration_date >= now:
+                if clone.is_active and (not clone.expiration_date or clone.expiration_date >= now):
                     clone_data = {
                         'id': clone.id,
                         'token': clone.bot_token,
@@ -4005,8 +4004,45 @@ def api_save_bot_clone():
                     )
                     future.result(timeout=CLONE_RESTART_TIMEOUT)  # Wait for restart
                     logging.info(f"✅ Clone bot {clone_id} restarted after edit")
+                else:
+                    # is_active set to False (or expired) — stop the running clone
+                    future = asyncio.run_coroutine_threadsafe(
+                        bot_clone_manager.stop_clone_bot(clone_id),
+                        global_bot_loop
+                    )
+                    future.result(timeout=CLONE_STOP_TIMEOUT)
+                    logging.info(f"✅ Clone bot {clone_id} stopped after being disabled via edit")
             except Exception as e:
-                logging.warning(f"⚠️ Failed to restart clone bot {clone_id} after edit: {e}")
+                logging.warning(f"⚠️ Failed to restart/stop clone bot {clone_id} after edit: {e}")
+                # Don't fail the API call, just log the error
+        
+        # If this is an existing clone that was NOT running but is now enabled, start it
+        elif clone_id and not was_running and clone.is_active and global_bot_loop and global_flask_app:
+            try:
+                now = get_beijing_now()
+                if not clone.expiration_date or clone.expiration_date >= now:
+                    clone_data = {
+                        'id': clone.id,
+                        'token': clone.bot_token,
+                        'webhook_url': clone.webhook_url
+                    }
+                    future = asyncio.run_coroutine_threadsafe(
+                        bot_clone_manager.start_clone_bot(
+                            clone_id=clone_data['id'],
+                            bot_token=clone_data['token'],
+                            webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
+                            flask_app=global_flask_app,
+                            handlers_setup_func=setup_clone_handlers
+                        ),
+                        global_bot_loop
+                    )
+                    success = future.result(timeout=CLONE_START_TIMEOUT)
+                    if success:
+                        logging.info(f"✅ Clone bot {clone_id} started after being enabled via edit")
+                    else:
+                        logging.warning(f"⚠️ Clone bot {clone_id} failed to start after being enabled via edit")
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to start clone bot {clone_id} after edit: {e}")
                 # Don't fail the API call, just log the error
         
         # If this is a brand-new active clone, start it immediately without waiting for a server restart
@@ -4822,6 +4858,7 @@ async def check_scheduled_messages(context):
                 now = get_beijing_now()
                 # 查找所有需要发送的定时消息
                 messages_to_send = []
+                expired_msg_ids = []
                 
                 # Ensure we get fresh data from the database (not cached)
                 db.session.expire_all()
@@ -4856,8 +4893,9 @@ async def check_scheduled_messages(context):
                     if msg.start_time and now < msg.start_time:
                         continue
                     
-                    # 检查停止时间
+                    # 检查停止时间：已过期则收集起来批量禁用
                     if msg.stop_time and now > msg.stop_time:
+                        expired_msg_ids.append(msg.id)
                         continue
                     
                     # 检查是否需要发送
@@ -4884,6 +4922,13 @@ async def check_scheduled_messages(context):
                             'message_thread_id': msg.message_thread_id,
                             'auto_pin': msg.auto_pin,
                         })
+                
+                # 批量禁用已过期的定时消息，避免列表中继续显示启用状态
+                if expired_msg_ids:
+                    ScheduledMessage.query.filter(
+                        ScheduledMessage.id.in_(expired_msg_ids)
+                    ).update({'is_active': False}, synchronize_session=False)
+                    db.session.commit()
                 
                 return messages_to_send
                 
@@ -7541,12 +7586,6 @@ async def run_bot(app_instance):
     # Store Flask app in bot_data so report handlers can access the DB
     app.bot_data['flask_app'] = app_instance
 
-    # 🆕 Report module handlers (group=1, run before catch-all handlers)
-    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
-    app.add_handler(report_conv_handler, group=1)
-    app.add_handler(view_reports_handler, group=1)
-    app.add_handler(audit_callback_handler, group=1)
-
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     
     # 🆕 New member/leave handlers (must come before general message handler)
@@ -7567,7 +7606,15 @@ async def run_bot(app_instance):
     # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     
-    # Callback query handler
+    # Report module handlers – registered BEFORE catch-all handlers so that
+    # audit_callback_handler runs before pagination_callback (same group=0),
+    # and report_conv_handler / view_reports_handler run before cmd_start.
+    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
+    app.add_handler(audit_callback_handler)   # must be before CallbackQueryHandler(pagination_callback)
+    app.add_handler(report_conv_handler)      # must be before CommandHandler("start", cmd_start)
+    app.add_handler(view_reports_handler)     # must be before CommandHandler("start", cmd_start)
+
+    # Callback query handler (catch-all – runs after audit_callback_handler)
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     
     # Command handlers

@@ -336,8 +336,18 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ''
     flask_app = _get_flask_app(context)
+
+    # Helper: edit the admin-group message regardless of whether it is a photo
+    # message (has caption) or a plain text message.
+    async def _edit_admin_message(text: str, reply_markup=None):
+        kwargs = dict(parse_mode='HTML', reply_markup=reply_markup)
+        if query.message and query.message.caption is not None:
+            await query.edit_message_caption(caption=text, **kwargs)
+        else:
+            await query.edit_message_text(text=text, **kwargs)
+
     if flask_app is None:
-        await query.edit_message_caption('❌ 服务暂时不可用。')
+        await _edit_admin_message('❌ 服务暂时不可用。')
         return
 
     if data.startswith('audit_approve_'):
@@ -382,11 +392,11 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = await loop.run_in_executor(None, _get_report)
 
     if report is None:
-        await query.edit_message_caption('❌ 报告不存在。')
+        await _edit_admin_message('❌ 报告不存在。')
         return
 
     if report['status'] != 'pending':
-        await query.edit_message_caption(
+        await _edit_admin_message(
             f'ℹ️ 该报告已被处理（当前状态：{report["status"]}）。'
         )
         return
@@ -404,9 +414,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db.session.commit()
 
         await loop.run_in_executor(None, _reject)
-        await query.edit_message_caption(
-            f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。'
-        )
+        await _edit_admin_message(f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。')
         submitter_id = report.get('submitter_id')
         if submitter_id:
             try:
@@ -458,7 +466,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.session.commit()
 
     await loop.run_in_executor(None, _approve, channel_msg_id)
-    await query.edit_message_caption(
+    await _edit_admin_message(
         f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。'
     )
     submitter_id = report.get('submitter_id')

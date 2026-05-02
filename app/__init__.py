@@ -7,7 +7,11 @@ import json
 from datetime import timedelta
 
 db = SQLAlchemy()
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[],
+    storage_uri=os.getenv("REDIS_URL"),
+)
 
 # 全局变量
 global_bot = None

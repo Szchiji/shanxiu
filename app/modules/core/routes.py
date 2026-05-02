@@ -2745,7 +2745,8 @@ def api_batch_scheduled_messages():
         session_clone_id = session.get('clone_id')
         processed = 0
         for item in items:
-            # Skip items the current session has no access to
+            # Global admins (no clone_id in session) may operate on any group.
+            # Clone admins may only operate on groups that belong to their clone.
             if session_clone_id and item.group and item.group.clone_id != session_clone_id:
                 continue
             if action == 'delete':
@@ -5192,7 +5193,7 @@ async def check_scheduled_messages(context):
             try:
                 q = db.session.query(ScheduledMessage).filter(
                     ScheduledMessage.id == msg_id,
-                    ScheduledMessage.is_active == True,
+                    ScheduledMessage.is_active,
                 )
                 if expected_last_sent_at is None:
                     q = q.filter(ScheduledMessage.last_sent_at.is_(None))
@@ -5350,8 +5351,10 @@ async def check_scheduled_messages(context):
             print(f"Error sending scheduled message: {e}")
             # The atomic claim already set last_sent_at on the DB row.
             # For one-shot messages (repeat_interval=0) we reset it so the
-            # scheduler retries on the next tick.  Repeating messages keep the
-            # claim timestamp, which naturally enforces the cooldown interval.
+            # scheduler retries on the next tick.
+            # For repeating messages we intentionally keep the claim timestamp:
+            # this acts as a natural cooldown so the scheduler does not hammer
+            # Telegram with retries faster than the configured repeat_interval.
             def _update_failed(msg_id):
                 with global_flask_app.app_context():
                     scheduled_msg = ScheduledMessage.query.get(msg_id)

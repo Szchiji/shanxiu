@@ -7810,8 +7810,8 @@ async def run_bot(app_instance):
 
     # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
     _media_filter = (
-        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
-        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+        filters.Sticker.ALL | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
     )
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
@@ -7931,8 +7931,8 @@ def setup_clone_handlers(app, flask_app, clone_id):
 
     # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
     _media_filter = (
-        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
-        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+        filters.Sticker.ALL | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
     )
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 

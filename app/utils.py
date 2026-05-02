@@ -64,7 +64,7 @@ def decrypt_token(value: str) -> str:
         return value
     try:
         return _get_fernet().decrypt(value.encode()).decode()
-    except Exception:
+    except InvalidToken:
         return value  # plaintext fallback for pre-encryption tokens
 
 

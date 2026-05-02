@@ -393,7 +393,7 @@ def get_group_or_403(gid: int) -> BotGroup:
     belong to their own clone.  Global admins (no clone_id in session) may
     access all groups.
     """
-    group = get_group_or_403(gid)
+    group = BotGroup.query.get_or_404(gid)
     session_clone_id = session.get('clone_id')
     if session_clone_id and group.clone_id != session_clone_id:
         abort(403)

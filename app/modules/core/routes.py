@@ -1332,6 +1332,55 @@ def page_admin_logs(gid):
                           action_types=action_types, filter_qs=filter_qs)
 
 
+@core_bp.route('/group/<int:gid>/plugins')
+def page_plugins(gid):
+    """插件管理页面：为该群组开启/关闭功能插件"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+
+    from app.plugins import get_all_plugins
+    from app.models import GroupPluginSettings
+
+    all_plugins = get_all_plugins()
+    # Attach current enabled state to each plugin dict
+    for plugin in all_plugins:
+        plugin['enabled'] = GroupPluginSettings.is_enabled(gid, plugin['name'])
+
+    return render_template('plugins.html', page='plugins', group=group, plugins=all_plugins)
+
+
+@core_bp.route('/api/toggle_plugin', methods=['POST'])
+def api_toggle_plugin():
+    """API: 开启或关闭某个群组的插件"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    data = request.get_json(force=True) or {}
+    gid = data.get('group_id')
+    plugin_name = data.get('plugin_name', '').strip()
+    enabled = data.get('enabled')
+
+    if not gid or not plugin_name or enabled is None:
+        return jsonify({'success': False, 'error': '缺少参数'}), 400
+
+    group = BotGroup.query.get(gid)
+    if not group:
+        return jsonify({'success': False, 'error': '群组不存在'}), 404
+
+    from app.plugins import is_plugin_registered
+    if not is_plugin_registered(plugin_name):
+        return jsonify({'success': False, 'error': f'未知插件: {plugin_name}'}), 400
+
+    from app.models import GroupPluginSettings
+    try:
+        GroupPluginSettings.set_enabled(db.session, gid, plugin_name, bool(enabled))
+        return jsonify({'success': True, 'enabled': bool(enabled)})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
 @core_bp.route('/group/<int:gid>/backup')
 def page_backup(gid):
     """配置备份页面"""
@@ -7711,11 +7760,17 @@ async def run_bot(app_instance):
     global_bot_loop = asyncio.get_running_loop()
     global_flask_app = app_instance # 📦 存储 Flask App 实例
 
+    # Keep app.bot.state in sync so handler modules can import from there
+    from app.bot import state as _bot_state
+    _bot_state.global_bot_loop = global_bot_loop
+    _bot_state.global_flask_app = global_flask_app
+
     print("🤖 正在初始化 Bot...", flush=True)
     app = Application.builder().token(token).build()
     
     global global_ptb_app
     global_ptb_app = app
+    _bot_state.global_ptb_app = app
 
     # Store Flask app in bot_data so report handlers can access the DB
     app.bot_data['flask_app'] = app_instance
@@ -11033,3 +11088,66 @@ async def pagination_callback(update: Update, context):
     except Exception as e: 
         print(f"Page Error: {e}")
     await query.answer()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible re-exports
+# ---------------------------------------------------------------------------
+# Functions that have been extracted to dedicated modules are re-exported
+# here so that existing call-sites throughout this file continue to work
+# without modification during the transition period.
+#
+# Once all call-sites have been updated to import from their canonical
+# location, these one-liners can be deleted.
+
+# -- app.utils ---------------------------------------------------------------
+from app.utils import (  # noqa: E402, F401
+    get_beijing_now as _util_get_beijing_now,
+    get_beijing_today as _util_get_beijing_today,
+    get_muted_permissions as _util_get_muted_permissions,
+    get_unrestricted_permissions as _util_get_unrestricted_permissions,
+    is_user_admin_in_group as _util_is_user_admin_in_group,
+    is_user_chat_owner as _util_is_user_chat_owner,
+    convert_chat_id_to_int as _util_convert_chat_id_to_int,
+    log_admin_action as _util_log_admin_action,
+    safe_int as _util_safe_int,
+    parse_telegram_message_link as _util_parse_telegram_message_link,
+    build_inline_keyboard_from_links as _util_build_inline_keyboard_from_links,
+)
+
+# -- app.bot.handlers.commands -----------------------------------------------
+from app.bot.handlers.commands import (  # noqa: E402, F401
+    cmd_kick as _hcmd_cmd_kick,
+    cmd_ban as _hcmd_cmd_ban,
+    cmd_unban as _hcmd_cmd_unban,
+    cmd_mute as _hcmd_cmd_mute,
+    cmd_unmute as _hcmd_cmd_unmute,
+    cmd_pin as _hcmd_cmd_pin,
+    cmd_unpin as _hcmd_cmd_unpin,
+    cmd_warn as _hcmd_cmd_warn,
+    cmd_userinfo as _hcmd_cmd_userinfo,
+    cmd_rank as _hcmd_cmd_rank,
+    cmd_invite_rank as _hcmd_cmd_invite_rank,
+    cmd_active as _hcmd_cmd_active,
+    cmd_clones as _hcmd_cmd_clones,
+)
+
+# -- app.services ------------------------------------------------------------
+from app.services.points_service import (  # noqa: E402, F401
+    award_points,
+    deduct_points,
+    apply_points_change,
+    InsufficientPointsError,
+    get_or_create_user_points,
+    record_points_transaction,
+)
+from app.services.lottery_service import (  # noqa: E402, F401
+    pick_winners_random,
+    pick_winner_weighted,
+    pick_winners_top_n,
+    run_lottery_draw,
+    validate_lottery_draw,
+)
+
+# -- app.plugins --------------------------------------------------------------
+from app.plugins import is_plugin_enabled  # noqa: E402, F401

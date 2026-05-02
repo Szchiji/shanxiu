@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    .page-header {
+        background: var(--primary-gradient);
+        color: white;
+        padding: 1.25rem 1.5rem;
+        border-radius: 14px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
+    }
+    .plugin-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        transition: box-shadow 0.2s;
+    }
+    .plugin-card:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    }
+    .plugin-info h6 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+        color: var(--text-primary);
+    }
+    .plugin-info p {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        margin: 0;
+    }
+    .form-check-input {
+        width: 2.5em;
+        height: 1.25em;
+        cursor: pointer;
+    }
+    .toast-container {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        z-index: 9999;
+    }
+</style>
+
+<div class="page-header">
+    <h4 class="mb-0">🔌 插件管理</h4>
+    <small>为群组 <b>{{ group.title }}</b> 开启或关闭功能模块</small>
+</div>
+
+<div id="plugin-list">
+{% for plugin in plugins %}
+<div class="plugin-card">
+    <div class="plugin-info">
+        <h6>{{ plugin.display_name }}</h6>
+        <p>{{ plugin.description }}</p>
+    </div>
+    <div class="form-check form-switch">
+        <input
+            class="form-check-input plugin-toggle"
+            type="checkbox"
+            role="switch"
+            id="plugin-{{ plugin.name }}"
+            data-plugin="{{ plugin.name }}"
+            {% if plugin.enabled %}checked{% endif %}
+        >
+    </div>
+</div>
+{% endfor %}
+</div>
+
+<!-- Toast notifications -->
+<div class="toast-container">
+    <div id="save-toast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body" id="toast-msg">已保存</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.querySelectorAll('.plugin-toggle').forEach(function(toggle) {
+    toggle.addEventListener('change', function() {
+        var pluginName = this.dataset.plugin;
+        var enabled = this.checked;
+        fetch('/core/api/toggle_plugin', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                group_id: {{ group.id }},
+                plugin_name: pluginName,
+                enabled: enabled
+            })
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            var toastEl = document.getElementById('save-toast');
+            var toastMsg = document.getElementById('toast-msg');
+            if (data.success) {
+                toastEl.className = 'toast align-items-center text-white border-0 bg-success';
+                toastMsg.textContent = '已' + (enabled ? '开启' : '关闭') + ' ' + pluginName;
+            } else {
+                toggle.checked = !enabled; // revert
+                toastEl.className = 'toast align-items-center text-white border-0 bg-danger';
+                toastMsg.textContent = '操作失败: ' + (data.error || '未知错误');
+            }
+            new bootstrap.Toast(toastEl, {delay: 2500}).show();
+        }).catch(function(err) {
+            toggle.checked = !enabled;
+            console.error('Toggle plugin error:', err);
+        });
+    });
+});
+</script>
+{% endblock %}

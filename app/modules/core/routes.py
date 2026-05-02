@@ -452,6 +452,7 @@ def _delete_group_cascade(group_id: int) -> None:
     SyncMessageLog.query.filter_by(source_group_id=group_id).delete(synchronize_session=False)
 
 
+def get_group_conf(group):
     conf = DEFAULT_SYSTEM.copy()
     if group and group.config:
         try:

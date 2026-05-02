@@ -22,6 +22,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
 from functools import wraps
+from urllib.parse import urlencode
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
 
@@ -974,8 +975,10 @@ def page_points_log(gid):
         page=page, per_page=per_page, error_out=False
     )
     logs = pagination.items
+    filter_qs = urlencode({'search_user': search_user, 'search_reason': search_reason})
     return render_template('points_log.html', page='points_log', group=group, logs=logs,
-                           pagination=pagination, search_user=search_user, search_reason=search_reason)
+                           pagination=pagination, search_user=search_user, search_reason=search_reason,
+                           filter_qs=filter_qs)
 
 @core_bp.route('/group/<int:gid>/points_exchange')
 def page_points_exchange(gid):
@@ -1279,12 +1282,16 @@ def page_admin_logs(gid):
 
     q = AdminActionLog.query.filter_by(group_id=gid)
     if search_admin:
-        q = q.filter(
-            or_(
-                AdminActionLog.admin_name.ilike(f'%{search_admin}%'),
-                cast(AdminActionLog.admin_id, String).contains(search_admin)
+        try:
+            admin_id_int = int(search_admin)
+            q = q.filter(
+                or_(
+                    AdminActionLog.admin_name.ilike(f'%{search_admin}%'),
+                    AdminActionLog.admin_id == admin_id_int
+                )
             )
-        )
+        except ValueError:
+            q = q.filter(AdminActionLog.admin_name.ilike(f'%{search_admin}%'))
     if search_target:
         q = q.filter(AdminActionLog.target_user_name.ilike(f'%{search_target}%'))
     if action_type:
@@ -1313,11 +1320,16 @@ def page_admin_logs(gid):
         if r[0]
     ]
 
+    filter_qs = urlencode({
+        'search_admin': search_admin, 'search_target': search_target,
+        'action_type': action_type, 'date_from': date_from, 'date_to': date_to,
+    })
+
     return render_template('admin_logs.html', page='admin_logs',
                           group=group, logs=logs, pagination=pagination,
                           search_admin=search_admin, search_target=search_target,
                           action_type=action_type, date_from=date_from, date_to=date_to,
-                          action_types=action_types)
+                          action_types=action_types, filter_qs=filter_qs)
 
 
 @core_bp.route('/group/<int:gid>/backup')
@@ -5210,8 +5222,8 @@ async def handle_new_chat_member(update: Update, context):
                     is_bot=new_member.is_bot
                 )
                 
-                # Entry verification
-                if settings.entry_verification_enabled and settings.verification_question:
+                # Entry verification (only when both question and answer are configured)
+                if settings.entry_verification_enabled and settings.verification_question and settings.verification_answer:
                     try:
                         # Mute the new member until they answer correctly
                         try:
@@ -5507,6 +5519,9 @@ async def check_spam_protection(update: Update, context):
                 bucket.append(now_ts)
                 if len(bucket) > _max_msgs:
                     should_punish = True
+                elif not bucket:
+                    # Remove empty bucket to avoid unbounded growth
+                    context.application.bot_data.pop(rate_key, None)
             
             # Block links
             if protection.block_links and msg.text:
@@ -10029,7 +10044,7 @@ async def on_message(update: Update, context):
             verify_state = context.application.bot_data.get(pending_key)
             if verify_state is not None:
                 correct_answer = verify_state.get('answer', '')
-                if txt.strip().lower() == correct_answer or not correct_answer:
+                if txt.strip().lower() == correct_answer:
                     # Correct answer — restore permissions and remove pending state
                     context.application.bot_data.pop(pending_key, None)
                     # Cancel timeout kick job

@@ -4,13 +4,20 @@ app/bot/state.py
 Shared global state for the Telegram bot.
 
 These module-level variables are populated by ``run_bot()`` in
-``app.modules.core.routes`` at startup and should be *imported by
-reference* (i.e. ``from app.bot import state``, then use
-``state.global_flask_app``) by any module that needs access to the
-live PTB Application or Flask app.
+``app.modules.core.routes`` at startup.
 
-Do NOT do ``from app.bot.state import global_flask_app`` because that
-creates a local binding that won't reflect later mutations.
+**Correct usage** — import the *module*, then access attributes:
+
+    from app.bot import state as _state
+
+    if _state.global_flask_app:
+        with _state.global_flask_app.app_context():
+            ...
+
+**Incorrect usage** — this creates a local binding that won't reflect
+later mutations (stays ``None`` forever):
+
+    from app.bot.state import global_flask_app  # ← DON'T do this
 """
 
 from __future__ import annotations

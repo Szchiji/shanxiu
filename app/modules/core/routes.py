@@ -1378,7 +1378,9 @@ def api_toggle_plugin():
         return jsonify({'success': True, 'enabled': bool(enabled)})
     except Exception as exc:
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(exc)}), 500
+        # Log the full error internally; return a safe generic message to the client.
+        print(f"api_toggle_plugin error (group={gid}, plugin={plugin_name}): {exc}")
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
 
 
 @core_bp.route('/group/<int:gid>/backup')
@@ -5568,9 +5570,9 @@ async def check_spam_protection(update: Update, context):
                 bucket.append(now_ts)
                 if len(bucket) > _max_msgs:
                     should_punish = True
-                elif not bucket:
-                    # Remove empty bucket to avoid unbounded growth
-                    context.application.bot_data.pop(rate_key, None)
+                elif len(bucket) == 1:
+                    # Bucket had been empty before this message; nothing to clean up yet.
+                    pass
             
             # Block links
             if protection.block_links and msg.text:
@@ -10110,12 +10112,7 @@ async def on_message(update: Update, context):
                         await context.bot.restrict_chat_member(
                             chat_id=chat.id,
                             user_id=user.id,
-                            permissions=ChatPermissions(
-                                can_send_messages=True,
-                                can_send_media_messages=True,
-                                can_send_other_messages=True,
-                                can_add_web_page_previews=True,
-                            )
+                            permissions=get_unrestricted_permissions()
                         )
                         await context.bot.send_message(
                             chat_id=chat.id,

@@ -845,6 +845,51 @@ class SystemConfig(db.Model):
                 _logger.error("Failed to create system_config table and retry set_value: %s", retry_err)
 
 
+class GroupPluginSettings(db.Model):
+    """每个群组可独立开启/关闭的插件设置。
+
+    plugin_name 对应各功能模块的 PLUGIN_META['name']。
+    若某群组没有对应记录，则视为 enabled=True（向后兼容默认全开）。
+    """
+    __tablename__ = 'group_plugin_settings'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True, nullable=False)
+    plugin_name = db.Column(db.String(50), nullable=False)
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('group_id', 'plugin_name', name='_group_plugin_uc'),
+    )
+
+    group = db.relationship('BotGroup', backref='plugin_settings', lazy=True)
+
+    @classmethod
+    def is_enabled(cls, group_id: int, plugin_name: str) -> bool:
+        """Return True if the plugin is enabled for *group_id*.
+
+        Defaults to True when no setting row exists (backward-compatible).
+        """
+        setting = cls.query.filter_by(
+            group_id=group_id, plugin_name=plugin_name
+        ).first()
+        return setting.enabled if setting is not None else True
+
+    @classmethod
+    def set_enabled(cls, db_session, group_id: int, plugin_name: str, enabled: bool):
+        """Upsert the enabled state for a plugin in a group."""
+        setting = cls.query.filter_by(
+            group_id=group_id, plugin_name=plugin_name
+        ).first()
+        if setting is None:
+            setting = cls(group_id=group_id, plugin_name=plugin_name, enabled=enabled)
+            db_session.add(setting)
+        else:
+            setting.enabled = enabled
+        db_session.commit()
+        return setting
+
+
 class UserReport(db.Model):
     __tablename__ = 'user_reports'
     id = db.Column(db.Integer, primary_key=True)

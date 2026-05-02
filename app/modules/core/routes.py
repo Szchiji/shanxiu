@@ -22,6 +22,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
 from functools import wraps
+from urllib.parse import urlencode
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
 
@@ -954,8 +955,30 @@ def page_points_log(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    logs = PointsLog.query.filter_by(group_id=gid).order_by(PointsLog.created_at.desc()).limit(100).all()
-    return render_template('points_log.html', page='points_log', group=group, logs=logs)
+
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    search_user = request.args.get('search_user', '').strip()
+    search_reason = request.args.get('search_reason', '').strip()
+
+    q = PointsLog.query.filter_by(group_id=gid)
+    if search_user:
+        try:
+            uid = int(search_user)
+            q = q.filter(PointsLog.user_id == uid)
+        except ValueError:
+            pass
+    if search_reason:
+        q = q.filter(PointsLog.reason.ilike(f'%{search_reason}%'))
+
+    pagination = q.order_by(PointsLog.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    logs = pagination.items
+    filter_qs = urlencode({'search_user': search_user, 'search_reason': search_reason})
+    return render_template('points_log.html', page='points_log', group=group, logs=logs,
+                           pagination=pagination, search_user=search_user, search_reason=search_reason,
+                           filter_qs=filter_qs)
 
 @core_bp.route('/group/<int:gid>/points_exchange')
 def page_points_exchange(gid):
@@ -1245,22 +1268,119 @@ def page_admin_logs(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    
+
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
     per_page = 50
-    
-    # Get admin logs
-    pagination = AdminActionLog.query.filter_by(
-        group_id=gid
-    ).order_by(
+
+    # Search / filter parameters
+    search_admin = request.args.get('search_admin', '').strip()
+    search_target = request.args.get('search_target', '').strip()
+    action_type   = request.args.get('action_type', '').strip()
+    date_from     = request.args.get('date_from', '').strip()
+    date_to       = request.args.get('date_to', '').strip()
+
+    q = AdminActionLog.query.filter_by(group_id=gid)
+    if search_admin:
+        try:
+            admin_id_int = int(search_admin)
+            q = q.filter(
+                or_(
+                    AdminActionLog.admin_name.ilike(f'%{search_admin}%'),
+                    AdminActionLog.admin_id == admin_id_int
+                )
+            )
+        except ValueError:
+            q = q.filter(AdminActionLog.admin_name.ilike(f'%{search_admin}%'))
+    if search_target:
+        q = q.filter(AdminActionLog.target_user_name.ilike(f'%{search_target}%'))
+    if action_type:
+        q = q.filter(AdminActionLog.action_type == action_type)
+    if date_from:
+        try:
+            q = q.filter(AdminActionLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            q = q.filter(AdminActionLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
+
+    pagination = q.order_by(
         AdminActionLog.created_at.desc()
     ).paginate(page=page, per_page=per_page, error_out=False)
-    
+
     logs = pagination.items
-    
-    return render_template('admin_logs.html', page='admin_logs', 
-                          group=group, logs=logs, pagination=pagination)
+
+    # Distinct action types for the filter dropdown
+    action_types = [
+        r[0] for r in db.session.query(AdminActionLog.action_type)
+        .filter_by(group_id=gid).distinct().order_by(AdminActionLog.action_type).all()
+        if r[0]
+    ]
+
+    filter_qs = urlencode({
+        'search_admin': search_admin, 'search_target': search_target,
+        'action_type': action_type, 'date_from': date_from, 'date_to': date_to,
+    })
+
+    return render_template('admin_logs.html', page='admin_logs',
+                          group=group, logs=logs, pagination=pagination,
+                          search_admin=search_admin, search_target=search_target,
+                          action_type=action_type, date_from=date_from, date_to=date_to,
+                          action_types=action_types, filter_qs=filter_qs)
+
+
+@core_bp.route('/group/<int:gid>/plugins')
+def page_plugins(gid):
+    """插件管理页面：为该群组开启/关闭功能插件"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = BotGroup.query.get_or_404(gid)
+
+    from app.plugins import get_all_plugins
+    from app.models import GroupPluginSettings
+
+    all_plugins = get_all_plugins()
+    # Attach current enabled state to each plugin dict
+    for plugin in all_plugins:
+        plugin['enabled'] = GroupPluginSettings.is_enabled(gid, plugin['name'])
+
+    return render_template('plugins.html', page='plugins', group=group, plugins=all_plugins)
+
+
+@core_bp.route('/api/toggle_plugin', methods=['POST'])
+def api_toggle_plugin():
+    """API: 开启或关闭某个群组的插件"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': '未登录'}), 401
+
+    data = request.get_json(force=True) or {}
+    gid = data.get('group_id')
+    plugin_name = data.get('plugin_name', '').strip()
+    enabled = data.get('enabled')
+
+    if not gid or not plugin_name or enabled is None:
+        return jsonify({'success': False, 'error': '缺少参数'}), 400
+
+    group = BotGroup.query.get(gid)
+    if not group:
+        return jsonify({'success': False, 'error': '群组不存在'}), 404
+
+    from app.plugins import is_plugin_registered
+    if not is_plugin_registered(plugin_name):
+        return jsonify({'success': False, 'error': f'未知插件: {plugin_name}'}), 400
+
+    from app.models import GroupPluginSettings
+    try:
+        GroupPluginSettings.set_enabled(db.session, gid, plugin_name, bool(enabled))
+        return jsonify({'success': True, 'enabled': bool(enabled)})
+    except Exception as exc:
+        db.session.rollback()
+        # Log the full error internally; return a safe generic message to the client.
+        print(f"api_toggle_plugin error (group={gid}, plugin={plugin_name}): {exc}")
+        return jsonify({'success': False, 'error': '保存失败，请稍后重试'}), 500
 
 
 @core_bp.route('/group/<int:gid>/backup')
@@ -5153,20 +5273,64 @@ async def handle_new_chat_member(update: Update, context):
                     is_bot=new_member.is_bot
                 )
                 
-                # Entry verification
-                if settings.entry_verification_enabled and settings.verification_question:
+                # Entry verification (only when both question and answer are configured)
+                if settings.entry_verification_enabled and settings.verification_question and settings.verification_answer:
                     try:
+                        # Mute the new member until they answer correctly
+                        try:
+                            await context.bot.restrict_chat_member(
+                                chat_id=chat.id,
+                                user_id=new_member.id,
+                                permissions=get_muted_permissions()
+                            )
+                        except Exception as mute_err:
+                            print(f"Error muting new member during verification: {mute_err}")
+
                         # Send verification question
-                        question_text = f"👋 欢迎 {new_member.first_name}!\n\n"
-                        question_text += f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
-                        question_text += f"⏱ 超时时间: {settings.verification_timeout}秒"
-                        
+                        timeout = settings.verification_timeout or 60
+                        question_text = (
+                            f"👋 欢迎 <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a>!\n\n"
+                            f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
+                            f"⏱ 请在 {timeout} 秒内回答，否则将被移出群组。"
+                        )
                         await context.bot.send_message(
                             chat_id=chat.id,
-                            text=question_text
+                            text=question_text,
+                            parse_mode='HTML'
                         )
-                        # Note: Full verification logic would require storing pending verifications
-                        # and checking responses - simplified here for initial implementation
+
+                        # Store pending verification state in bot_data
+                        pending_key = f"pending_verification:{chat.id}:{new_member.id}"
+                        context.application.bot_data[pending_key] = {
+                            'answer': (settings.verification_answer or '').strip().lower(),
+                            'group_id': group.id,
+                            'timeout': timeout,
+                            'started_at': time.time(),
+                        }
+
+                        # Schedule timeout kick
+                        async def _kick_on_timeout(ctx):
+                            pending_key_inner = ctx.job.data
+                            state = ctx.application.bot_data.pop(pending_key_inner, None)
+                            if state is None:
+                                return  # Already verified
+                            try:
+                                await ctx.bot.ban_chat_member(chat.id, new_member.id)
+                                await ctx.bot.unban_chat_member(chat.id, new_member.id)
+                                await ctx.bot.send_message(
+                                    chat_id=chat.id,
+                                    text=f"⏰ <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a> 未在规定时间内完成验证，已被移出群组。",
+                                    parse_mode='HTML'
+                                )
+                            except Exception as kick_err:
+                                print(f"Error kicking unverified member: {kick_err}")
+
+                        context.application.job_queue.run_once(
+                            _kick_on_timeout,
+                            when=timeout,
+                            data=pending_key,
+                            name=pending_key
+                        )
                     except Exception as e:
                         print(f"Error sending verification question: {e}")
                 
@@ -5393,6 +5557,22 @@ async def check_spam_protection(update: Update, context):
             
             # Check for blocked content
             should_punish = False
+
+            # --- Rate limiting (in-memory counter via bot_data) ---
+            if getattr(protection, 'rate_limit_enabled', False):
+                _max_msgs = getattr(protection, 'rate_limit_max_messages', 5) or 5
+                _window = getattr(protection, 'rate_limit_window_seconds', 10) or 10
+                rate_key = f"rate:{chat.id}:{user.id}"
+                now_ts = time.time()
+                bucket = context.application.bot_data.setdefault(rate_key, [])
+                # Evict timestamps outside the window
+                bucket[:] = [t for t in bucket if now_ts - t < _window]
+                bucket.append(now_ts)
+                if len(bucket) > _max_msgs:
+                    should_punish = True
+                elif len(bucket) == 1:
+                    # Bucket had been empty before this message; nothing to clean up yet.
+                    pass
             
             # Block links
             if protection.block_links and msg.text:
@@ -6487,6 +6667,9 @@ async def check_inactive_users(context):
     """检查并处理不活跃用户 - Background task"""
     if not global_flask_app: return
     try:
+        # Identify which bot (main or clone) is running this job
+        bot_clone_id = context.application.bot_data.get('clone_id')
+
         def _check_inactive():
             """Sync part: query database and collect users for moderation actions"""
             with global_flask_app.app_context():
@@ -6501,7 +6684,8 @@ async def check_inactive_users(context):
                             group = BotGroup.query.get(settings.group_id)
                             if not group or not group.is_active:
                                 continue
-                            if group.clone_id is not None:
+                            # Only process groups that belong to this bot instance
+                            if group.clone_id != bot_clone_id:
                                 continue
                             
                             # Convert chat_id to integer for Telegram API
@@ -7578,11 +7762,17 @@ async def run_bot(app_instance):
     global_bot_loop = asyncio.get_running_loop()
     global_flask_app = app_instance # 📦 存储 Flask App 实例
 
+    # Keep app.bot.state in sync so handler modules can import from there
+    from app.bot import state as _bot_state
+    _bot_state.global_bot_loop = global_bot_loop
+    _bot_state.global_flask_app = global_flask_app
+
     print("🤖 正在初始化 Bot...", flush=True)
     app = Application.builder().token(token).build()
     
     global global_ptb_app
     global_ptb_app = app
+    _bot_state.global_ptb_app = app
 
     # Store Flask app in bot_data so report handlers can access the DB
     app.bot_data['flask_app'] = app_instance
@@ -7617,6 +7807,13 @@ async def run_bot(app_instance):
 
     # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+
+    # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
+    _media_filter = (
+        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+    )
+    app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
     # Callback query handler (catch-all – runs after audit_callback_handler)
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
@@ -7731,7 +7928,14 @@ def setup_clone_handlers(app, flask_app, clone_id):
     
     # General message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    
+
+    # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
+    _media_filter = (
+        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+    )
+    app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
+
     # Callback query handler
     app.add_handler(CallbackQueryHandler(pagination_callback))
     
@@ -7766,6 +7970,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # Periodic jobs for clone bot
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=60)
+    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=120)  # Check inactive users daily
 
 
 async def start_all_clone_bots(flask_app):
@@ -9865,6 +10070,21 @@ async def _auto_delete_msg(context):
         pass
 
 
+async def on_non_text_message(update: Update, context):
+    """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
+    Applies spam-protection rules (block stickers/forwards) to media messages."""
+    if not global_flask_app:
+        return
+    try:
+        chat = update.effective_chat
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        # Re-use check_spam_protection which already handles sticker/forward blocking
+        await check_spam_protection(update, context)
+    except Exception as e:
+        print(f"Error in on_non_text_message: {e}")
+
+
 async def on_message(update: Update, context):
     if not global_flask_app: return
     try:
@@ -9874,7 +10094,41 @@ async def on_message(update: Update, context):
         if not msg.text or not chat: return
 
         txt = msg.text.strip()
-        
+
+        # 🆕 Check pending entry verification answer
+        if chat.type in ['group', 'supergroup'] and user:
+            pending_key = f"pending_verification:{chat.id}:{user.id}"
+            verify_state = context.application.bot_data.get(pending_key)
+            if verify_state is not None:
+                correct_answer = verify_state.get('answer', '')
+                if txt.strip().lower() == correct_answer:
+                    # Correct answer — restore permissions and remove pending state
+                    context.application.bot_data.pop(pending_key, None)
+                    # Cancel timeout kick job
+                    current_jobs = context.application.job_queue.get_jobs_by_name(pending_key)
+                    for job in current_jobs:
+                        job.schedule_removal()
+                    try:
+                        await context.bot.restrict_chat_member(
+                            chat_id=chat.id,
+                            user_id=user.id,
+                            permissions=get_unrestricted_permissions()
+                        )
+                        await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=f"✅ <a href='tg://user?id={user.id}'>{user.first_name}</a> 验证成功，欢迎加入！",
+                            parse_mode='HTML'
+                        )
+                    except Exception as restore_err:
+                        print(f"Error restoring verified member permissions: {restore_err}")
+                else:
+                    # Wrong answer — delete message, do not unblock
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                return
+
         # 🆕 Check spam protection first (may delete message and return early)
         if chat.type in ['group', 'supergroup']:
             spam_detected = await check_spam_protection(update, context)
@@ -10831,3 +11085,66 @@ async def pagination_callback(update: Update, context):
     except Exception as e: 
         print(f"Page Error: {e}")
     await query.answer()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible re-exports
+# ---------------------------------------------------------------------------
+# Functions that have been extracted to dedicated modules are re-exported
+# here so that existing call-sites throughout this file continue to work
+# without modification during the transition period.
+#
+# Once all call-sites have been updated to import from their canonical
+# location, these one-liners can be deleted.
+
+# -- app.utils ---------------------------------------------------------------
+from app.utils import (  # noqa: E402, F401
+    get_beijing_now as _util_get_beijing_now,
+    get_beijing_today as _util_get_beijing_today,
+    get_muted_permissions as _util_get_muted_permissions,
+    get_unrestricted_permissions as _util_get_unrestricted_permissions,
+    is_user_admin_in_group as _util_is_user_admin_in_group,
+    is_user_chat_owner as _util_is_user_chat_owner,
+    convert_chat_id_to_int as _util_convert_chat_id_to_int,
+    log_admin_action as _util_log_admin_action,
+    safe_int as _util_safe_int,
+    parse_telegram_message_link as _util_parse_telegram_message_link,
+    build_inline_keyboard_from_links as _util_build_inline_keyboard_from_links,
+)
+
+# -- app.bot.handlers.commands -----------------------------------------------
+from app.bot.handlers.commands import (  # noqa: E402, F401
+    cmd_kick as _hcmd_cmd_kick,
+    cmd_ban as _hcmd_cmd_ban,
+    cmd_unban as _hcmd_cmd_unban,
+    cmd_mute as _hcmd_cmd_mute,
+    cmd_unmute as _hcmd_cmd_unmute,
+    cmd_pin as _hcmd_cmd_pin,
+    cmd_unpin as _hcmd_cmd_unpin,
+    cmd_warn as _hcmd_cmd_warn,
+    cmd_userinfo as _hcmd_cmd_userinfo,
+    cmd_rank as _hcmd_cmd_rank,
+    cmd_invite_rank as _hcmd_cmd_invite_rank,
+    cmd_active as _hcmd_cmd_active,
+    cmd_clones as _hcmd_cmd_clones,
+)
+
+# -- app.services ------------------------------------------------------------
+from app.services.points_service import (  # noqa: E402, F401
+    award_points,
+    deduct_points,
+    apply_points_change,
+    InsufficientPointsError,
+    get_or_create_user_points,
+    record_points_transaction,
+)
+from app.services.lottery_service import (  # noqa: E402, F401
+    pick_winners_random,
+    pick_winner_weighted,
+    pick_winners_top_n,
+    run_lottery_draw,
+    validate_lottery_draw,
+)
+
+# -- app.plugins --------------------------------------------------------------
+from app.plugins import is_plugin_enabled  # noqa: E402, F401

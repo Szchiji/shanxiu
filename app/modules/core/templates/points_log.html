@@ -34,6 +34,37 @@
         color: #dc3545;
         font-weight: bold;
     }
+
+    .search-card {
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        margin-bottom: 1.5rem;
+    }
+
+    .pagination-wrap {
+        display: flex;
+        justify-content: center;
+        gap: 0.4rem;
+        margin-top: 1.5rem;
+        flex-wrap: wrap;
+    }
+
+    .pagination-wrap a, .pagination-wrap span {
+        padding: 0.4rem 0.85rem;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        text-decoration: none;
+        color: #374151;
+        background: #fff;
+        font-size: 0.9rem;
+    }
+
+    .pagination-wrap .pg-active {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        border-color: transparent;
+    }
 </style>
 
 <div class="page-header">
@@ -45,11 +76,34 @@
     </div>
 </div>
 
+<!-- Search / Filter -->
+<div class="card search-card p-3">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-12 col-md-4">
+            <label class="form-label mb-1" style="font-size:0.85rem;">用户 ID</label>
+            <input type="text" name="search_user" class="form-control form-control-sm"
+                   placeholder="输入用户 ID" value="{{ search_user }}">
+        </div>
+        <div class="col-12 col-md-5">
+            <label class="form-label mb-1" style="font-size:0.85rem;">备注关键词</label>
+            <input type="text" name="search_reason" class="form-control form-control-sm"
+                   placeholder="输入备注关键词" value="{{ search_reason }}">
+        </div>
+        <div class="col-12 col-md-3 d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm flex-fill">
+                <i class="fa-solid fa-search me-1"></i>搜索
+            </button>
+            <a href="?" class="btn btn-outline-secondary btn-sm flex-fill">重置</a>
+        </div>
+    </form>
+</div>
+
 <div class="row">
     <div class="col-12">
         <div class="logs-card card">
             <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list-ul me-2 text-primary"></i>最近100条记录
+                <i class="fa-solid fa-list-ul me-2 text-primary"></i>
+                共 {{ pagination.total }} 条记录，第 {{ pagination.page }}/{{ pagination.pages }} 页
             </div>
             <div class="card-body p-0">
                 {% if logs %}
@@ -79,6 +133,29 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if pagination.pages > 1 %}
+        <div class="pagination-wrap">
+            {% if pagination.has_prev %}
+                <a href="?page={{ pagination.prev_num }}&{{ filter_qs }}">« 上一页</a>
+            {% endif %}
+            {% for page_num in pagination.iter_pages() %}
+                {% if page_num %}
+                    {% if page_num == pagination.page %}
+                        <span class="pg-active">{{ page_num }}</span>
+                    {% else %}
+                        <a href="?page={{ page_num }}&{{ filter_qs }}">{{ page_num }}</a>
+                    {% endif %}
+                {% else %}
+                    <span>…</span>
+                {% endif %}
+            {% endfor %}
+            {% if pagination.has_next %}
+                <a href="?page={{ pagination.next_num }}&{{ filter_qs }}">下一页 »</a>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
+

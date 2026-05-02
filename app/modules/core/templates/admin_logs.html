@@ -59,6 +59,7 @@
         justify-content: center;
         gap: 0.5rem;
         margin-top: 1.5rem;
+        flex-wrap: wrap;
     }
     
     .pagination a, .pagination span {
@@ -75,11 +76,58 @@
         color: white;
         border-color: transparent;
     }
+
+    .search-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1.25rem;
+    }
 </style>
 
 <div class="page-header">
     <h4 class="mb-0">🔍 管理员操作日志</h4>
     <p class="mb-0 mt-1 opacity-90">查看所有管理员操作记录</p>
+</div>
+
+<!-- Search / Filter Form -->
+<div class="search-card">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-12 col-md-3">
+            <label class="form-label mb-1" style="font-size:0.85rem;">管理员（名称/ID）</label>
+            <input type="text" name="search_admin" class="form-control form-control-sm"
+                   placeholder="搜索管理员" value="{{ search_admin }}">
+        </div>
+        <div class="col-12 col-md-3">
+            <label class="form-label mb-1" style="font-size:0.85rem;">目标用户</label>
+            <input type="text" name="search_target" class="form-control form-control-sm"
+                   placeholder="搜索目标用户" value="{{ search_target }}">
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label mb-1" style="font-size:0.85rem;">操作类型</label>
+            <select name="action_type" class="form-select form-select-sm">
+                <option value="">全部</option>
+                {% for at in action_types %}
+                    <option value="{{ at }}" {% if at == action_type %}selected{% endif %}>{{ at }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label mb-1" style="font-size:0.85rem;">开始日期</label>
+            <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label mb-1" style="font-size:0.85rem;">结束日期</label>
+            <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+        </div>
+        <div class="col-6 col-md d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm flex-fill">
+                <i class="fa-solid fa-search me-1"></i>搜索
+            </button>
+            <a href="?" class="btn btn-outline-secondary btn-sm flex-fill">重置</a>
+        </div>
+    </form>
 </div>
 
 {% if logs %}
@@ -105,10 +153,11 @@
     </div>
     {% endfor %}
     
+    {% set qs = '&' ~ filter_qs %}
     {% if pagination.pages > 1 %}
     <div class="pagination">
         {% if pagination.has_prev %}
-            <a href="?page={{ pagination.prev_num }}">« 上一页</a>
+            <a href="?page={{ pagination.prev_num }}{{ qs }}">« 上一页</a>
         {% endif %}
         
         {% for page_num in pagination.iter_pages() %}
@@ -116,7 +165,7 @@
                 {% if page_num == pagination.page %}
                     <span class="active">{{ page_num }}</span>
                 {% else %}
-                    <a href="?page={{ page_num }}">{{ page_num }}</a>
+                    <a href="?page={{ page_num }}{{ qs }}">{{ page_num }}</a>
                 {% endif %}
             {% else %}
                 <span>...</span>
@@ -124,7 +173,7 @@
         {% endfor %}
         
         {% if pagination.has_next %}
-            <a href="?page={{ pagination.next_num }}">下一页 »</a>
+            <a href="?page={{ pagination.next_num }}{{ qs }}">下一页 »</a>
         {% endif %}
     </div>
     {% endif %}
@@ -135,3 +184,4 @@
 {% endif %}
 
 {% endblock %}
+

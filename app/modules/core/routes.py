@@ -954,8 +954,28 @@ def page_points_log(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    logs = PointsLog.query.filter_by(group_id=gid).order_by(PointsLog.created_at.desc()).limit(100).all()
-    return render_template('points_log.html', page='points_log', group=group, logs=logs)
+
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+    search_user = request.args.get('search_user', '').strip()
+    search_reason = request.args.get('search_reason', '').strip()
+
+    q = PointsLog.query.filter_by(group_id=gid)
+    if search_user:
+        try:
+            uid = int(search_user)
+            q = q.filter(PointsLog.user_id == uid)
+        except ValueError:
+            pass
+    if search_reason:
+        q = q.filter(PointsLog.reason.ilike(f'%{search_reason}%'))
+
+    pagination = q.order_by(PointsLog.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    logs = pagination.items
+    return render_template('points_log.html', page='points_log', group=group, logs=logs,
+                           pagination=pagination, search_user=search_user, search_reason=search_reason)
 
 @core_bp.route('/group/<int:gid>/points_exchange')
 def page_points_exchange(gid):
@@ -1245,22 +1265,59 @@ def page_admin_logs(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = BotGroup.query.get_or_404(gid)
-    
+
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
     per_page = 50
-    
-    # Get admin logs
-    pagination = AdminActionLog.query.filter_by(
-        group_id=gid
-    ).order_by(
+
+    # Search / filter parameters
+    search_admin = request.args.get('search_admin', '').strip()
+    search_target = request.args.get('search_target', '').strip()
+    action_type   = request.args.get('action_type', '').strip()
+    date_from     = request.args.get('date_from', '').strip()
+    date_to       = request.args.get('date_to', '').strip()
+
+    q = AdminActionLog.query.filter_by(group_id=gid)
+    if search_admin:
+        q = q.filter(
+            or_(
+                AdminActionLog.admin_name.ilike(f'%{search_admin}%'),
+                cast(AdminActionLog.admin_id, String).contains(search_admin)
+            )
+        )
+    if search_target:
+        q = q.filter(AdminActionLog.target_user_name.ilike(f'%{search_target}%'))
+    if action_type:
+        q = q.filter(AdminActionLog.action_type == action_type)
+    if date_from:
+        try:
+            q = q.filter(AdminActionLog.created_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            q = q.filter(AdminActionLog.created_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
+
+    pagination = q.order_by(
         AdminActionLog.created_at.desc()
     ).paginate(page=page, per_page=per_page, error_out=False)
-    
+
     logs = pagination.items
-    
-    return render_template('admin_logs.html', page='admin_logs', 
-                          group=group, logs=logs, pagination=pagination)
+
+    # Distinct action types for the filter dropdown
+    action_types = [
+        r[0] for r in db.session.query(AdminActionLog.action_type)
+        .filter_by(group_id=gid).distinct().order_by(AdminActionLog.action_type).all()
+        if r[0]
+    ]
+
+    return render_template('admin_logs.html', page='admin_logs',
+                          group=group, logs=logs, pagination=pagination,
+                          search_admin=search_admin, search_target=search_target,
+                          action_type=action_type, date_from=date_from, date_to=date_to,
+                          action_types=action_types)
 
 
 @core_bp.route('/group/<int:gid>/backup')
@@ -5156,17 +5213,61 @@ async def handle_new_chat_member(update: Update, context):
                 # Entry verification
                 if settings.entry_verification_enabled and settings.verification_question:
                     try:
+                        # Mute the new member until they answer correctly
+                        try:
+                            await context.bot.restrict_chat_member(
+                                chat_id=chat.id,
+                                user_id=new_member.id,
+                                permissions=get_muted_permissions()
+                            )
+                        except Exception as mute_err:
+                            print(f"Error muting new member during verification: {mute_err}")
+
                         # Send verification question
-                        question_text = f"👋 欢迎 {new_member.first_name}!\n\n"
-                        question_text += f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
-                        question_text += f"⏱ 超时时间: {settings.verification_timeout}秒"
-                        
+                        timeout = settings.verification_timeout or 60
+                        question_text = (
+                            f"👋 欢迎 <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a>!\n\n"
+                            f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
+                            f"⏱ 请在 {timeout} 秒内回答，否则将被移出群组。"
+                        )
                         await context.bot.send_message(
                             chat_id=chat.id,
-                            text=question_text
+                            text=question_text,
+                            parse_mode='HTML'
                         )
-                        # Note: Full verification logic would require storing pending verifications
-                        # and checking responses - simplified here for initial implementation
+
+                        # Store pending verification state in bot_data
+                        pending_key = f"pending_verification:{chat.id}:{new_member.id}"
+                        context.application.bot_data[pending_key] = {
+                            'answer': (settings.verification_answer or '').strip().lower(),
+                            'group_id': group.id,
+                            'timeout': timeout,
+                            'started_at': time.time(),
+                        }
+
+                        # Schedule timeout kick
+                        async def _kick_on_timeout(ctx):
+                            pending_key_inner = ctx.job.data
+                            state = ctx.application.bot_data.pop(pending_key_inner, None)
+                            if state is None:
+                                return  # Already verified
+                            try:
+                                await ctx.bot.ban_chat_member(chat.id, new_member.id)
+                                await ctx.bot.unban_chat_member(chat.id, new_member.id)
+                                await ctx.bot.send_message(
+                                    chat_id=chat.id,
+                                    text=f"⏰ <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a> 未在规定时间内完成验证，已被移出群组。",
+                                    parse_mode='HTML'
+                                )
+                            except Exception as kick_err:
+                                print(f"Error kicking unverified member: {kick_err}")
+
+                        context.application.job_queue.run_once(
+                            _kick_on_timeout,
+                            when=timeout,
+                            data=pending_key,
+                            name=pending_key
+                        )
                     except Exception as e:
                         print(f"Error sending verification question: {e}")
                 
@@ -5393,6 +5494,19 @@ async def check_spam_protection(update: Update, context):
             
             # Check for blocked content
             should_punish = False
+
+            # --- Rate limiting (in-memory counter via bot_data) ---
+            if getattr(protection, 'rate_limit_enabled', False):
+                _max_msgs = getattr(protection, 'rate_limit_max_messages', 5) or 5
+                _window = getattr(protection, 'rate_limit_window_seconds', 10) or 10
+                rate_key = f"rate:{chat.id}:{user.id}"
+                now_ts = time.time()
+                bucket = context.application.bot_data.setdefault(rate_key, [])
+                # Evict timestamps outside the window
+                bucket[:] = [t for t in bucket if now_ts - t < _window]
+                bucket.append(now_ts)
+                if len(bucket) > _max_msgs:
+                    should_punish = True
             
             # Block links
             if protection.block_links and msg.text:
@@ -6487,6 +6601,9 @@ async def check_inactive_users(context):
     """检查并处理不活跃用户 - Background task"""
     if not global_flask_app: return
     try:
+        # Identify which bot (main or clone) is running this job
+        bot_clone_id = context.application.bot_data.get('clone_id')
+
         def _check_inactive():
             """Sync part: query database and collect users for moderation actions"""
             with global_flask_app.app_context():
@@ -6501,7 +6618,8 @@ async def check_inactive_users(context):
                             group = BotGroup.query.get(settings.group_id)
                             if not group or not group.is_active:
                                 continue
-                            if group.clone_id is not None:
+                            # Only process groups that belong to this bot instance
+                            if group.clone_id != bot_clone_id:
                                 continue
                             
                             # Convert chat_id to integer for Telegram API
@@ -7618,6 +7736,13 @@ async def run_bot(app_instance):
     # General message handler (processes text messages)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
+    # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
+    _media_filter = (
+        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+    )
+    app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
+
     # Callback query handler (catch-all – runs after audit_callback_handler)
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     
@@ -7731,7 +7856,14 @@ def setup_clone_handlers(app, flask_app, clone_id):
     
     # General message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    
+
+    # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
+    _media_filter = (
+        filters.STICKER | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
+        filters.DOCUMENT | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+    )
+    app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
+
     # Callback query handler
     app.add_handler(CallbackQueryHandler(pagination_callback))
     
@@ -7766,6 +7898,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # Periodic jobs for clone bot
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=60)
+    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=120)  # Check inactive users daily
 
 
 async def start_all_clone_bots(flask_app):
@@ -9865,6 +9998,21 @@ async def _auto_delete_msg(context):
         pass
 
 
+async def on_non_text_message(update: Update, context):
+    """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
+    Applies spam-protection rules (block stickers/forwards) to media messages."""
+    if not global_flask_app:
+        return
+    try:
+        chat = update.effective_chat
+        if not chat or chat.type not in ['group', 'supergroup']:
+            return
+        # Re-use check_spam_protection which already handles sticker/forward blocking
+        await check_spam_protection(update, context)
+    except Exception as e:
+        print(f"Error in on_non_text_message: {e}")
+
+
 async def on_message(update: Update, context):
     if not global_flask_app: return
     try:
@@ -9874,7 +10022,46 @@ async def on_message(update: Update, context):
         if not msg.text or not chat: return
 
         txt = msg.text.strip()
-        
+
+        # 🆕 Check pending entry verification answer
+        if chat.type in ['group', 'supergroup'] and user:
+            pending_key = f"pending_verification:{chat.id}:{user.id}"
+            verify_state = context.application.bot_data.get(pending_key)
+            if verify_state is not None:
+                correct_answer = verify_state.get('answer', '')
+                if txt.strip().lower() == correct_answer or not correct_answer:
+                    # Correct answer — restore permissions and remove pending state
+                    context.application.bot_data.pop(pending_key, None)
+                    # Cancel timeout kick job
+                    current_jobs = context.application.job_queue.get_jobs_by_name(pending_key)
+                    for job in current_jobs:
+                        job.schedule_removal()
+                    try:
+                        await context.bot.restrict_chat_member(
+                            chat_id=chat.id,
+                            user_id=user.id,
+                            permissions=ChatPermissions(
+                                can_send_messages=True,
+                                can_send_media_messages=True,
+                                can_send_other_messages=True,
+                                can_add_web_page_previews=True,
+                            )
+                        )
+                        await context.bot.send_message(
+                            chat_id=chat.id,
+                            text=f"✅ <a href='tg://user?id={user.id}'>{user.first_name}</a> 验证成功，欢迎加入！",
+                            parse_mode='HTML'
+                        )
+                    except Exception as restore_err:
+                        print(f"Error restoring verified member permissions: {restore_err}")
+                else:
+                    # Wrong answer — delete message, do not unblock
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+                return
+
         # 🆕 Check spam protection first (may delete message and return early)
         if chat.type in ['group', 'supergroup']:
             spam_detected = await check_spam_protection(update, context)

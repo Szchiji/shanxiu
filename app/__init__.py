@@ -1,10 +1,13 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import os
 import json
 from datetime import timedelta
 
 db = SQLAlchemy()
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 # 全局变量
 global_bot = None
@@ -53,6 +56,7 @@ def create_app():
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
     
     db.init_app(app)
+    limiter.init_app(app)
     
     # 注册过滤器
     @app.template_filter('from_json')

@@ -9,11 +9,63 @@ avoid circular dependencies.  It may import from ``app.models`` and
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
 import re
 from datetime import datetime, timedelta
+from typing import Optional
 
 import pytz
+from cryptography.fernet import Fernet, InvalidToken
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+
+
+# ---------------------------------------------------------------------------
+# Bot token encryption
+# ---------------------------------------------------------------------------
+
+_fernet_instance: Optional[Fernet] = None
+
+
+def _get_fernet() -> Fernet:
+    """Return a cached Fernet instance keyed from ``SECRET_KEY``.
+
+    The key is derived via SHA-256 so it is cheap to compute, yet fully
+    dependent on ``SECRET_KEY``.  An attacker who only obtains the database
+    dump cannot decrypt the stored tokens without also knowing ``SECRET_KEY``.
+    """
+    global _fernet_instance
+    if _fernet_instance is None:
+        secret = os.getenv('SECRET_KEY', 'default_secret_key').encode()
+        raw_key = hashlib.sha256(secret + b':shanxiu_bot_token_v1').digest()
+        _fernet_instance = Fernet(base64.urlsafe_b64encode(raw_key))
+    return _fernet_instance
+
+
+def encrypt_token(token: str) -> str:
+    """Encrypt *token* for database storage.
+
+    Returns the token unchanged if it is empty/None.
+    """
+    if not token:
+        return token
+    return _get_fernet().encrypt(token.encode()).decode()
+
+
+def decrypt_token(value: str) -> str:
+    """Decrypt a stored bot token.
+
+    If *value* is not a valid Fernet token (e.g. a legacy plaintext token
+    that was saved before encryption was introduced) it is returned as-is,
+    ensuring backward compatibility.
+    """
+    if not value:
+        return value
+    try:
+        return _get_fernet().decrypt(value.encode()).decode()
+    except Exception:
+        return value  # plaintext fallback for pre-encryption tokens
 
 
 # ---------------------------------------------------------------------------

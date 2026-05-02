@@ -469,7 +469,7 @@ class BotClone(db.Model):
     __tablename__ = 'bot_clones'
     id = db.Column(db.Integer, primary_key=True)
     clone_name = db.Column(db.String(255), nullable=False)  # 克隆机器人名称
-    bot_token = db.Column(db.String(255), nullable=False)  # Bot Token (removed unique constraint for flexibility)
+    bot_token = db.Column(db.String(512), nullable=False)  # Bot Token (stored encrypted)
     owner_user_id = db.Column(db.BigInteger, nullable=True)  # 克隆机器人拥有者的用户ID
     admin_user_ids = db.Column(db.Text, default='[]')  # 管理员用户ID列表，JSON格式
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
@@ -478,6 +478,11 @@ class BotClone(db.Model):
     description = db.Column(db.Text, nullable=True)  # 描述
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def get_bot_token(self) -> str:
+        """Return the decrypted bot token (handles both encrypted and legacy plaintext values)."""
+        from app.utils import decrypt_token
+        return decrypt_token(self.bot_token)
 
 class LotteryMessageCount(db.Model):
     """抽奖消息计数 - 跟踪用户在抽奖期间发送的消息数"""

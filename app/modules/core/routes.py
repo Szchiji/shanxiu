@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify, abort
-from app import db
+from app import db, limiter
 from app import get_bot_instance_role, is_clone_instance, is_main_instance
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
@@ -9,6 +9,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
+from app.utils import encrypt_token, decrypt_token
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -382,7 +383,75 @@ def safe_int(val, default=0):
     try: return int(val)
     except: return default
 
-def get_group_conf(group):
+# --- Security helpers ---
+
+def get_group_or_403(gid: int) -> BotGroup:
+    """Fetch a BotGroup by its primary key, aborting with 403 if the
+    currently logged-in session does not have access to it.
+
+    Clone admins (session['clone_id'] is set) may only access groups that
+    belong to their own clone.  Global admins (no clone_id in session) may
+    access all groups.
+    """
+    group = get_group_or_403(gid)
+    session_clone_id = session.get('clone_id')
+    if session_clone_id and group.clone_id != session_clone_id:
+        abort(403)
+    return group
+
+
+def _api_check_group_access(group: BotGroup):
+    """Return a JSON error response if the session cannot access *group*,
+    otherwise return ``None``.  Intended for use in API (JSON) endpoints.
+    """
+    session_clone_id = session.get('clone_id')
+    if session_clone_id and group.clone_id != session_clone_id:
+        return jsonify({'status': 'error', 'msg': '无权操作此群组'})
+    return None
+
+
+def _delete_group_cascade(group_id: int) -> None:
+    """Delete all database records associated with *group_id*.
+
+    Handles both direct children (FK → bot_groups.id) and indirect
+    grandchildren (e.g. VoteRecord → GroupVote, QuizAnswer → QuizSession,
+    RedPacketClaim → RedPacket) in the correct order so that FK constraints
+    are not violated.
+    """
+    # --- Grandchildren first (FK references a child, not the group directly) ---
+
+    # vote_record → group_vote
+    vote_ids = db.session.query(GroupVote.id).filter_by(group_id=group_id).subquery()
+    VoteRecord.query.filter(VoteRecord.vote_id.in_(vote_ids)).delete(synchronize_session=False)
+
+    # quiz_answer → quiz_session
+    session_ids = db.session.query(QuizSession.id).filter_by(group_id=group_id).subquery()
+    QuizAnswer.query.filter(QuizAnswer.session_id.in_(session_ids)).delete(synchronize_session=False)
+
+    # red_packet_claim → red_packet
+    packet_ids = db.session.query(RedPacket.id).filter_by(group_id=group_id).subquery()
+    RedPacketClaim.query.filter(RedPacketClaim.packet_id.in_(packet_ids)).delete(synchronize_session=False)
+
+    # --- Direct children (FK column = group_id) ---
+    for model in (
+        GroupUser, AutoReply, ScheduledMessage, StartMessage,
+        GroupEntryExitSettings, SpamProtection, TimedGroupControl,
+        InvitationActivity, InvitationRecord, ForcedChannelSubscription,
+        PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints,
+        PointsExchangeItem, PointsExchangeRecord,
+        GroupLottery, LotteryMessageCount,
+        MemberLevel, UserNameChange, GroupBottomButton,
+        OtherSettings, InactiveUserSettings, KeywordFilter, MessageStatistics,
+        GroupVote, QuizGame, QuizSession, RedPacket,
+        AdminActionLog, GroupMember,
+    ):
+        model.query.filter_by(group_id=group_id).delete(synchronize_session=False)
+
+    # --- Different FK column name ---
+    SyncGroupMessages.query.filter_by(source_group_id=group_id).delete(synchronize_session=False)
+    SyncMessageLog.query.filter_by(source_group_id=group_id).delete(synchronize_session=False)
+
+
     conf = DEFAULT_SYSTEM.copy()
     if group and group.config:
         try:
@@ -425,7 +494,7 @@ def page_select_group():
 def page_dashboard(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Enhanced statistics
     total_users = GroupUser.query.filter_by(group_id=gid).count()
@@ -527,7 +596,7 @@ def page_dashboard(gid):
 def page_users(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
@@ -582,7 +651,7 @@ def page_group_members(gid):
     """群成员列表页面 - 显示从 Telegram 同步的实际群成员"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Pagination parameters
     page = safe_int(request.args.get('page', 1), 1)
@@ -684,14 +753,14 @@ def page_group_members(gid):
 def page_fields(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     return render_template('fields.html', page='fields', group=group, fields_json=json.dumps(get_group_fields(group)))
 
 @core_bp.route('/group/<int:gid>/settings')
 def page_settings(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     return render_template('settings.html', page='settings', group=group, conf=get_group_conf(group), fields=get_group_fields(group))
 
 @core_bp.route('/group/<int:gid>/auto_replies')
@@ -699,7 +768,7 @@ def page_auto_replies(gid):
     """自动回复管理页面"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
@@ -738,7 +807,7 @@ def page_scheduled_messages(gid):
     """定时消息管理页面"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
@@ -777,7 +846,7 @@ def page_start_messages(gid):
     """自定义 /start 消息管理页面"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Pagination parameters with enhanced options
     page = safe_int(request.args.get('page', 1), 1)
@@ -814,7 +883,7 @@ def page_entry_exit_settings(gid):
     """进退群设置"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = GroupEntryExitSettings.query.filter_by(group_id=gid).first()
     if not settings:
         settings = GroupEntryExitSettings(group_id=gid)
@@ -827,7 +896,7 @@ def page_spam_protection(gid):
     """垃圾防护"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = SpamProtection.query.filter_by(group_id=gid).first()
     whitelist_users = json.loads(settings.whitelist_users if settings and settings.whitelist_users else '[]')
     return render_template('spam_protection.html', page='spam_protection', group=group, settings=settings, whitelist_users=whitelist_users)
@@ -837,7 +906,7 @@ def page_timed_group_control(gid):
     """定时开关群"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = TimedGroupControl.query.filter_by(group_id=gid).first()
     return render_template('timed_group_control.html', page='timed_group_control', group=group, settings=settings)
 
@@ -846,7 +915,7 @@ def page_other_settings(gid):
     """其他设置"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = OtherSettings.query.filter_by(group_id=gid).first()
     if not settings:
         settings = OtherSettings(group_id=gid)
@@ -859,7 +928,7 @@ def page_invitation_activity(gid):
     """邀请活动"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Wrapped in try-except to handle cases where announce_in_group column doesn't exist yet
     try:
@@ -914,7 +983,7 @@ def page_forced_channel_subscription(gid):
     """强制订阅频道"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = ForcedChannelSubscription.query.filter_by(group_id=gid).first()
     if not settings:
         settings = ForcedChannelSubscription(group_id=gid)
@@ -927,7 +996,7 @@ def page_points_rules(gid):
     """积分规则"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     rules = PointsRule.query.filter_by(group_id=gid).all()
     return render_template('points_rules.html', page='points_rules', group=group, rules=rules)
 
@@ -936,7 +1005,7 @@ def page_points_auto_reply(gid):
     """积分自动回复"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     replies = PointsAutoReply.query.filter_by(group_id=gid).all()
     return render_template('points_auto_reply.html', page='points_auto_reply', group=group, replies=replies)
 
@@ -945,7 +1014,7 @@ def page_points_auction(gid):
     """积分竞拍"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
     return render_template('points_auction.html', page='points_auction', group=group, auctions=auctions)
 
@@ -954,7 +1023,7 @@ def page_points_log(gid):
     """积分日志"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
 
     page = request.args.get('page', 1, type=int)
     per_page = 50
@@ -985,7 +1054,7 @@ def page_points_exchange(gid):
     """积分兑换商品管理"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     conf = get_group_conf(group)
     items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
     records = (PointsExchangeRecord.query
@@ -1000,7 +1069,7 @@ def page_group_lottery(gid):
     """群抽奖"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     lotteries = GroupLottery.query.filter_by(group_id=gid).order_by(GroupLottery.created_at.desc()).all()
     
     # Convert to JSON for JavaScript
@@ -1024,7 +1093,7 @@ def page_member_level(gid):
     """成员等级"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     levels = MemberLevel.query.filter_by(group_id=gid).order_by(MemberLevel.required_points).all()
     return render_template('member_level.html', page='member_level', group=group, levels=levels)
 
@@ -1033,7 +1102,7 @@ def page_user_name_change(gid):
     """用户改名监控"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     changes = UserNameChange.query.filter_by(group_id=gid).order_by(UserNameChange.changed_at.desc()).limit(100).all()
     return render_template('user_name_change.html', page='user_name_change', group=group, changes=changes)
 
@@ -1042,7 +1111,7 @@ def page_group_bottom_button(gid):
     """群底部按钮"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     buttons = GroupBottomButton.query.filter_by(group_id=gid).order_by(GroupBottomButton.row_position, GroupBottomButton.button_order).all()
     
     # Convert buttons to JSON-serializable dictionaries
@@ -1064,7 +1133,7 @@ def page_sync_group_messages(gid):
     """同步群消息"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
     if not settings:
         # Don't create a new record here to avoid constraint violation
@@ -1078,7 +1147,7 @@ def page_sync_message_logs(gid):
     """同步消息日志"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     page = safe_int(request.args.get('page', 1), 1)
     per_page = safe_int(request.args.get('per_page', 20), 20)
@@ -1116,7 +1185,7 @@ def page_bot_clones():
     clones_json = json.dumps([{
         'id': c.id,
         'clone_name': c.clone_name,
-        'bot_token': c.bot_token,
+        'bot_token': c.get_bot_token(),
         'owner_user_id': c.owner_user_id,
         'admin_user_ids': c.admin_user_ids,
         'is_active': c.is_active,
@@ -1133,7 +1202,7 @@ def page_inactive_user_settings(gid):
     """不活跃用户设置"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
     return render_template('inactive_user_settings.html', page='inactive_user_settings', group=group, settings=settings)
 
@@ -1142,7 +1211,7 @@ def page_keyword_filter(gid):
     """关键词过滤"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     filters_list = KeywordFilter.query.filter_by(group_id=gid).order_by(KeywordFilter.created_at.desc()).all()
     
     # Convert to JSON for JavaScript
@@ -1163,7 +1232,7 @@ def page_message_statistics(gid):
     """消息统计"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Get statistics for the last 7 days
     end_date = datetime.now().date()
@@ -1200,7 +1269,7 @@ def page_group_votes(gid):
     """群投票管理"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     votes = GroupVote.query.filter_by(group_id=gid).order_by(GroupVote.created_at.desc()).all()
     
     # Convert to JSON for JavaScript
@@ -1226,7 +1295,7 @@ def page_quiz_games(gid):
     """问答游戏管理"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     quizzes = QuizGame.query.filter_by(group_id=gid).order_by(QuizGame.created_at.desc()).all()
     
     # Convert to JSON for JavaScript
@@ -1251,7 +1320,7 @@ def page_red_packet_settings(gid):
     """红包设置"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Get recent red packets
     packets = RedPacket.query.filter_by(group_id=gid).order_by(
@@ -1267,7 +1336,7 @@ def page_admin_logs(gid):
     """管理员操作日志页面"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
 
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
@@ -1337,7 +1406,7 @@ def page_plugins(gid):
     """插件管理页面：为该群组开启/关闭功能插件"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
 
     from app.plugins import get_all_plugins
     from app.models import GroupPluginSettings
@@ -1367,6 +1436,9 @@ def api_toggle_plugin():
     group = BotGroup.query.get(gid)
     if not group:
         return jsonify({'success': False, 'error': '群组不存在'}), 404
+    access_err = _api_check_group_access(group)
+    if access_err:
+        return jsonify({'success': False, 'error': '无权操作此群组'}), 403
 
     from app.plugins import is_plugin_registered
     if not is_plugin_registered(plugin_name):
@@ -1388,7 +1460,7 @@ def page_backup(gid):
     """配置备份页面"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     return render_template('backup.html', page='backup', group=group)
 
 
@@ -1398,7 +1470,7 @@ def api_export_config(gid):
     if not session.get('logged_in'): 
         return jsonify({'error': 'Not authenticated'}), 401
     
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     # Build configuration object
     config = {
@@ -1468,7 +1540,7 @@ def api_import_config(gid):
     if not session.get('logged_in'): 
         return jsonify({'error': 'Not authenticated'}), 401
     
-    group = BotGroup.query.get_or_404(gid)
+    group = get_group_or_403(gid)
     
     try:
         config = request.get_json()
@@ -1637,9 +1709,11 @@ def api_toggle_group():
     
     g = BotGroup.query.get(group_id)
     if not g: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(g)
+    if err: return err
     
     if d['action'] == 'delete':
-        GroupUser.query.filter_by(group_id=g.id).delete()
+        _delete_group_cascade(g.id)
         db.session.delete(g)
     elif d['action'] == 'toggle':
         g.is_active = not g.is_active
@@ -1699,7 +1773,11 @@ def api_sync_group_members():
 def api_save_fields():
     if not session.get('logged_in'): return jsonify({'status':'error'})
     d = request.json
-    group = BotGroup.query.get(session['current_group_id'])
+    group = BotGroup.query.get(session.get('current_group_id'))
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     fields_data = d.get('fields', d) if isinstance(d, dict) else d
     
@@ -1711,7 +1789,13 @@ def api_save_fields():
 def api_save_settings():
     if not session.get('logged_in'): return jsonify({'status':'error'})
     d = request.json
+    if not d or 'group_id' not in d:
+        return jsonify({'status': 'error', 'msg': 'Missing group_id'})
     group = BotGroup.query.get(d['group_id'])
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     group.config = json.dumps(d['config'], ensure_ascii=False)
     db.session.commit()
     return jsonify({'status':'ok'})
@@ -1723,6 +1807,11 @@ def api_save_user():
     gid = d['group_id']
     uid = d.get('tg_id')
     if not uid: return jsonify({'status':'error','msg':'No ID'})
+    group = BotGroup.query.get(gid)
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     u = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
     is_new_user = u is None
@@ -2219,6 +2308,10 @@ def api_delete_auto_reply():
 def api_export_auto_replies(group_id):
     """导出自动回复规则为XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     try:
         auto_replies = AutoReply.query.filter_by(group_id=group_id).all()
@@ -2655,6 +2748,10 @@ def api_batch_scheduled_messages():
 def api_export_scheduled_messages(group_id):
     """导出定时消息为XLSX"""
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     def format_repeat_interval(minutes):
         if not minutes or minutes == 0:
@@ -4053,7 +4150,7 @@ def api_save_bot_clone():
             db.session.add(clone)
         
         clone.clone_name = clone_name
-        clone.bot_token = bot_token
+        clone.bot_token = encrypt_token(bot_token)
         clone.is_active = d.get('is_active', True)
         clone.description = d.get('description', '').strip() or None
         clone.webhook_url = d.get('webhook_url', '').strip() or None
@@ -4108,7 +4205,7 @@ def api_save_bot_clone():
                 if clone.is_active and (not clone.expiration_date or clone.expiration_date >= now):
                     clone_data = {
                         'id': clone.id,
-                        'token': clone.bot_token,
+                        'token': clone.get_bot_token(),
                         'webhook_url': clone.webhook_url
                     }
                     
@@ -4144,7 +4241,7 @@ def api_save_bot_clone():
                 if not clone.expiration_date or clone.expiration_date >= now:
                     clone_data = {
                         'id': clone.id,
-                        'token': clone.bot_token,
+                        'token': clone.get_bot_token(),
                         'webhook_url': clone.webhook_url
                     }
                     future = asyncio.run_coroutine_threadsafe(
@@ -4173,7 +4270,7 @@ def api_save_bot_clone():
                 if not clone.expiration_date or clone.expiration_date >= now:
                     clone_data = {
                         'id': clone.id,
-                        'token': clone.bot_token,
+                        'token': clone.get_bot_token(),
                         'webhook_url': clone.webhook_url
                     }
                     future = asyncio.run_coroutine_threadsafe(
@@ -4264,7 +4361,7 @@ def api_toggle_bot_clone():
             clone_data = {
                 'id': clone.id,
                 'name': clone.clone_name,
-                'token': clone.bot_token,
+                'token': clone.get_bot_token(),
                 'webhook_url': clone.webhook_url
             }
             
@@ -4537,6 +4634,7 @@ def api_delete_quiz_game():
 
 
 @core_bp.route('/magic_login')
+@limiter.limit("20 per minute")
 def magic_login():
     token = request.args.get('token')
     secret_key = os.getenv('SECRET_KEY')
@@ -4587,6 +4685,7 @@ def magic_login():
         return "Invalid Token", 403
 
 @core_bp.route('/auth_verify/<session_token>')
+@limiter.limit("10 per minute")
 def auth_verify_page(session_token):
     """Display verification page with code"""
     try:
@@ -4616,6 +4715,7 @@ def auth_verify_page(session_token):
         return "服务器错误", 500
 
 @core_bp.route('/api/check_auth_status', methods=['POST'])
+@limiter.limit("30 per minute")
 def api_check_auth_status():
     """Check if authentication session has been verified"""
     if not session.get('logged_in'):
@@ -8007,7 +8107,7 @@ async def start_all_clone_bots(flask_app):
                 active_clones.append({
                     'id': clone.id,
                     'name': clone.clone_name,
-                    'token': clone.bot_token,
+                    'token': clone.get_bot_token(),
                     'webhook_url': clone.webhook_url
                 })
             
@@ -10392,7 +10492,7 @@ async def on_message(update: Update, context):
                     if _clone_id:
                         _clone = BotClone.query.get(_clone_id)
                         if _clone:
-                            _like_token = _clone.bot_token
+                            _like_token = _clone.get_bot_token()
                     # 在线程中执行阻塞请求，避免卡顿
                     asyncio.get_running_loop().run_in_executor(None, do_like, chat.id, msg.message_id, emoji, _like_token)
             

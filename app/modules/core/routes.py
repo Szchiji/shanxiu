@@ -2453,6 +2453,11 @@ def api_save_scheduled_message():
     group_id = d.get('group_id')
     if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
     
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         item_id = d.get('id')
         if item_id:
@@ -2502,6 +2507,8 @@ def api_send_scheduled_message_now(message_id):
         item = ScheduledMessage.query.get(message_id)
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         if item.group_id != group_id: return jsonify({'status':'error','msg':'Permission denied'})
+        err = _api_check_group_access(item.group)
+        if err: return err
 
         # 更新消息内容（与保存逻辑相同）
         item.media_type = d.get('media_type', 'text')
@@ -2691,6 +2698,8 @@ def api_toggle_scheduled_message():
     try:
         item = ScheduledMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
+        err = _api_check_group_access(item.group)
+        if err: return err
         item.is_active = not item.is_active
         # 重新启用时重置上次发送时间，使其立即触发发送
         if item.is_active:
@@ -2711,6 +2720,8 @@ def api_delete_scheduled_message():
     try:
         item = ScheduledMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
+        err = _api_check_group_access(item.group)
+        if err: return err
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2731,7 +2742,12 @@ def api_batch_scheduled_messages():
 
     try:
         items = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).all()
+        session_clone_id = session.get('clone_id')
+        processed = 0
         for item in items:
+            # Skip items the current session has no access to
+            if session_clone_id and item.group and item.group.clone_id != session_clone_id:
+                continue
             if action == 'delete':
                 db.session.delete(item)
             elif action == 'enable':
@@ -2739,8 +2755,9 @@ def api_batch_scheduled_messages():
                 item.last_sent_at = None  # 重置上次发送时间，使其立即触发发送
             elif action == 'pause':
                 item.is_active = False
+            processed += 1
         db.session.commit()
-        return jsonify({'status':'ok','count':len(items)})
+        return jsonify({'status':'ok','count':processed})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
@@ -5143,6 +5160,8 @@ async def check_scheduled_messages(context):
                             'last_message_id': msg.last_message_id,
                             'message_thread_id': msg.message_thread_id,
                             'auto_pin': msg.auto_pin,
+                            'repeat_interval': msg.repeat_interval,
+                            'last_sent_at': msg.last_sent_at,  # used for atomic claim
                         })
                 
                 # 批量禁用已过期的定时消息，避免列表中继续显示启用状态
@@ -5164,25 +5183,45 @@ async def check_scheduled_messages(context):
     if not messages_to_send:
         return
     
-    # Helper function to verify if a message is still active
-    def _verify_still_active(msg_id):
+    # Atomically claim a message before sending to prevent duplicate sends when
+    # multiple scheduler instances (e.g. after a restart with a stale job) run
+    # concurrently.  The UPDATE succeeds only when last_sent_at still matches
+    # the value we read during _sync_check, ensuring at-most-once delivery.
+    def _try_claim(msg_id, expected_last_sent_at, claim_time):
         with global_flask_app.app_context():
-            scheduled_msg = ScheduledMessage.query.get(msg_id)
-            return scheduled_msg is not None and scheduled_msg.is_active
-    
+            try:
+                q = db.session.query(ScheduledMessage).filter(
+                    ScheduledMessage.id == msg_id,
+                    ScheduledMessage.is_active == True,
+                )
+                if expected_last_sent_at is None:
+                    q = q.filter(ScheduledMessage.last_sent_at.is_(None))
+                else:
+                    q = q.filter(ScheduledMessage.last_sent_at == expected_last_sent_at)
+                rows = q.update({'last_sent_at': claim_time}, synchronize_session=False)
+                db.session.commit()
+                return rows > 0
+            except Exception as claim_err:
+                db.session.rollback()
+                print(f"Error claiming message {msg_id}: {claim_err}")
+                return False
+
+    send_time = get_beijing_now()
+
     # 发送消息
     for msg_data in messages_to_send:
         try:
             chat_id = msg_data['chat_id']
             message_thread_id = msg_data.get('message_thread_id')
-            
-            # 在发送前再次验证消息是否仍然激活（防止发送期间被停用或删除）
-            is_still_active = await asyncio.get_running_loop().run_in_executor(
-                None, _verify_still_active, msg_data['id']
+
+            # Atomically claim the message before sending.
+            # If another scheduler instance already claimed it (last_sent_at changed),
+            # skip to prevent duplicate delivery.
+            claimed = await asyncio.get_running_loop().run_in_executor(
+                None, _try_claim, msg_data['id'], msg_data['last_sent_at'], send_time
             )
-            
-            if not is_still_active:
-                print(f"⏭️ 跳过消息 {msg_data['id']}：已被停用或删除", flush=True)
+            if not claimed:
+                print(f"⏭️ 跳过消息 {msg_data['id']}：已被其他调度器实例处理或已停用", flush=True)
                 continue
             
             # 如果需要删除上一条消息
@@ -5276,19 +5315,22 @@ async def check_scheduled_messages(context):
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             
-            # 更新发送时间和消息ID
+            # 更新消息ID；last_sent_at was already set by the atomic claim above.
+            # For one-shot messages (repeat_interval=0), also deactivate so the UI
+            # reflects the correct state and the scheduler skips them on future runs.
             if sent_message:
-                def _update_sent(msg_id, sent_msg_id):
+                def _update_sent(msg_id, sent_msg_id, is_one_shot):
                     with global_flask_app.app_context():
                         scheduled_msg = ScheduledMessage.query.get(msg_id)
-                        # 只更新仍然激活的消息
                         if scheduled_msg and scheduled_msg.is_active:
-                            scheduled_msg.last_sent_at = get_beijing_now()
                             scheduled_msg.last_message_id = sent_msg_id
+                            if is_one_shot:
+                                scheduled_msg.is_active = False
                             db.session.commit()
                 
                 await asyncio.get_running_loop().run_in_executor(
-                    None, _update_sent, msg_data['id'], sent_message.message_id
+                    None, _update_sent, msg_data['id'], sent_message.message_id,
+                    msg_data['repeat_interval'] == 0
                 )
 
                 # 自动置顶
@@ -5306,15 +5348,16 @@ async def check_scheduled_messages(context):
                 
         except Exception as e:
             print(f"Error sending scheduled message: {e}")
-            # 更新 last_sent_at 以防止立即重试失败的消息
-            # 对于 repeat_interval=0 的一次性消息，不更新 last_sent_at，
-            # 使调度器下次仍能重试（直到成功发送）
+            # The atomic claim already set last_sent_at on the DB row.
+            # For one-shot messages (repeat_interval=0) we reset it so the
+            # scheduler retries on the next tick.  Repeating messages keep the
+            # claim timestamp, which naturally enforces the cooldown interval.
             def _update_failed(msg_id):
                 with global_flask_app.app_context():
                     scheduled_msg = ScheduledMessage.query.get(msg_id)
                     if scheduled_msg and scheduled_msg.is_active:
-                        if scheduled_msg.repeat_interval > 0:
-                            scheduled_msg.last_sent_at = get_beijing_now()
+                        if scheduled_msg.repeat_interval == 0:
+                            scheduled_msg.last_sent_at = None  # allow retry
                             db.session.commit()
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 

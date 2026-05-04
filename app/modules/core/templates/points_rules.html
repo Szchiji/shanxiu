@@ -166,13 +166,14 @@ function editRule(id, name, type, points, active, maxDaily) {
 
 function saveRule() {
     const maxDailyRaw = document.getElementById('max_daily_points').value;
+    const maxDailyParsed = parseInt(maxDailyRaw, 10);
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('rule_id').value || null,
         rule_name: document.getElementById('rule_name').value,
         rule_type: document.getElementById('rule_type').value,
         points_amount: parseInt(document.getElementById('points_amount').value) || 1,
-        max_daily_points: maxDailyRaw ? (parseInt(maxDailyRaw) || null) : null,
+        max_daily_points: (!maxDailyRaw || isNaN(maxDailyParsed) || maxDailyParsed <= 0) ? null : maxDailyParsed,
         is_active: document.getElementById('is_active').checked
     };
     

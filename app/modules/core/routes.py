@@ -94,6 +94,10 @@ def generate_session_token():
     """Generate a secure random session token"""
     return secrets.token_urlsafe(32)
 
+# Reason strings used in PointsLog – kept as constants to avoid silent mismatches
+_REASON_MESSAGE = "发送消息"
+_REASON_CHECKIN = "每日签到"
+
 def get_beijing_now():
     """Get current time in Beijing timezone as naive datetime (for database storage)"""
     return datetime.now(BEIJING_TZ).replace(tzinfo=None)
@@ -3272,8 +3276,10 @@ def api_save_points_rule():
         rule.rule_type = d.get('rule_type', 'message')
         rule.points_amount = d.get('points_amount', 1)
         rule.is_active = d.get('is_active', True)
+        # Treat None / empty / 0 as "no daily cap" (stored as NULL).
+        # Positive values set a per-user daily earning limit for this rule.
         _max_daily = d.get('max_daily_points')
-        rule.max_daily_points = int(_max_daily) if _max_daily not in (None, '', 0) else None
+        rule.max_daily_points = int(_max_daily) if _max_daily and int(_max_daily) > 0 else None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -10682,7 +10688,8 @@ async def on_message(update: Update, context):
                         )
                         db.session.add(user_points)
                     
-                    # Enforce daily cap: sum points earned today via message rule
+                    # Enforce daily cap: sum points earned today via message rule.
+                    # The DB query is only performed when a cap is configured.
                     earned_today = 0
                     if message_rule.max_daily_points:
                         today_start = get_beijing_today()
@@ -10691,7 +10698,7 @@ async def on_message(update: Update, context):
                         ).filter(
                             PointsLog.group_id == group.id,
                             PointsLog.user_id == user.id,
-                            PointsLog.reason == "发送消息",
+                            PointsLog.reason == _REASON_MESSAGE,
                             PointsLog.created_at >= today_start
                         ).scalar() or 0
 
@@ -10707,7 +10714,7 @@ async def on_message(update: Update, context):
                             group_id=group.id,
                             user_id=user.id,
                             points_change=actual_award,
-                            reason="发送消息",
+                            reason=_REASON_MESSAGE,
                             balance_after=user_points.points_balance
                         )
                         db.session.add(points_log)

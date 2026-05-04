@@ -170,6 +170,43 @@
             </div>
         </div>
 
+        {# ── Section 4: Approval Points Reward ── #}
+        <div class="card mb-4">
+            <div class="card-header">🎁 审核通过积分奖励</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">通过后奖励积分数</label>
+                    <input type="number" class="form-control" name="report_approval_points"
+                           value="{{ settings.report_approval_points or 0 }}" min="0"
+                           placeholder="例如：50，填 0 表示不奖励">
+                    <div class="form-text">报告被管理员审核通过后，自动向提交者奖励指定积分。填 0 表示不启用。</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">积分所在群组</label>
+                    <input type="text" class="form-control" name="report_points_group_id"
+                           id="report_points_group_id"
+                           value="{{ settings.report_points_group_id }}"
+                           placeholder="例如 -1001234567890">
+                    <div class="form-text">积分将记录到此群组的积分体系中。填写群组的数字 ID，或从下方列表中选择。</div>
+                    {% set group_choices = all_groups | selectattr('type', 'ne', 'channel') | list %}
+                    {% if group_choices %}
+                    <div class="mt-2">
+                        <label class="form-label small text-muted">从已知群组中选择：</label>
+                        <div class="list-group list-group-flush border rounded" style="max-height:180px;overflow-y:auto">
+                            {% for g in group_choices %}
+                            <button type="button"
+                                    class="list-group-item list-group-item-action py-1 px-2 small{% if g.chat_id == settings.report_points_group_id %} active{% endif %}"
+                                    onclick="document.getElementById('report_points_group_id').value='{{ g.chat_id }}'">
+                                {{ g.title }}&nbsp;<span class="text-muted">{{ g.chat_id }}</span>
+                            </button>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
         <button type="submit" class="btn btn-primary">💾 保存所有设置</button>
     </form>
 </div>

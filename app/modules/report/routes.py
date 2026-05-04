@@ -5,7 +5,8 @@ from app import db
 from app.models import BotGroup, SystemConfig
 from . import report_admin_bp
 
-_SIMPLE_CONFIG_KEYS = ['admin_group_id', 'report_channel', 'report_push_template', 'report_photo_prompt']
+_SIMPLE_CONFIG_KEYS = ['admin_group_id', 'report_channel', 'report_push_template', 'report_photo_prompt',
+                       'report_approval_points', 'report_points_group_id']
 
 _DEFAULTS = {
     'admin_group_id': '',
@@ -13,6 +14,8 @@ _DEFAULTS = {
     'report_push_template': '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
     'report_push_media': 'true',
     'report_photo_prompt': '请发送现场照片 📷（必填，请拍摄真实现场照片）',
+    'report_approval_points': '0',
+    'report_points_group_id': '',
 }
 
 _DEFAULT_QUESTIONS = [

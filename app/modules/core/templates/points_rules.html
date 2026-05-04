@@ -108,9 +108,8 @@
                     <select class="form-control" id="rule_type">
                         <option value="checkin">签到</option>
                         <option value="message">发言</option>
-                        <option value="invite">邀请</option>
-                        <option value="share">分享</option>
-                        <option value="other">其他</option>
+                        <option value="share">转发消息</option>
+                        <option value="other">其他（手动授予）</option>
                     </select>
                 </div>
                 <div class="mb-3">
@@ -120,7 +119,7 @@
                 <div class="mb-3">
                     <label class="form-label">每日上限 <small class="text-muted">（留空表示不限制）</small></label>
                     <input type="number" class="form-control" id="max_daily_points" placeholder="例如：50，表示每人每天最多获得50积分">
-                    <div class="form-text">仅对「发言」类型规则有效，防止刷屏滥用积分。</div>
+                    <div class="form-text">仅对「发言」和「转发消息」类型规则有效，防止刷屏滥用积分。</div>
                 </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="is_active" checked>

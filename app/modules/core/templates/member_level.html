@@ -113,8 +113,17 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">权限配置（JSON）</label>
-                    <textarea class="form-control" id="permissions" rows="4" placeholder='{"can_post": true, "can_pin": false}'>{}</textarea>
-                    <small class="text-muted">JSON格式的权限配置</small>
+                    <textarea class="form-control" id="permissions" rows="6" placeholder='{"can_send_messages": true, "can_send_media": true}'>{}</textarea>
+                    <small class="text-muted">
+                        JSON 格式。用户升至此等级时将自动应用以下 Telegram 权限（省略的键默认为 <code>true</code>）：<br>
+                        <code>can_send_messages</code> – 发送文字消息；
+                        <code>can_send_media</code> – 发送媒体/贴纸；
+                        <code>can_add_links</code> – 发送链接预览；
+                        <code>can_invite_users</code> – 邀请新成员；
+                        <code>can_pin_messages</code> – 置顶消息；
+                        <code>can_change_info</code> – 修改群信息。
+                        留空 <code>{}</code> 表示不修改权限。
+                    </small>
                 </div>
             </div>
             <div class="modal-footer">

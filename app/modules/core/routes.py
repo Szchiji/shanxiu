@@ -97,6 +97,7 @@ def generate_session_token():
 # Reason strings used in PointsLog – kept as constants to avoid silent mismatches
 _REASON_MESSAGE = "发送消息"
 _REASON_CHECKIN = "每日签到"
+_REASON_SHARE = "转发消息"
 
 def get_beijing_now():
     """Get current time in Beijing timezone as naive datetime (for database storage)"""
@@ -6583,7 +6584,20 @@ async def check_channel_subscriptions(context):
         print(f"Error in check_channel_subscriptions: {e}")
 
 async def update_member_levels(context):
-    """Background task to update member levels based on points"""
+    """Background task to update member levels based on points.
+
+    When a user's level changes AND the new level has a non-empty ``permissions``
+    JSON object, this task also calls ``restrict_chat_member`` to apply the
+    corresponding Telegram ``ChatPermissions``.
+
+    Supported permission keys (all optional, default ``True`` when omitted):
+        can_send_messages (bool)  – allow/block sending text messages
+        can_send_media    (bool)  – allow/block sending media / stickers / GIFs
+        can_add_links     (bool)  – allow/block link previews
+        can_invite_users  (bool)  – allow/block inviting new members
+        can_pin_messages  (bool)  – allow/block pinning messages
+        can_change_info   (bool)  – allow/block changing group info
+    """
     if not global_flask_app:
         return
     
@@ -6594,6 +6608,8 @@ async def update_member_levels(context):
                 user_points_list = UserPoints.query.all()
                 
                 updated_count = 0
+                # Collect (chat_id_str, user_tg_id, permissions_json) for changed users
+                permission_actions = []
                 for user_points in user_points_list:
                     # Find the highest level this user qualifies for
                     levels = MemberLevel.query.filter_by(
@@ -6612,13 +6628,42 @@ async def update_member_levels(context):
                     if user_points.current_level_id != new_level_id:
                         user_points.current_level_id = new_level_id
                         updated_count += 1
+
+                        # Collect Telegram permission application if new level defines them
+                        perms_str = (new_level.permissions or '{}') if new_level else '{}'
+                        if perms_str and perms_str != '{}':
+                            group = BotGroup.query.get(user_points.group_id)
+                            if group and group.chat_id:
+                                permission_actions.append(
+                                    (group.chat_id, user_points.user_id, perms_str)
+                                )
                 
                 db.session.commit()
-                return updated_count
+                return updated_count, permission_actions
         
-        count = await asyncio.get_running_loop().run_in_executor(None, _update_levels)
+        count, permission_actions = await asyncio.get_running_loop().run_in_executor(None, _update_levels)
         if count > 0:
             print(f"✅ Updated member levels for {count} users")
+
+        # Apply Telegram ChatPermissions for users whose level changed
+        for chat_id_str, user_tg_id, perms_str in permission_actions:
+            try:
+                perms = json.loads(perms_str)
+                tg_perms = ChatPermissions(
+                    can_send_messages=perms.get('can_send_messages', True),
+                    can_send_other_messages=perms.get('can_send_media', True),
+                    can_add_web_page_previews=perms.get('can_add_links', True),
+                    can_invite_users=perms.get('can_invite_users', True),
+                    can_pin_messages=perms.get('can_pin_messages', None),
+                    can_change_info=perms.get('can_change_info', None),
+                )
+                await context.bot.restrict_chat_member(
+                    chat_id=int(chat_id_str),
+                    user_id=int(user_tg_id),
+                    permissions=tg_perms,
+                )
+            except Exception as perm_err:
+                print(f"⚠️ [等级权限] 无法为用户 {user_tg_id} 设置权限: {perm_err}")
         
     except Exception as e:
         print(f"❌ Error in update_member_levels: {e}")
@@ -8330,6 +8375,8 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("top", cmd_rank))
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("clones", cmd_clones))
+    app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 邀请排行榜
+    app.add_handler(CommandHandler("invites", cmd_invite_rank))       # alias for invite_rank
     app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
@@ -10719,7 +10766,58 @@ async def on_message(update: Update, context):
                         )
                         db.session.add(points_log)
                         db.session.commit()
-            
+
+            # Award points for forwarded messages (share rule)
+            # A forwarded message has a forward_origin attribute set by PTB
+            _is_forward = hasattr(msg, 'forward_origin') and msg.forward_origin is not None
+            if _is_forward and chat.type in ['group', 'supergroup']:
+                share_rule = PointsRule.query.filter_by(
+                    group_id=group.id,
+                    rule_type='share',
+                    is_active=True
+                ).first()
+
+                if share_rule:
+                    share_user_points = UserPoints.query.filter_by(
+                        group_id=group.id,
+                        user_id=user.id
+                    ).first()
+
+                    if not share_user_points:
+                        share_user_points = UserPoints(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_balance=0
+                        )
+                        db.session.add(share_user_points)
+
+                    share_earned_today = 0
+                    if share_rule.max_daily_points:
+                        today_start = get_beijing_today()
+                        share_earned_today = db.session.query(
+                            func.coalesce(func.sum(PointsLog.points_change), 0)
+                        ).filter(
+                            PointsLog.group_id == group.id,
+                            PointsLog.user_id == user.id,
+                            PointsLog.reason == _REASON_SHARE,
+                            PointsLog.created_at >= today_start
+                        ).scalar() or 0
+
+                    share_award = clamp_award_to_daily_cap(
+                        share_rule.points_amount, share_earned_today, share_rule.max_daily_points
+                    )
+
+                    if share_award > 0:
+                        share_user_points.points_balance += share_award
+                        db.session.add(PointsLog(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_change=share_award,
+                            reason=_REASON_SHARE,
+                            balance_after=share_user_points.points_balance
+                        ))
+                        db.session.commit()
+
             # 🆕 Track messages for active lotteries (optimized for large groups)
             # ✅ Track ALL group members, not just verified users (unverified users can participate)
             if chat.type in ['group', 'supergroup']:

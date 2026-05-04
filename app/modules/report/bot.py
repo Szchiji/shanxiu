@@ -612,8 +612,9 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _approve(msg_id):
         with flask_app.app_context():
-            from app.models import UserReport
+            from app.models import UserReport, SystemConfig, UserPoints, PointsLog, BotGroup
             from app import db
+
             r = UserReport.query.get(report_id)
             if r:
                 r.status = 'approved'
@@ -621,7 +622,46 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     r.channel_msg_id = msg_id
                 db.session.commit()
 
-    await loop.run_in_executor(None, _approve, channel_msg_id)
+            # Award points to the submitter if configured
+            reward_pts = 0
+            try:
+                reward_pts = int(SystemConfig.get_value('report_approval_points', '0') or '0')
+            except (ValueError, TypeError):
+                reward_pts = 0
+
+            awarded = 0
+            if reward_pts > 0 and report.get('submitter_id'):
+                group_chat_id = SystemConfig.get_value('report_points_group_id', '').strip()
+                target_group = None
+                if group_chat_id:
+                    target_group = BotGroup.query.filter_by(chat_id=group_chat_id).first()
+
+                if target_group:
+                    pts = UserPoints.query.filter_by(
+                        group_id=target_group.id,
+                        user_id=report['submitter_id'],
+                    ).first()
+                    if pts is None:
+                        pts = UserPoints(
+                            group_id=target_group.id,
+                            user_id=report['submitter_id'],
+                            points_balance=0,
+                        )
+                        db.session.add(pts)
+                    pts.points_balance += reward_pts
+                    db.session.add(PointsLog(
+                        group_id=target_group.id,
+                        user_id=report['submitter_id'],
+                        points_change=reward_pts,
+                        reason=f'报告审核通过 #{report_id}',
+                        balance_after=pts.points_balance,
+                    ))
+                    db.session.commit()
+                    awarded = reward_pts
+
+            return awarded
+
+    awarded_pts = await loop.run_in_executor(None, _approve, channel_msg_id)
     await _edit_admin_message(
         f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。'
     )
@@ -633,6 +673,8 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if channel_msg_id and channel:
                 link = _build_channel_link(channel, channel_msg_id)
                 msg += f'！\n\n👉 <a href="{link}">点击查看已发布报告</a>'
+            if awarded_pts:
+                msg += f'\n\n🎁 奖励积分：+{awarded_pts}'
             await query.get_bot().send_message(
                 chat_id=submitter_id,
                 text=msg,

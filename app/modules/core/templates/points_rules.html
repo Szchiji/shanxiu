@@ -62,13 +62,13 @@
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <h6 class="mb-1">{{ rule.rule_name }}</h6>
-                                <small class="text-muted">类型: {{ rule.rule_type }} | 积分: +{{ rule.points_amount }}</small>
+                                <small class="text-muted">类型: {{ rule.rule_type }} | 积分: +{{ rule.points_amount }}{% if rule.max_daily_points %} | 每日上限: {{ rule.max_daily_points }}{% endif %}</small>
                                 <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }} ms-2">
                                     {{ '启用' if rule.is_active else '禁用' }}
                                 </span>
                             </div>
                             <div>
-                                <button class="btn btn-sm btn-primary" onclick="editRule({{ rule.id }}, '{{ rule.rule_name }}', '{{ rule.rule_type }}', {{ rule.points_amount }}, {{ 'true' if rule.is_active else 'false' }})">
+                                <button class="btn btn-sm btn-primary" onclick="editRule({{ rule.id }}, '{{ rule.rule_name }}', '{{ rule.rule_type }}', {{ rule.points_amount }}, {{ 'true' if rule.is_active else 'false' }}, {{ rule.max_daily_points or 'null' }})">
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteRule({{ rule.id }})">
@@ -117,6 +117,11 @@
                     <label class="form-label">积分数量</label>
                     <input type="number" class="form-control" id="points_amount" value="1">
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">每日上限 <small class="text-muted">（留空表示不限制）</small></label>
+                    <input type="number" class="form-control" id="max_daily_points" placeholder="例如：50，表示每人每天最多获得50积分">
+                    <div class="form-text">仅对「发言」类型规则有效，防止刷屏滥用积分。</div>
+                </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="is_active" checked>
                     <label class="form-check-label">启用规则</label>
@@ -143,27 +148,31 @@ function showAddModal() {
     document.getElementById('rule_name').value = '';
     document.getElementById('rule_type').value = 'checkin';
     document.getElementById('points_amount').value = '1';
+    document.getElementById('max_daily_points').value = '';
     document.getElementById('is_active').checked = true;
     ruleModal.show();
 }
 
-function editRule(id, name, type, points, active) {
+function editRule(id, name, type, points, active, maxDaily) {
     document.getElementById('modalTitle').textContent = '编辑规则';
     document.getElementById('rule_id').value = id;
     document.getElementById('rule_name').value = name;
     document.getElementById('rule_type').value = type;
     document.getElementById('points_amount').value = points;
+    document.getElementById('max_daily_points').value = maxDaily || '';
     document.getElementById('is_active').checked = active;
     ruleModal.show();
 }
 
 function saveRule() {
+    const maxDailyRaw = document.getElementById('max_daily_points').value;
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('rule_id').value || null,
         rule_name: document.getElementById('rule_name').value,
         rule_type: document.getElementById('rule_type').value,
         points_amount: parseInt(document.getElementById('points_amount').value) || 1,
+        max_daily_points: maxDailyRaw ? (parseInt(maxDailyRaw) || null) : null,
         is_active: document.getElementById('is_active').checked
     };
     

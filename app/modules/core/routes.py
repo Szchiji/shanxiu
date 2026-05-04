@@ -9,6 +9,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
+from app.services.points_service import clamp_award_to_daily_cap
 from app.utils import encrypt_token, decrypt_token
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
@@ -3271,6 +3272,8 @@ def api_save_points_rule():
         rule.rule_type = d.get('rule_type', 'message')
         rule.points_amount = d.get('points_amount', 1)
         rule.is_active = d.get('is_active', True)
+        _max_daily = d.get('max_daily_points')
+        rule.max_daily_points = int(_max_daily) if _max_daily not in (None, '', 0) else None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -7628,6 +7631,211 @@ async def cmd_redpacket(update: Update, context):
     )
 
 
+async def cmd_points(update: Update, context):
+    """查询自己积分余额命令 /points"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+
+    if not global_flask_app:
+        return
+
+    def _get_balance():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(
+                chat_id=str(chat.id),
+                clone_id=context.application.bot_data.get('clone_id')
+            ).first()
+            if not group:
+                return None, "群组不存在"
+
+            user_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).first()
+            balance = user_points.points_balance if user_points else 0
+
+            # Determine member level
+            level_text = ""
+            levels = MemberLevel.query.filter_by(
+                group_id=group.id
+            ).order_by(MemberLevel.required_points.desc()).all()
+            for level in levels:
+                if balance >= level.required_points:
+                    badge = level.badge_emoji or "🎖️"
+                    level_text = f"{badge} {level.level_name}"
+                    break
+
+            # Today's earnings
+            today_start = get_beijing_today()
+            earned_today = db.session.query(
+                func.coalesce(func.sum(PointsLog.points_change), 0)
+            ).filter(
+                PointsLog.group_id == group.id,
+                PointsLog.user_id == user.id,
+                PointsLog.points_change > 0,
+                PointsLog.created_at >= today_start
+            ).scalar() or 0
+
+            # Compute rank among all members
+            rank = UserPoints.query.filter_by(
+                group_id=group.id
+            ).filter(
+                UserPoints.points_balance > balance
+            ).count() + 1
+
+            return {
+                'balance': balance,
+                'level_text': level_text,
+                'earned_today': earned_today,
+                'rank': rank,
+            }, None
+
+    data, error = await asyncio.get_running_loop().run_in_executor(None, _get_balance)
+
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+
+    display_name = user.first_name or f"User_{user.id}"
+    lines = [f"💰 <b>{display_name} 的积分</b>"]
+    lines.append(f"💎 当前余额：<b>{data['balance']}</b> 积分")
+    if data['level_text']:
+        lines.append(f"🏅 当前等级：{data['level_text']}")
+    lines.append(f"📈 今日获得：{data['earned_today']} 积分")
+    lines.append(f"🏆 排名：第 {data['rank']} 名")
+    await update.message.reply_html("\n".join(lines))
+
+
+async def cmd_transfer(update: Update, context):
+    """积分转让命令 /transfer @用户 数量 [备注]"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+
+    # Must be used as a reply to the recipient's message
+    if not update.message.reply_to_message:
+        await update.message.reply_html(
+            "💸 <b>积分转让</b>\n\n"
+            "用法：回复目标用户的消息，然后发送：\n"
+            "<code>/transfer 数量 [备注]</code>\n\n"
+            "示例：\n"
+            "<code>/transfer 50</code>\n"
+            "<code>/transfer 100 感谢帮忙</code>"
+        )
+        return
+
+    recipient = update.message.reply_to_message.from_user
+    if recipient is None or recipient.is_bot:
+        await update.message.reply_text("❌ 无法向机器人转让积分")
+        return
+
+    if recipient.id == user.id:
+        await update.message.reply_text("❌ 不能向自己转让积分")
+        return
+
+    # Parse arguments: /transfer <amount> [note...]
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_html(
+                "❌ 请指定转让积分数量。\n用法：<code>/transfer 数量 [备注]</code>"
+            )
+            return
+        amount = int(args[0])
+        if amount <= 0:
+            raise ValueError
+        note = ' '.join(args[1:]) if len(args) > 1 else ""
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ 积分数量必须是正整数")
+        return
+
+    if not global_flask_app:
+        return
+
+    def _do_transfer():
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(
+                chat_id=str(chat.id),
+                clone_id=context.application.bot_data.get('clone_id')
+            ).first()
+            if not group:
+                return None, "群组不存在"
+
+            # Check sender's balance
+            sender_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).first()
+            sender_balance = sender_points.points_balance if sender_points else 0
+
+            if sender_balance < amount:
+                return None, f"积分不足。您当前有 {sender_balance} 积分，无法转让 {amount} 积分"
+
+            # Deduct from sender
+            if not sender_points:
+                sender_points = UserPoints(group_id=group.id, user_id=user.id, points_balance=0)
+                db.session.add(sender_points)
+            sender_points.points_balance -= amount
+
+            # Credit recipient
+            recipient_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=recipient.id
+            ).first()
+            if not recipient_points:
+                recipient_points = UserPoints(
+                    group_id=group.id, user_id=recipient.id, points_balance=0
+                )
+                db.session.add(recipient_points)
+            recipient_points.points_balance += amount
+
+            reason_suffix = f"（{note}）" if note else ""
+            recipient_name = recipient.first_name or f"User_{recipient.id}"
+            sender_name = user.first_name or f"User_{user.id}"
+
+            # Log both sides
+            db.session.add(PointsLog(
+                group_id=group.id,
+                user_id=user.id,
+                points_change=-amount,
+                reason=f"转让给 {recipient_name}{reason_suffix}",
+                balance_after=sender_points.points_balance,
+            ))
+            db.session.add(PointsLog(
+                group_id=group.id,
+                user_id=recipient.id,
+                points_change=amount,
+                reason=f"收到来自 {sender_name} 的转让{reason_suffix}",
+                balance_after=recipient_points.points_balance,
+            ))
+
+            db.session.commit()
+            return {
+                'sender_balance': sender_points.points_balance,
+                'recipient_balance': recipient_points.points_balance,
+            }, None
+
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _do_transfer)
+
+    if error:
+        await update.message.reply_text(f"❌ {error}")
+        return
+
+    recipient_name = recipient.first_name or f"User_{recipient.id}"
+    await update.message.reply_html(
+        f"✅ <b>积分转让成功！</b>\n\n"
+        f"💸 转让 <b>{amount}</b> 积分给 {recipient_name}\n"
+        f"💰 您的余额：<b>{result['sender_balance']}</b> 积分"
+    )
+
+
 async def cmd_rank(update: Update, context):
     """积分排行榜命令 /rank [数量]"""
     chat = update.effective_chat
@@ -7999,6 +8207,9 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 🆕 Invitation rank command
     app.add_handler(CommandHandler("invites", cmd_invite_rank))  # alias for invite_rank
+    app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
+    app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
+    app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -8113,6 +8324,9 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("top", cmd_rank))
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("clones", cmd_clones))
+    app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
+    app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
+    app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
 
     # Periodic jobs for clone bot
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
@@ -10468,18 +10682,36 @@ async def on_message(update: Update, context):
                         )
                         db.session.add(user_points)
                     
-                    user_points.points_balance += message_rule.points_amount
-                    
-                    # Log the points transaction
-                    points_log = PointsLog(
-                        group_id=group.id,
-                        user_id=user.id,
-                        points_change=message_rule.points_amount,
-                        reason="发送消息",
-                        balance_after=user_points.points_balance
+                    # Enforce daily cap: sum points earned today via message rule
+                    earned_today = 0
+                    if message_rule.max_daily_points:
+                        today_start = get_beijing_today()
+                        earned_today = db.session.query(
+                            func.coalesce(func.sum(PointsLog.points_change), 0)
+                        ).filter(
+                            PointsLog.group_id == group.id,
+                            PointsLog.user_id == user.id,
+                            PointsLog.reason == "发送消息",
+                            PointsLog.created_at >= today_start
+                        ).scalar() or 0
+
+                    actual_award = clamp_award_to_daily_cap(
+                        message_rule.points_amount, earned_today, message_rule.max_daily_points
                     )
-                    db.session.add(points_log)
-                    db.session.commit()
+
+                    if actual_award > 0:
+                        user_points.points_balance += actual_award
+                    
+                        # Log the points transaction
+                        points_log = PointsLog(
+                            group_id=group.id,
+                            user_id=user.id,
+                            points_change=actual_award,
+                            reason="发送消息",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(points_log)
+                        db.session.commit()
             
             # 🆕 Track messages for active lotteries (optimized for large groups)
             # ✅ Track ALL group members, not just verified users (unverified users can participate)

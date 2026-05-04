@@ -238,6 +238,7 @@ class PointsRule(db.Model):
     rule_name = db.Column(db.String(255), nullable=False)
     rule_type = db.Column(db.String(50), nullable=False)  # checkin, message, invite, etc.
     points_amount = db.Column(db.Integer, default=1)
+    max_daily_points = db.Column(db.Integer, nullable=True)  # NULL = unlimited daily cap
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)

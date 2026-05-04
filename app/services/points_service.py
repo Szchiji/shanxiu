@@ -90,6 +90,41 @@ def apply_points_change(current_balance: int, change: int) -> int:
     return current_balance  # change == 0, no-op
 
 
+def can_earn_more_today(earned_today: int, max_daily_points: int | None) -> bool:
+    """Return True if the user can still earn points today.
+
+    Args:
+        earned_today:      Points already earned today (must be >= 0).
+        max_daily_points:  Daily cap; ``None`` means unlimited.
+
+    Returns:
+        ``True`` when the user has not yet hit the daily cap (or there is no cap).
+    """
+    if max_daily_points is None:
+        return True
+    if max_daily_points <= 0:
+        return False
+    return earned_today < max_daily_points
+
+
+def clamp_award_to_daily_cap(amount: int, earned_today: int, max_daily_points: int | None) -> int:
+    """Return the actual amount that can be awarded without exceeding the daily cap.
+
+    Args:
+        amount:            Intended award amount (must be > 0).
+        earned_today:      Points already earned today (must be >= 0).
+        max_daily_points:  Daily cap; ``None`` means unlimited.
+
+    Returns:
+        The actual amount to award, which may be less than *amount* or 0 if the
+        cap has already been reached.
+    """
+    if max_daily_points is None:
+        return amount
+    remaining = max(0, max_daily_points - earned_today)
+    return min(amount, remaining)
+
+
 # ---------------------------------------------------------------------------
 # DB-aware helpers (require Flask app context)
 # ---------------------------------------------------------------------------

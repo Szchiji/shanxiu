@@ -97,6 +97,8 @@ def run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_points_exchange_records_user_id ON points_exchange_records(user_id)",
         # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
         "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
+        # PointsRule: Add max_daily_points to cap how many points a user can earn per day from a rule
+        "ALTER TABLE points_rules ADD COLUMN IF NOT EXISTS max_daily_points INTEGER NULL",
         # system_config: Ensure id column exists (older deployments may have created the table without it)
         "ALTER TABLE system_config ADD COLUMN IF NOT EXISTS id SERIAL",
         # system_config: Ensure key_name and value columns exist (older deployments may be missing them)

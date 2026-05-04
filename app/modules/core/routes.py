@@ -6649,13 +6649,18 @@ async def update_member_levels(context):
         for chat_id_str, user_tg_id, perms_str in permission_actions:
             try:
                 perms = json.loads(perms_str)
+                # JSON key → Telegram ChatPermissions field mapping.
+                # All keys default to True when omitted (permissive default).
+                # Admin-facing key names use shorter aliases for readability:
+                #   can_send_media  →  can_send_other_messages
+                #   can_add_links   →  can_add_web_page_previews
                 tg_perms = ChatPermissions(
                     can_send_messages=perms.get('can_send_messages', True),
                     can_send_other_messages=perms.get('can_send_media', True),
                     can_add_web_page_previews=perms.get('can_add_links', True),
                     can_invite_users=perms.get('can_invite_users', True),
-                    can_pin_messages=perms.get('can_pin_messages', None),
-                    can_change_info=perms.get('can_change_info', None),
+                    can_pin_messages=perms.get('can_pin_messages', True),
+                    can_change_info=perms.get('can_change_info', True),
                 )
                 await context.bot.restrict_chat_member(
                     chat_id=int(chat_id_str),

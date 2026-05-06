@@ -46,6 +46,7 @@ MAX_AUCTION_WINNERS = 100  # Maximum winners in auction/lottery ranking
 CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
 CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
 CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
+SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Users checked per run in forced-channel subscription task
 
 # Mute reasons (internationalization support)
 MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
@@ -6531,7 +6532,6 @@ async def check_channel_subscriptions(context):
                         group = BotGroup.query.get(group_id)
                         if not group:
                             return None, None, None
-                        SUBSCRIPTION_CHECK_BATCH_SIZE = 10
                         group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
                         return int(group.chat_id), group.clone_id, [u.tg_id for u in group_users]
                 
@@ -6554,6 +6554,10 @@ async def check_channel_subscriptions(context):
                             tg_id
                         )
                         
+                        # Cache the owner check result: the group owner rarely changes
+                        # during a single scheduler tick and we may need it in both branches.
+                        is_owner = None
+
                         # If not subscribed (left or kicked), apply action
                         if member.status in ['left', 'kicked']:
                             # Check if user is chat owner in the group - skip all actions for chat owners
@@ -6583,8 +6587,9 @@ async def check_channel_subscriptions(context):
                                     print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         # If subscribed (member, administrator, creator), unmute if action was mute
                         elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
-                            # Check if user is chat owner in the group - skip unmute for chat owners
-                            is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
+                            # Reuse cached owner check if already done; otherwise look it up
+                            if is_owner is None:
+                                is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
                                 print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                 continue

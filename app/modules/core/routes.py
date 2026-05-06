@@ -6730,7 +6730,12 @@ async def update_lottery_status(context):
                     GroupLottery.start_time != None,
                     GroupLottery.start_time <= now,
                     GroupLottery.group_id.in_(group_ids)
-                ).update({'status': 'active'}, synchronize_session=False)
+                ).update(
+                    {'status': 'active'},
+                    # synchronize_session=False: safe here because we commit immediately
+                    # and no caller holds in-memory references to these lottery objects.
+                    synchronize_session=False
+                )
                 
                 if updated > 0:
                     db.session.commit()
@@ -9620,49 +9625,43 @@ async def check_redpacket_expiration(context):
                     packet = RedPacket.query.get(packet_id)
                     if not packet or packet.status != 'active':
                         continue
+                    
+                    group = BotGroup.query.get(packet.group_id)
+                    # Only process groups belonging to the current bot instance;
+                    # skip entirely so the correct bot handles expiry + refund.
+                    if current_clone_id is None:
+                        if group is None or group.clone_id is not None:
+                            continue
+                    else:
+                        if group is None or group.clone_id != current_clone_id:
+                            continue
+                    
                     # Refund remaining points to creator
                     if packet.remaining_points > 0:
-                        group = BotGroup.query.get(packet.group_id)
-                        # Only process groups belonging to the current bot instance
-                        if current_clone_id is None:
-                            should_process = group is not None and group.clone_id is None
-                        else:
-                            should_process = group is not None and group.clone_id == current_clone_id
-                        if should_process:
-                            user_points = UserPoints.query.filter_by(
-                                group_id=group.id,
-                                user_id=packet.creator_id
-                            ).first()
-                            
-                            if not user_points:
-                                user_points = UserPoints(
-                                    group_id=group.id,
-                                    user_id=packet.creator_id,
-                                    points_balance=0
-                                )
-                                db.session.add(user_points)
-                            
-                            user_points.points_balance += packet.remaining_points
-                            
-                            # Log the refund
-                            log = PointsLog(
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=packet.creator_id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
                                 group_id=group.id,
                                 user_id=packet.creator_id,
-                                points_change=packet.remaining_points,
-                                reason="红包过期退款",
-                                balance_after=user_points.points_balance
+                                points_balance=0
                             )
-                            db.session.add(log)
-                        elif group is None or (
-                            current_clone_id is None and group.clone_id is not None
-                        ) or (
-                            current_clone_id is not None and group.clone_id != current_clone_id
-                        ):
-                            # Group belongs to a different bot; skip refund but still expire packet
-                            # (the other bot's job will handle the refund)
-                            packet.status = 'expired'
-                            db.session.commit()
-                            continue
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += packet.remaining_points
+                        
+                        # Log the refund
+                        log = PointsLog(
+                            group_id=group.id,
+                            user_id=packet.creator_id,
+                            points_change=packet.remaining_points,
+                            reason="红包过期退款",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(log)
                     
                     # Update packet status
                     packet.status = 'expired'

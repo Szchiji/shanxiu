@@ -4027,10 +4027,20 @@ def api_push_group_bottom_buttons():
         if not buttons:
             return jsonify({'status':'error','msg':'没有可推送的按钮'})
         
-        # Check if bot is ready
-        if not global_ptb_app or not global_bot_loop:
-            print(f"❌ Bot未就绪: global_ptb_app={bool(global_ptb_app)}, global_bot_loop={bool(global_bot_loop)}", flush=True)
+        # Check if bot loop is ready
+        if not global_bot_loop:
             return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
+
+        # Select the correct bot: clone bot for clone groups, main bot otherwise
+        if group.clone_id is not None:
+            clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+            if not clone_info:
+                return jsonify({'status':'error','msg':f'克隆机器人 {group.clone_id} 未运行'})
+            ptb_app = clone_info['app']
+        else:
+            if not global_ptb_app:
+                return jsonify({'status':'error','msg':'Bot未就绪，请稍后再试'})
+            ptb_app = global_ptb_app
         
         print(f"🔄 推送菜单键盘到群组 {group.chat_id}，共 {len(buttons)} 个按钮", flush=True)
         
@@ -4072,7 +4082,7 @@ def api_push_group_bottom_buttons():
         async def _send_menu_command():
             try:
                 # Send a message with the menu keyboard attached
-                msg = await global_ptb_app.bot.send_message(
+                msg = await ptb_app.bot.send_message(
                     chat_id=group.chat_id,
                     text="📋 群组菜单已更新！\n\n👇 请使用下方按钮菜单：",
                     reply_markup=reply_markup

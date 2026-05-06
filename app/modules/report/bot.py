@@ -947,7 +947,8 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                         pd = _json.loads(c.profile_data or '{}')
                     except (ValueError, TypeError):
                         pd = {}
-                    if (pd.get('username') or '').lower() == lookup_username.lower():
+                    if ((pd.get('username') or '').lower() == lookup_username.lower() or
+                            (pd.get('tg_username') or '').lower() == lookup_username.lower()):
                         gu = c
                         break
             if gu is None:

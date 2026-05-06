@@ -55,6 +55,7 @@
         }
     }
     
+    /* Groups: purple accent */
     .group-card::before {
         content: '';
         position: absolute;
@@ -73,6 +74,49 @@
     
     .group-card.inactive::before {
         background: linear-gradient(90deg, #6e7681 0%, #484f58 100%);
+    }
+
+    /* Channels: teal accent */
+    .channel-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #0ea5e9 0%, #06b6d4 100%);
+    }
+
+    .channel-card:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 15px 40px rgba(6, 182, 212, 0.3) !important;
+        border-color: rgba(6, 182, 212, 0.5);
+    }
+
+    .channel-card.inactive::before {
+        background: linear-gradient(90deg, #6e7681 0%, #484f58 100%);
+    }
+
+    .section-divider {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin: 2rem 0 1.25rem;
+    }
+
+    .section-divider-line {
+        flex: 1;
+        height: 1px;
+        background: var(--border-color);
+    }
+
+    .section-divider-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        white-space: nowrap;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
     }
     
     .group-title {
@@ -101,6 +145,23 @@
     .manage-btn:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 25px rgba(124, 58, 237, 0.6);
+    }
+
+    .manage-btn-channel {
+        background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%);
+        border: none;
+        padding: 0.7rem 1.75rem;
+        border-radius: 10px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);
+        color: #fff;
+    }
+
+    .manage-btn-channel:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 25px rgba(6, 182, 212, 0.6);
+        color: #fff;
     }
     
     .action-btn-group {
@@ -136,11 +197,21 @@
     <div class="group-select-header">
         <h2 class="fw-bold mb-2">
             <i class="fa-solid fa-layer-group me-2" style="color: #a855f7;"></i>
-            选择管理的群组
+            选择管理的群组 / 频道
         </h2>
-        <p>管理您的 Telegram 机器人群组</p>
+        <p>管理您的 Telegram 机器人群组与频道</p>
     </div>
-    
+
+    {# ── Groups section ── #}
+    <div class="section-divider">
+        <span class="section-divider-line"></span>
+        <span class="section-divider-label">
+            <i class="fa-solid fa-people-group me-1" style="color:#a855f7;"></i>群组
+            <span class="badge bg-secondary ms-1">{{ groups|length }}</span>
+        </span>
+        <span class="section-divider-line"></span>
+    </div>
+
     <div class="row g-4 justify-content-center">
         {% for g in groups %}
         <div class="col-md-6 col-lg-4" id="card_{{ g.id }}">
@@ -157,7 +228,7 @@
                         </span>
                         {% endif %}
                         <h5 class="group-title text-truncate" title="{{ g.title }}">
-                            {{ g.title }}
+                            <i class="fa-solid fa-people-group me-1" style="color:#a855f7;opacity:0.7;font-size:0.9em;"></i>{{ g.title }}
                         </h5>
                         <p class="group-id mb-2">
                             <i class="fa-solid fa-hashtag"></i> {{ g.chat_id }}
@@ -187,10 +258,75 @@
         </div>
         {% else %}
         <div class="col-12">
-            <div class="empty-state">
-                <i class="fa-brands fa-telegram"></i>
-                <h4 class="fw-bold mb-3">暂无群组</h4>
+            <div class="empty-state" style="padding: 2rem;">
+                <i class="fa-brands fa-telegram" style="font-size:2.5rem;"></i>
+                <h4 class="fw-bold mb-2 mt-2">暂无群组</h4>
                 <p>请将机器人拉入群组并设为管理员</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# ── Channels section ── #}
+    <div class="section-divider">
+        <span class="section-divider-line"></span>
+        <span class="section-divider-label">
+            <i class="fa-solid fa-satellite-dish me-1" style="color:#0ea5e9;"></i>频道
+            <span class="badge bg-secondary ms-1">{{ channels|length }}</span>
+        </span>
+        <span class="section-divider-line"></span>
+    </div>
+
+    <div class="row g-4 justify-content-center">
+        {% for g in channels %}
+        <div class="col-md-6 col-lg-4" id="card_{{ g.id }}">
+            <div class="group-card channel-card card h-100 {% if not g.is_active %}inactive{% endif %}">
+                <div class="card-body p-4">
+                    <div class="text-center mb-4">
+                        {% if not g.is_active %}
+                        <span class="badge bg-secondary mb-3">
+                            <i class="fa-solid fa-pause me-1"></i>已停用
+                        </span>
+                        {% else %}
+                        <span class="badge mb-3" style="background:linear-gradient(135deg,#0ea5e9,#06b6d4);color:#fff;">
+                            <i class="fa-solid fa-check-circle me-1"></i>运行中
+                        </span>
+                        {% endif %}
+                        <h5 class="group-title text-truncate" title="{{ g.title }}">
+                            <i class="fa-solid fa-satellite-dish me-1" style="color:#0ea5e9;opacity:0.8;font-size:0.9em;"></i>{{ g.title }}
+                        </h5>
+                        <p class="group-id mb-2">
+                            <i class="fa-solid fa-hashtag"></i> {{ g.chat_id }}
+                        </p>
+                        <p class="small" style="color: var(--text-muted);">
+                            <i class="fa-solid fa-clock me-1"></i>
+                            {{ g.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                        </p>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <a href="/core/group/{{ g.id }}/dashboard" class="btn manage-btn-channel">
+                            <i class="fa-solid fa-arrow-right me-2"></i>进入管理
+                        </a>
+                        
+                        <div class="action-btn-group">
+                            <button class="btn btn-sm btn-outline-{% if g.is_active %}warning{% else %}success{% endif %}" onclick="toggleGroup({{ g.id }}, {{ 'true' if g.is_active else 'false' }})">
+                                <i class="fa-solid fa-power-off me-1"></i>{% if g.is_active %}停用{% else %}启用{% endif %}
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteGroup({{ g.id }})">
+                                <i class="fa-solid fa-trash me-1"></i>删除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12">
+            <div class="empty-state" style="padding: 2rem;">
+                <i class="fa-solid fa-satellite-dish" style="font-size:2.5rem;color:#0ea5e9;"></i>
+                <h4 class="fw-bold mb-2 mt-2">暂无频道</h4>
+                <p>请将机器人加入频道并设为管理员</p>
             </div>
         </div>
         {% endfor %}
@@ -200,7 +336,7 @@
 <script>
     function toggleGroup(gid, isActive) {
         const action = isActive ? '停用' : '启用';
-        if(!confirm(`确定要${action}这个群组吗？\n${isActive ? '停用后机器人将不再响应该群组的消息。' : '启用后机器人将恢复响应该群组的消息。'}`)) return;
+        if(!confirm(`确定要${action}这个群组/频道吗？\n${isActive ? '停用后机器人将不再响应该群组/频道的消息。' : '启用后机器人将恢复响应该群组/频道的消息。'}`)) return;
         
         fetch('/core/api/toggle_group', {
             method: 'POST',
@@ -216,7 +352,7 @@
     }
     
     function deleteGroup(gid) {
-        if(!confirm('确定要在后台删除这个群组吗？\n如果机器人还在群里，下次说话时它会重新出现。')) return;
+        if(!confirm('确定要在后台删除这个群组/频道吗？\n如果机器人还在群里，下次说话时它会重新出现。')) return;
         
         fetch('/core/api/toggle_group', {
             method: 'POST',

@@ -14,7 +14,7 @@ _DEFAULTS = {
     'report_push_template': '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
     'report_require_photo': 'true',
     'report_push_media': 'true',
-    'report_photo_prompt': '请发送现场照片 📷（必填，请拍摄真实现场照片）',
+    'report_photo_prompt': '请发送预约聊天截图或付款截图 📷（必填）',
     'report_approval_points': '0',
     'report_points_group_id': '',
 }

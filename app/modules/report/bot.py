@@ -54,7 +54,7 @@ _DEFAULT_QUESTIONS = [
      "hint": "例如：已更换电源模块，设备恢复正常"},
 ]
 
-_DEFAULT_PHOTO_PROMPT = '请发送现场照片 📷（必填，请拍摄真实现场照片）'
+_DEFAULT_PHOTO_PROMPT = '请发送预约聊天截图或付款截图 📷（必填）'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -293,7 +293,7 @@ async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ['📝 <b>请确认以下报告内容（预览）：</b>\n', preview_text]
     if photo_file_id:
-        lines.append('\n📷 已附带现场照片')
+        lines.append('\n📷 已附带截图')
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton('✅ 确认提交', callback_data='report_confirm_submit'),
@@ -318,7 +318,7 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.document.mime_type.startswith('image/'):
         photo_file_id = update.message.document.file_id
     else:
-        await update.message.reply_text('❌ 请发送一张图片（照片为必填项，请拍摄真实现场照片后发送）。')
+        await update.message.reply_text('❌ 请发送一张图片（截图为必填项，请发送预约聊天截图或付款截图）。')
         return STEP_PHOTO
 
     context.user_data['photo_file_id'] = photo_file_id
@@ -377,9 +377,9 @@ async def _show_confirm_from_callback(query, context: ContextTypes.DEFAULT_TYPE)
 
     lines = ['📝 <b>请确认以下报告内容（预览）：</b>\n', preview_text]
     if photo_file_id:
-        lines.append('\n📷 已附带现场照片')
+        lines.append('\n📷 已附带截图')
     else:
-        lines.append('\n📷 无现场照片')
+        lines.append('\n📷 无截图')
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton('✅ 确认提交', callback_data='report_confirm_submit'),
@@ -882,6 +882,31 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
 
     loop = asyncio.get_running_loop()
     member = await loop.run_in_executor(None, _find_member)
+
+    # Fallback: try Telegram API when user not found in GroupMember table
+    if member is None and lookup_username:
+        try:
+            tg_chat = await context.bot.get_chat(f'@{lookup_username}')
+        except Exception:
+            tg_chat = None
+        if tg_chat and tg_chat.type == 'private':
+            tg_user_id = tg_chat.id
+            # Re-try DB lookup by user_id in case the record exists under a different username
+            def _find_by_tg_id():
+                with flask_app.app_context():
+                    from app.models import GroupMember
+                    return GroupMember.query.filter_by(user_id=tg_user_id).first()
+            member = await loop.run_in_executor(None, _find_by_tg_id)
+            if member is None:
+                # Synthesise a lightweight record from Telegram data so the
+                # rest of the flow (identity display, report saving) works normally.
+                from types import SimpleNamespace
+                member = SimpleNamespace(
+                    user_id=tg_chat.id,
+                    username=tg_chat.username or '',
+                    first_name=tg_chat.first_name or '',
+                    last_name=tg_chat.last_name or '',
+                )
 
     if member is None:
         hint = f'@{lookup_username}' if lookup_username else str(lookup_user_id)

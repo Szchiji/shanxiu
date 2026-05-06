@@ -47,7 +47,8 @@ STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM, STEP_TARGET = range(4)
 _TARGET_KEY = '_report_target_user_id'
 
 # Matches https://t.me/username, http://t.me/username, t.me/username
-_TG_URL_RE = _re.compile(r'^(?:https?://)?t\.me/([A-Za-z0-9_]{4,})\s*$', _re.IGNORECASE)
+# Telegram usernames are 5–32 characters: letters, digits, underscores.
+_TG_URL_RE = _re.compile(r'^(?:https?://)?t\.me/([A-Za-z0-9_]{5,32})\s*$', _re.IGNORECASE)
 
 _DEFAULT_QUESTIONS = [
     {"text": "请问故障发生的时间是？", "required": True,

@@ -127,7 +127,7 @@
                     <label class="form-label">拍照步骤提示语</label>
                     <input type="text" class="form-control" name="report_photo_prompt"
                            value="{{ settings.report_photo_prompt }}"
-                           placeholder="例如：请发送现场照片 📷（必填，请拍摄真实现场照片）">
+                           placeholder="例如：请发送预约聊天截图或付款截图 📷（必填）">
                     <div class="form-text">启用拍照步骤时，Bot 将发送此提示引导用户上传照片。</div>
                 </div>
                 <div class="mb-3">
@@ -150,14 +150,14 @@
                     </label>
                 </div>
                 <div class="form-text mb-3">
-                    开启后，用户完成所有问答后，Bot 将要求其上传现场照片方可提交；关闭后，Bot 将跳过拍照步骤。
+                    开启后，用户完成所有问答后，Bot 将要求其上传预约聊天截图或付款截图方可提交；关闭后，Bot 将跳过此步骤。
                 </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="reportPushMedia"
                            name="report_push_media"
                            {% if settings.report_push_media != 'false' %}checked{% endif %}>
                     <label class="form-check-label" for="reportPushMedia">
-                        推送时附带多媒体（现场照片）
+                        推送时附带多媒体（截图）
                     </label>
                 </div>
                 <div class="form-text mt-1">

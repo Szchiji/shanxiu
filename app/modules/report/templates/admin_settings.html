@@ -38,21 +38,6 @@
                         {% endfor %}
                     </div>
                     {% endif %}
-                    {% set group_choices = all_groups | selectattr('type', 'ne', 'channel') | list %}
-                    {% if group_choices %}
-                    <div class="mt-2">
-                        <label class="form-label small text-muted">从已知群组中选择：</label>
-                        <div class="list-group list-group-flush border rounded" style="max-height:180px;overflow-y:auto">
-                            {% for g in group_choices %}
-                            <button type="button"
-                                    class="list-group-item list-group-item-action py-1 px-2 small{% if g.chat_id == settings.admin_group_id %} active{% endif %}"
-                                    onclick="document.getElementById('admin_group_id').value='{{ g.chat_id }}'">
-                                {{ g.title }}&nbsp;<span class="text-muted">{{ g.chat_id }}</span>
-                            </button>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
                 </div>
                 <div class="mb-3">
                     <label class="form-label">报告展示频道 ID / 用户名</label>
@@ -187,22 +172,7 @@
                            id="report_points_group_id"
                            value="{{ settings.report_points_group_id }}"
                            placeholder="例如 -1001234567890">
-                    <div class="form-text">积分将记录到此群组的积分体系中。填写群组的数字 ID，或从下方列表中选择。</div>
-                    {% set group_choices = all_groups | selectattr('type', 'ne', 'channel') | list %}
-                    {% if group_choices %}
-                    <div class="mt-2">
-                        <label class="form-label small text-muted">从已知群组中选择：</label>
-                        <div class="list-group list-group-flush border rounded" style="max-height:180px;overflow-y:auto">
-                            {% for g in group_choices %}
-                            <button type="button"
-                                    class="list-group-item list-group-item-action py-1 px-2 small{% if g.chat_id == settings.report_points_group_id %} active{% endif %}"
-                                    onclick="document.getElementById('report_points_group_id').value='{{ g.chat_id }}'">
-                                {{ g.title }}&nbsp;<span class="text-muted">{{ g.chat_id }}</span>
-                            </button>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
+                    <div class="form-text">积分将记录到此群组的积分体系中。填写群组的数字 ID。</div>
                 </div>
             </div>
         </div>

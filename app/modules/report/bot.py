@@ -99,6 +99,12 @@ def _push_media_enabled(flask_app, clone_id=None) -> bool:
     return val.lower() != 'false'
 
 
+def _require_photo_enabled(flask_app, clone_id=None) -> bool:
+    """Return True if the report flow should ask the user to submit a photo."""
+    val = _db_get_config(flask_app, 'report_require_photo', 'true', clone_id=clone_id)
+    return val.lower() != 'false'
+
+
 def _build_answers_block(answers: list) -> str:
     """Format a list of {question, answer} dicts as a readable text block."""
     lines = []
@@ -230,7 +236,7 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # All questions answered – check if photo is needed
     clone_id = _get_clone_id(context)
-    if flask_app and _push_media_enabled(flask_app, clone_id=clone_id):
+    if flask_app and _require_photo_enabled(flask_app, clone_id=clone_id):
         photo_prompt = _get_photo_prompt(flask_app, clone_id=clone_id)
         await update.message.reply_text(f'第{total + 1}步：{photo_prompt}')
         return STEP_PHOTO

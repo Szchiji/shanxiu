@@ -12,6 +12,7 @@ _DEFAULTS = {
     'admin_group_id': '',
     'report_channel': '',
     'report_push_template': '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
+    'report_require_photo': 'true',
     'report_push_media': 'true',
     'report_photo_prompt': '请发送现场照片 📷（必填，请拍摄真实现场照片）',
     'report_approval_points': '0',
@@ -66,6 +67,10 @@ def report_settings():
         push_media = 'true' if request.form.get('report_push_media') else 'false'
         SystemConfig.set_value(_scoped_key('report_push_media', clone_id), push_media)
 
+        # Save require photo toggle (checkbox: present = true, absent = false)
+        require_photo = 'true' if request.form.get('report_require_photo') else 'false'
+        SystemConfig.set_value(_scoped_key('report_require_photo', clone_id), require_photo)
+
         # Save dynamic questions submitted as serialised JSON from the form
         questions_raw = request.form.get('questions_json', '[]')
         try:
@@ -94,6 +99,8 @@ def report_settings():
                for k in _SIMPLE_CONFIG_KEYS}
     current['report_push_media'] = SystemConfig.get_value(
         _scoped_key('report_push_media', clone_id), _DEFAULTS['report_push_media'])
+    current['report_require_photo'] = SystemConfig.get_value(
+        _scoped_key('report_require_photo', clone_id), _DEFAULTS['report_require_photo'])
 
     questions_json = SystemConfig.get_value(_scoped_key('report_questions', clone_id), '')
     try:

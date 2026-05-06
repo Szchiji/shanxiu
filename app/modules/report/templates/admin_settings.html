@@ -128,7 +128,7 @@
                     <input type="text" class="form-control" name="report_photo_prompt"
                            value="{{ settings.report_photo_prompt }}"
                            placeholder="例如：请发送现场照片 📷（必填，请拍摄真实现场照片）">
-                    <div class="form-text">用户完成所有问答后，Bot 将发送此提示引导其上传照片。</div>
+                    <div class="form-text">启用拍照步骤时，Bot 将发送此提示引导用户上传照片。</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">频道推送模板</label>
@@ -141,6 +141,17 @@
                         支持 Telegram HTML 标签（<code>&lt;b&gt;</code>、<code>&lt;a&gt;</code> 等）。
                     </div>
                 </div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="reportRequirePhoto"
+                           name="report_require_photo"
+                           {% if settings.report_require_photo != 'false' %}checked{% endif %}>
+                    <label class="form-check-label" for="reportRequirePhoto">
+                        要求用户提交照片
+                    </label>
+                </div>
+                <div class="form-text mb-3">
+                    开启后，用户完成所有问答后，Bot 将要求其上传现场照片方可提交；关闭后，Bot 将跳过拍照步骤。
+                </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="reportPushMedia"
                            name="report_push_media"
@@ -150,7 +161,7 @@
                     </label>
                 </div>
                 <div class="form-text mt-1">
-                    关闭后，Bot 将跳过拍照步骤，频道推送仅发送文字内容。
+                    关闭后，频道推送仅发送文字内容（即使用户已上传照片）。
                 </div>
             </div>
         </div>

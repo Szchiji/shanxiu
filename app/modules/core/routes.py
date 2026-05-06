@@ -1862,24 +1862,31 @@ def api_save_user():
         try:
             group = BotGroup.query.get(gid)
             conf = get_group_conf(group)
-            if conf.get('auto_push_on_add') and conf.get('push_channel_id') and global_ptb_app and global_bot_loop:
-                cid = conf['push_channel_id']
-                tpl = conf.get('push_template', '用户: {tg_id}')
-                text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
-                p = json.loads(u.profile_data or '{}')
-                for k, v in p.items():
-                    text = text.replace(f'{{{k}}}', str(v))
-                fields = get_group_fields(group)
-                for f in fields:
-                    val = p.get(f['key'], '')
-                    text = text.replace(f"{{{f['label']}}}", str(val))
-                # Inject report deep-link variables
-                text = _inject_report_links(text, u.tg_id)
-                text = sanitize_html_for_telegram(text)
-                asyncio.run_coroutine_threadsafe(
-                    global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
-                    global_bot_loop
-                )
+            if conf.get('auto_push_on_add') and conf.get('push_channel_id') and global_bot_loop:
+                # Select the correct bot: clone bot for clone groups, main bot otherwise
+                if group.clone_id is not None:
+                    clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+                    ptb_app = clone_info['app'] if clone_info else None
+                else:
+                    ptb_app = global_ptb_app
+                if ptb_app:
+                    cid = conf['push_channel_id']
+                    tpl = conf.get('push_template', '用户: {tg_id}')
+                    text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
+                    p = json.loads(u.profile_data or '{}')
+                    for k, v in p.items():
+                        text = text.replace(f'{{{k}}}', str(v))
+                    fields = get_group_fields(group)
+                    for f in fields:
+                        val = p.get(f['key'], '')
+                        text = text.replace(f"{{{f['label']}}}", str(val))
+                    # Inject report deep-link variables
+                    text = _inject_report_links(text, u.tg_id)
+                    text = sanitize_html_for_telegram(text)
+                    asyncio.run_coroutine_threadsafe(
+                        ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
+                        global_bot_loop
+                    )
         except Exception as e:
             logging.warning(f'Auto push on add failed for group={gid} user={uid}: {e}')
 
@@ -2224,8 +2231,19 @@ def api_push_user():
         # Sanitize HTML before sending to Telegram
         text = sanitize_html_for_telegram(text)
 
+        # Select the correct bot: clone bot for clone groups, main bot otherwise
+        if group.clone_id is not None:
+            clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+            if not clone_info:
+                return jsonify({'status': 'error', 'msg': '克隆机器人未运行'})
+            ptb_app = clone_info['app']
+        else:
+            if not global_ptb_app:
+                return jsonify({'status': 'error', 'msg': 'Bot not initialized'})
+            ptb_app = global_ptb_app
+
         asyncio.run_coroutine_threadsafe(
-            global_ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
+            ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
             global_bot_loop
         )
         return jsonify({'status':'ok'})

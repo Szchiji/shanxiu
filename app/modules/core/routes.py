@@ -8430,10 +8430,13 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # report_conv_handler can intercept text replies in STEP_QUESTION state before
     # on_message consumes them.  audit_callback_handler must also precede the
     # catch-all CallbackQueryHandler(pagination_callback).
-    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
-    app.add_handler(audit_callback_handler)   # must be before CallbackQueryHandler(pagination_callback)
-    app.add_handler(report_conv_handler)      # must be before on_message and CommandHandler("start", …)
-    app.add_handler(view_reports_handler)     # must be before CommandHandler("start", cmd_start)
+    # Each clone bot gets its own fresh handler instances via make_report_handlers()
+    # to avoid sharing state/registration across multiple Application objects.
+    from app.modules.report.bot import make_report_handlers
+    _rconv, _rview, _raudit = make_report_handlers()
+    app.add_handler(_raudit)   # must be before CallbackQueryHandler(pagination_callback)
+    app.add_handler(_rconv)    # must be before on_message and CommandHandler("start", …)
+    app.add_handler(_rview)    # must be before CommandHandler("start", cmd_start)
 
     # General message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))

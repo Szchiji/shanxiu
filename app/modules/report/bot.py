@@ -706,45 +706,54 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Handler objects to register in run_bot()
+# Handler factory – call this for every Application that needs report handlers
+# (main bot AND each clone bot).  Each Application must receive its *own*
+# handler instances; sharing a single ConversationHandler object across
+# multiple Application instances causes the clone bots' conversation flow to
+# break because the handler's internal state becomes shared/corrupted.
 # ──────────────────────────────────────────────────────────────────────────────
 
-report_conv_handler = ConversationHandler(
-    entry_points=[
-        MessageHandler(
-            filters.Regex(r'^/start report_\d+') & filters.ChatType.PRIVATE,
-            report_start,
-        )
-    ],
-    states={
-        STEP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_question)],
-        STEP_PHOTO: [
-            MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo),
-            # Text fallback: tell the user to send a photo (or skip)
-            MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_photo),
-            # Inline-keyboard: skip photo or restart
-            CallbackQueryHandler(report_confirm_callback,
-                                 pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
+def make_report_handlers():
+    """Return fresh (report_conv_handler, view_reports_handler, audit_callback_handler) instances."""
+    conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(
+                filters.Regex(r'^/start report_\d+') & filters.ChatType.PRIVATE,
+                report_start,
+            )
         ],
-        STEP_CONFIRM: [
-            CallbackQueryHandler(report_confirm_callback,
-                                 pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
+        states={
+            STEP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_question)],
+            STEP_PHOTO: [
+                MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo),
+                # Text fallback: tell the user to send a photo (or skip)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_photo),
+                # Inline-keyboard: skip photo or restart
+                CallbackQueryHandler(report_confirm_callback,
+                                     pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
+            ],
+            STEP_CONFIRM: [
+                CallbackQueryHandler(report_confirm_callback,
+                                     pattern=r'^report_(skip_photo|restart|confirm_submit)$'),
+            ],
+        },
+        fallbacks=[
+            MessageHandler(filters.COMMAND, report_cancel),
         ],
-    },
-    fallbacks=[
-        MessageHandler(filters.COMMAND, report_cancel),
-    ],
-    name='report_conversation',
-    persistent=False,
-    per_message=True,
-)
+        name='report_conversation',
+        persistent=False,
+        per_message=True,
+    )
+    view_handler = MessageHandler(
+        filters.Regex(r'^/start view_\d+') & filters.ChatType.PRIVATE,
+        view_reports,
+    )
+    audit_handler = CallbackQueryHandler(
+        audit_callback,
+        pattern=r'^audit_(approve|reject)_\d+$',
+    )
+    return conv, view_handler, audit_handler
 
-view_reports_handler = MessageHandler(
-    filters.Regex(r'^/start view_\d+') & filters.ChatType.PRIVATE,
-    view_reports,
-)
 
-audit_callback_handler = CallbackQueryHandler(
-    audit_callback,
-    pattern=r'^audit_(approve|reject)_\d+$',
-)
+# Module-level singletons kept for backward compatibility (used by main bot setup).
+report_conv_handler, view_reports_handler, audit_callback_handler = make_report_handlers()

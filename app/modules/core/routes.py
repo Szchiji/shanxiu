@@ -8402,8 +8402,11 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # Note: Clone bots use the same handlers as the main bot
     # But we need to add permission checks for clone_id
 
-    # Store clone_id in bot_data so handlers can identify which clone is running
+    # Store clone_id and flask_app in bot_data so handlers can identify which clone
+    # is running and access the database (required by report handlers).
     app.bot_data['clone_id'] = clone_id
+    app.bot_data['flask_app'] = flask_app
+    app.bot_data['cmd_start'] = cmd_start
 
     # Add chat member handler
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -8422,7 +8425,16 @@ def setup_clone_handlers(app, flask_app, clone_id):
     
     # Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
-    
+
+    # Report module handlers – registered BEFORE the general text handler so that
+    # report_conv_handler can intercept text replies in STEP_QUESTION state before
+    # on_message consumes them.  audit_callback_handler must also precede the
+    # catch-all CallbackQueryHandler(pagination_callback).
+    from app.modules.report.bot import report_conv_handler, view_reports_handler, audit_callback_handler
+    app.add_handler(audit_callback_handler)   # must be before CallbackQueryHandler(pagination_callback)
+    app.add_handler(report_conv_handler)      # must be before on_message and CommandHandler("start", …)
+    app.add_handler(view_reports_handler)     # must be before CommandHandler("start", cmd_start)
+
     # General message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 

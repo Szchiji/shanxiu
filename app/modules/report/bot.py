@@ -887,7 +887,8 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
     if member is None and lookup_username:
         try:
             tg_chat = await context.bot.get_chat(f'@{lookup_username}')
-        except Exception:
+        except Exception as e:
+            logger.debug('Telegram get_chat fallback failed for @%s: %s', lookup_username, e)
             tg_chat = None
         if tg_chat and tg_chat.type == 'private':
             tg_user_id = tg_chat.id
@@ -898,8 +899,9 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                     return GroupMember.query.filter_by(user_id=tg_user_id).first()
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:
-                # Synthesise a lightweight record from Telegram data so the
-                # rest of the flow (identity display, report saving) works normally.
+                # Synthesise a lightweight object from Telegram data so the rest of the
+                # flow (identity display, report saving) works normally.
+                # Required attributes: user_id, username, first_name, last_name
                 from types import SimpleNamespace
                 member = SimpleNamespace(
                     user_id=tg_chat.id,

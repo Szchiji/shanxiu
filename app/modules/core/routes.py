@@ -8456,17 +8456,10 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
 
-    # Periodic jobs for clone bot
-    app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
-    app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=60)
-    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=120)  # Check inactive users daily
-    app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)
-    app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)
-    app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)
-    app.job_queue.run_repeating(update_lottery_status, interval=60, first=45)
-    app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)
-    app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)
-    app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)
+    # Note: Periodic background jobs are intentionally NOT registered here.
+    # All system-wide jobs (check_expired_users, check_scheduled_messages, etc.)
+    # are registered only on the main bot (see run_bot()). Registering them on
+    # every clone bot would cause each job to fire N+1 times per interval.
 
 
 async def start_all_clone_bots(flask_app):

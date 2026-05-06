@@ -906,6 +906,7 @@ class UserReport(db.Model):
     process_result = db.Column(db.Text)
     photo_file_id = db.Column(db.String(255))
     channel_msg_id = db.Column(db.Integer, nullable=True)
+    channel_msg_deleted = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
     status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     # Stores all dynamic question answers as JSON: [{"question": "...", "answer": "..."}, ...]

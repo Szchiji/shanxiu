@@ -431,7 +431,7 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
 
     def _save():
         with flask_app.app_context():
-            from app.models import UserReport, GroupMember
+            from app.models import UserReport, GroupMember, GroupUser
             from app import db
             r = UserReport(
                 user_id=target_user_id,
@@ -445,8 +445,14 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
             )
             db.session.add(r)
             db.session.commit()
-            # Load GroupMember for the target user to enrich the admin notification
+            # Load member info for the target user to enrich the admin notification.
+            # Check GroupMember first (Telegram-synced), then fall back to GroupUser
+            # (admin-added certified users who may not be in GroupMember).
             target_member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            if target_member is None:
+                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
+                if gu:
+                    target_member = _group_user_to_namespace(gu)
             return r.id, target_member
 
     loop = asyncio.get_running_loop()
@@ -541,12 +547,17 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_reports():
         with flask_app.app_context():
-            from app.models import UserReport, SystemConfig, GroupMember
+            from app.models import UserReport, SystemConfig, GroupMember, GroupUser
             reports = UserReport.query.filter_by(
                 user_id=target_user_id, status='approved'
             ).order_by(UserReport.created_at.desc()).all()
             channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
             member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            if member is None:
+                # Fall back to GroupUser for certified users not present in GroupMember
+                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
+                if gu:
+                    member = _group_user_to_namespace(gu)
             return reports, channel, member
 
     loop = asyncio.get_running_loop()
@@ -969,7 +980,9 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
             tg_user_id = tg_chat.id
             # Re-try DB lookup by user_id in case the record exists under a different username
             def _find_by_tg_id():
+                import json
                 from app.models import GroupMember, GroupUser
+                from app import db
                 with flask_app.app_context():
                     m = GroupMember.query.filter_by(user_id=tg_user_id).first()
                     if m is not None:
@@ -977,6 +990,20 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                     gu = GroupUser.query.filter_by(tg_id=tg_user_id).first()
                     if gu is None:
                         return None
+                    # Cache tg_username in profile_data so future lookups work
+                    # without requiring a Telegram API call.
+                    if tg_chat and tg_chat.username:
+                        try:
+                            pd = json.loads(gu.profile_data or '{}')
+                            if not pd.get('tg_username'):
+                                pd['tg_username'] = tg_chat.username
+                                gu.profile_data = json.dumps(pd, ensure_ascii=False)
+                                db.session.commit()
+                        except Exception:
+                            logger.warning(
+                                'Failed to cache tg_username for GroupUser tg_id=%s: ',
+                                tg_user_id, exc_info=True,
+                            )
                     return _group_user_to_namespace(gu)
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:

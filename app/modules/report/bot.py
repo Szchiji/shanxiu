@@ -88,6 +88,26 @@ def _db_get_config(flask_app, key: str, default: str = '', clone_id=None) -> str
         return SystemConfig.get_value(_scoped_key(key, clone_id), default)
 
 
+def _group_user_to_namespace(gu):
+    """Convert a GroupUser ORM row to a SimpleNamespace compatible with GroupMember.
+
+    The result exposes ``user_id``, ``username``, ``first_name``, and
+    ``last_name`` attributes, sourced from ``gu.tg_id`` and the JSON stored in
+    ``gu.profile_data``.
+    """
+    from types import SimpleNamespace
+    try:
+        pd = json.loads(gu.profile_data or '{}')
+    except (ValueError, TypeError):
+        pd = {}
+    return SimpleNamespace(
+        user_id=gu.tg_id,
+        username=pd.get('username') or '',
+        first_name=pd.get('first_name') or pd.get('name') or '',
+        last_name=pd.get('last_name') or '',
+    )
+
+
 def _load_questions(flask_app, clone_id=None) -> list:
     """Return the configured question list, falling back to defaults."""
     raw = _db_get_config(flask_app, 'report_questions', '', clone_id=clone_id)
@@ -896,9 +916,10 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
         return STEP_TARGET
 
     def _find_member():
+        import json as _json
+        from app.models import GroupMember, GroupUser
+        from sqlalchemy import func
         with flask_app.app_context():
-            from app.models import GroupMember, GroupUser
-            from sqlalchemy import func
             if lookup_user_id is not None:
                 m = GroupMember.query.filter_by(user_id=lookup_user_id).first()
             else:
@@ -910,15 +931,15 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                 return m
             # Fallback: search GroupUser (admin-added verified users) which may not
             # be present in the GroupMember (Telegram-sync) table.
-            import json as _json
-            from types import SimpleNamespace
             if lookup_user_id is not None:
                 gu = GroupUser.query.filter_by(tg_id=lookup_user_id).first()
             else:
-                # GroupUser stores name/username inside profile_data JSON;
-                # do a case-insensitive substring search then confirm exact match.
+                # GroupUser stores name/username inside profile_data JSON.
+                # Escape SQL wildcard characters in the username before using ILIKE,
+                # then confirm the exact match by parsing the JSON.
+                escaped = lookup_username.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
                 candidates = GroupUser.query.filter(
-                    GroupUser.profile_data.ilike(f'%{lookup_username}%')
+                    GroupUser.profile_data.ilike(f'%{escaped}%', escape='\\')
                 ).all()
                 gu = None
                 for c in candidates:
@@ -931,16 +952,7 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                         break
             if gu is None:
                 return None
-            try:
-                pd = _json.loads(gu.profile_data or '{}')
-            except (ValueError, TypeError):
-                pd = {}
-            return SimpleNamespace(
-                user_id=gu.tg_id,
-                username=pd.get('username') or '',
-                first_name=pd.get('first_name') or pd.get('name') or '',
-                last_name=pd.get('last_name') or '',
-            )
+            return _group_user_to_namespace(gu)
 
     loop = asyncio.get_running_loop()
     member = await loop.run_in_executor(None, _find_member)
@@ -956,26 +968,15 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
             tg_user_id = tg_chat.id
             # Re-try DB lookup by user_id in case the record exists under a different username
             def _find_by_tg_id():
+                from app.models import GroupMember, GroupUser
                 with flask_app.app_context():
-                    import json as _json
-                    from types import SimpleNamespace
-                    from app.models import GroupMember, GroupUser
                     m = GroupMember.query.filter_by(user_id=tg_user_id).first()
                     if m is not None:
                         return m
                     gu = GroupUser.query.filter_by(tg_id=tg_user_id).first()
                     if gu is None:
                         return None
-                    try:
-                        pd = _json.loads(gu.profile_data or '{}')
-                    except (ValueError, TypeError):
-                        pd = {}
-                    return SimpleNamespace(
-                        user_id=gu.tg_id,
-                        username=pd.get('username') or '',
-                        first_name=pd.get('first_name') or pd.get('name') or '',
-                        last_name=pd.get('last_name') or '',
-                    )
+                    return _group_user_to_namespace(gu)
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:
                 # Synthesise a lightweight object from Telegram data so the rest of the

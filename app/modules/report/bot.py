@@ -420,6 +420,12 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Always clear report state first, regardless of what happens next.
     context.user_data.clear()
     text = update.message.text or ''
+    # When /start report_NNN is sent mid-conversation (e.g. user clicked the
+    # deep-link again), restart the report flow instead of just canceling so the
+    # user doesn't have to click twice.
+    import re as _re
+    if _re.match(r'^/start report_\d+', text):
+        return await report_start(update, context)
     # When a plain /start (without report_ param) is sent mid-conversation,
     # forward directly to cmd_start so the user reaches admin welcome in one step
     # instead of having to send /start twice.  cmd_start does not use user_data,
@@ -742,7 +748,6 @@ def make_report_handlers():
         ],
         name='report_conversation',
         persistent=False,
-        per_message=True,
     )
     view_handler = MessageHandler(
         filters.Regex(r'^/start view_\d+') & filters.ChatType.PRIVATE,

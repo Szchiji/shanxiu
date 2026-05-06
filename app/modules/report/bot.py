@@ -254,8 +254,8 @@ async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file_id = context.user_data.get('photo_file_id')
 
     answers = [
-        {"question": questions[i]["text"], "answer": raw_answers[i]}
-        for i in range(min(len(questions), len(raw_answers)))
+        {"question": questions[i]["text"], "answer": raw_answers[i] if i < len(raw_answers) else ''}
+        for i in range(len(questions))
     ]
 
     if flask_app:
@@ -338,8 +338,8 @@ async def _show_confirm_from_callback(query, context: ContextTypes.DEFAULT_TYPE)
     photo_file_id = context.user_data.get('photo_file_id')
 
     answers = [
-        {"question": questions[i]["text"], "answer": raw_answers[i]}
-        for i in range(min(len(questions), len(raw_answers)))
+        {"question": questions[i]["text"], "answer": raw_answers[i] if i < len(raw_answers) else ''}
+        for i in range(len(questions))
     ]
 
     if flask_app:

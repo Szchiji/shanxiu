@@ -94,15 +94,27 @@ def _group_user_to_namespace(gu):
     The result exposes ``user_id``, ``username``, ``first_name``, and
     ``last_name`` attributes, sourced from ``gu.tg_id`` and the JSON stored in
     ``gu.profile_data``.
+
+    ``username`` is resolved by priority:
+      1. ``tg_username`` key (set by activity-tracking code)
+      2. ``username`` key
+      3. Any string field whose value starts with ``@`` (admin-entered @handle)
     """
     from types import SimpleNamespace
     try:
         pd = json.loads(gu.profile_data or '{}')
     except (ValueError, TypeError):
         pd = {}
+    # Resolve username: check dedicated keys first, then any @-prefixed value.
+    username = pd.get('tg_username') or pd.get('username') or ''
+    if not username:
+        for v in pd.values():
+            if isinstance(v, str) and v.startswith('@') and len(v) > 1:
+                username = v[1:]  # strip leading '@' for consistency
+                break
     return SimpleNamespace(
         user_id=gu.tg_id,
-        username=pd.get('username') or '',
+        username=username,
         first_name=pd.get('first_name') or pd.get('name') or '',
         last_name=pd.get('last_name') or '',
     )
@@ -431,7 +443,7 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
 
     def _save():
         with flask_app.app_context():
-            from app.models import UserReport, GroupMember
+            from app.models import UserReport, GroupMember, GroupUser
             from app import db
             r = UserReport(
                 user_id=target_user_id,
@@ -445,8 +457,14 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
             )
             db.session.add(r)
             db.session.commit()
-            # Load GroupMember for the target user to enrich the admin notification
+            # Load member info for the target user to enrich the admin notification.
+            # Check GroupMember first (Telegram-synced), then fall back to GroupUser
+            # (admin-added certified users who may not be in GroupMember).
             target_member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            if target_member is None:
+                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
+                if gu:
+                    target_member = _group_user_to_namespace(gu)
             return r.id, target_member
 
     loop = asyncio.get_running_loop()
@@ -541,12 +559,17 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_reports():
         with flask_app.app_context():
-            from app.models import UserReport, SystemConfig, GroupMember
+            from app.models import UserReport, SystemConfig, GroupMember, GroupUser
             reports = UserReport.query.filter_by(
                 user_id=target_user_id, status='approved'
             ).order_by(UserReport.created_at.desc()).all()
             channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
             member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            if member is None:
+                # Fall back to GroupUser for certified users not present in GroupMember
+                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
+                if gu:
+                    member = _group_user_to_namespace(gu)
             return reports, channel, member
 
     loop = asyncio.get_running_loop()
@@ -937,6 +960,9 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                 # GroupUser stores name/username inside profile_data JSON.
                 # Escape SQL wildcard characters in the username before using ILIKE,
                 # then confirm the exact match by parsing the JSON.
+                # Note: admin may store the username with a leading '@' in any field
+                # (not just 'username'/'tg_username'), so we strip '@' from each
+                # string value before comparing.
                 escaped = lookup_username.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
                 candidates = GroupUser.query.filter(
                     GroupUser.profile_data.ilike(f'%{escaped}%', escape='\\')
@@ -947,9 +973,14 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                         pd = _json.loads(c.profile_data or '{}')
                     except (ValueError, TypeError):
                         pd = {}
-                    if ((pd.get('username') or '').lower() == lookup_username.lower() or
-                            (pd.get('tg_username') or '').lower() == lookup_username.lower()):
-                        gu = c
+                    # Check all string values in profile_data; strip exactly one
+                    # leading '@' so both "@zhangsan" and "zhangsan" match.
+                    for v in pd.values():
+                        normalized = v[1:] if isinstance(v, str) and v.startswith('@') else v
+                        if isinstance(v, str) and normalized.lower() == lookup_username.lower():
+                            gu = c
+                            break
+                    if gu is not None:
                         break
             if gu is None:
                 return None
@@ -970,6 +1001,7 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
             # Re-try DB lookup by user_id in case the record exists under a different username
             def _find_by_tg_id():
                 from app.models import GroupMember, GroupUser
+                from app import db
                 with flask_app.app_context():
                     m = GroupMember.query.filter_by(user_id=tg_user_id).first()
                     if m is not None:
@@ -977,6 +1009,20 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                     gu = GroupUser.query.filter_by(tg_id=tg_user_id).first()
                     if gu is None:
                         return None
+                    # Cache tg_username in profile_data so future lookups work
+                    # without requiring a Telegram API call.
+                    if tg_chat and tg_chat.username:
+                        try:
+                            pd = json.loads(gu.profile_data or '{}')
+                            if not pd.get('tg_username'):
+                                pd['tg_username'] = tg_chat.username
+                                gu.profile_data = json.dumps(pd, ensure_ascii=False)
+                                db.session.commit()
+                        except Exception:
+                            logger.warning(
+                                'Failed to cache tg_username for GroupUser tg_id=%s',
+                                tg_user_id, exc_info=True,
+                            )
                     return _group_user_to_namespace(gu)
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:

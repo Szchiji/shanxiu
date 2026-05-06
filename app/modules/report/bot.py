@@ -897,19 +897,55 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
 
     def _find_member():
         with flask_app.app_context():
-            from app.models import GroupMember
+            from app.models import GroupMember, GroupUser
             from sqlalchemy import func
             if lookup_user_id is not None:
-                return GroupMember.query.filter_by(user_id=lookup_user_id).first()
-            # Username lookup – case-insensitive
-            return GroupMember.query.filter(
-                func.lower(GroupMember.username) == lookup_username.lower()
-            ).first()
+                m = GroupMember.query.filter_by(user_id=lookup_user_id).first()
+            else:
+                # Username lookup – case-insensitive
+                m = GroupMember.query.filter(
+                    func.lower(GroupMember.username) == lookup_username.lower()
+                ).first()
+            if m is not None:
+                return m
+            # Fallback: search GroupUser (admin-added verified users) which may not
+            # be present in the GroupMember (Telegram-sync) table.
+            import json as _json
+            from types import SimpleNamespace
+            if lookup_user_id is not None:
+                gu = GroupUser.query.filter_by(tg_id=lookup_user_id).first()
+            else:
+                # GroupUser stores name/username inside profile_data JSON;
+                # do a case-insensitive substring search then confirm exact match.
+                candidates = GroupUser.query.filter(
+                    GroupUser.profile_data.ilike(f'%{lookup_username}%')
+                ).all()
+                gu = None
+                for c in candidates:
+                    try:
+                        pd = _json.loads(c.profile_data or '{}')
+                    except (ValueError, TypeError):
+                        pd = {}
+                    if (pd.get('username') or '').lower() == lookup_username.lower():
+                        gu = c
+                        break
+            if gu is None:
+                return None
+            try:
+                pd = _json.loads(gu.profile_data or '{}')
+            except (ValueError, TypeError):
+                pd = {}
+            return SimpleNamespace(
+                user_id=gu.tg_id,
+                username=pd.get('username') or '',
+                first_name=pd.get('first_name') or pd.get('name') or '',
+                last_name=pd.get('last_name') or '',
+            )
 
     loop = asyncio.get_running_loop()
     member = await loop.run_in_executor(None, _find_member)
 
-    # Fallback: try Telegram API when user not found in GroupMember table
+    # Fallback: try Telegram API when user not found in GroupMember/GroupUser tables
     if member is None and lookup_username:
         try:
             tg_chat = await context.bot.get_chat(f'@{lookup_username}')
@@ -921,8 +957,25 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
             # Re-try DB lookup by user_id in case the record exists under a different username
             def _find_by_tg_id():
                 with flask_app.app_context():
-                    from app.models import GroupMember
-                    return GroupMember.query.filter_by(user_id=tg_user_id).first()
+                    import json as _json
+                    from types import SimpleNamespace
+                    from app.models import GroupMember, GroupUser
+                    m = GroupMember.query.filter_by(user_id=tg_user_id).first()
+                    if m is not None:
+                        return m
+                    gu = GroupUser.query.filter_by(tg_id=tg_user_id).first()
+                    if gu is None:
+                        return None
+                    try:
+                        pd = _json.loads(gu.profile_data or '{}')
+                    except (ValueError, TypeError):
+                        pd = {}
+                    return SimpleNamespace(
+                        user_id=gu.tg_id,
+                        username=pd.get('username') or '',
+                        first_name=pd.get('first_name') or pd.get('name') or '',
+                        last_name=pd.get('last_name') or '',
+                    )
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:
                 # Synthesise a lightweight object from Telegram data so the rest of the

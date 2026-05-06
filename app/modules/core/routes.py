@@ -1866,7 +1866,9 @@ def api_save_user():
                 # Select the correct bot: clone bot for clone groups, main bot otherwise
                 if group.clone_id is not None:
                     clone_info = bot_clone_manager.active_clones.get(group.clone_id)
-                    ptb_app = clone_info['app'] if clone_info else None
+                    ptb_app = clone_info.get('app') if clone_info else None
+                    if not ptb_app:
+                        logging.warning(f'Auto push skipped: clone bot {group.clone_id} not running for group={gid}')
                 else:
                     ptb_app = global_ptb_app
                 if ptb_app:
@@ -2234,9 +2236,9 @@ def api_push_user():
         # Select the correct bot: clone bot for clone groups, main bot otherwise
         if group.clone_id is not None:
             clone_info = bot_clone_manager.active_clones.get(group.clone_id)
-            if not clone_info:
+            ptb_app = clone_info.get('app') if clone_info else None
+            if not ptb_app:
                 return jsonify({'status': 'error', 'msg': '克隆机器人未运行'})
-            ptb_app = clone_info['app']
         else:
             if not global_ptb_app:
                 return jsonify({'status': 'error', 'msg': 'Bot not initialized'})

@@ -477,12 +477,17 @@ def get_group_fields(group):
     return DEFAULT_FIELDS
 
 
-def _inject_report_links(text: str, tg_id) -> str:
-    """Replace {写报告链接} and {查报告链接} placeholders with Bot deep-links."""
-    if global_ptb_app and global_ptb_app.bot.username:
-        bot_username = global_ptb_app.bot.username
-        text = text.replace('{写报告链接}', f'https://t.me/{bot_username}?start=report_{tg_id}')
-        text = text.replace('{查报告链接}', f'https://t.me/{bot_username}?start=view_{tg_id}')
+def _inject_report_links(text: str, tg_id, bot_username: str = None) -> str:
+    """Replace {写报告链接} and {查报告链接} placeholders with Bot deep-links.
+
+    ``bot_username`` should be the username of the bot that will handle the
+    deep-link (clone bot for clone-managed groups, main bot otherwise).
+    Falls back to the global main-bot username when not provided.
+    """
+    username = bot_username or (global_ptb_app.bot.username if global_ptb_app else None)
+    if username:
+        text = text.replace('{写报告链接}', f'https://t.me/{username}?start=report_{tg_id}')
+        text = text.replace('{查报告链接}', f'https://t.me/{username}?start=view_{tg_id}')
     return text
 
 
@@ -1882,8 +1887,8 @@ def api_save_user():
                     for f in fields:
                         val = p.get(f['key'], '')
                         text = text.replace(f"{{{f['label']}}}", str(val))
-                    # Inject report deep-link variables
-                    text = _inject_report_links(text, u.tg_id)
+                    # Inject report deep-link variables using the correct bot's username
+                    text = _inject_report_links(text, u.tg_id, ptb_app.bot.username)
                     text = sanitize_html_for_telegram(text)
                     asyncio.run_coroutine_threadsafe(
                         ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
@@ -2227,9 +2232,6 @@ def api_push_user():
             val = p.get(f['key'], '')
             text = text.replace(f"{{{f['label']}}}", str(val))
 
-        # Inject report deep-link variables
-        text = _inject_report_links(text, user.tg_id)
-
         # Sanitize HTML before sending to Telegram
         text = sanitize_html_for_telegram(text)
 
@@ -2243,6 +2245,9 @@ def api_push_user():
             if not global_ptb_app:
                 return jsonify({'status': 'error', 'msg': 'Bot not initialized'})
             ptb_app = global_ptb_app
+
+        # Inject report deep-link variables using the correct bot's username
+        text = _inject_report_links(text, user.tg_id, ptb_app.bot.username)
 
         asyncio.run_coroutine_threadsafe(
             ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),

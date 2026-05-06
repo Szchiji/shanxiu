@@ -736,6 +736,7 @@ report_conv_handler = ConversationHandler(
     ],
     name='report_conversation',
     persistent=False,
+    per_message=True,
 )
 
 view_reports_handler = MessageHandler(

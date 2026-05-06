@@ -23,6 +23,7 @@ Audit callbacks (inline keyboard in admin group):
 import json
 import logging
 import asyncio
+import re as _re
 
 from telegram import (
     Update,
@@ -44,6 +45,9 @@ STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM, STEP_TARGET = range(4)
 
 # Key used to store the target user_id inside conversation user_data
 _TARGET_KEY = '_report_target_user_id'
+
+# Matches https://t.me/username, http://t.me/username, t.me/username
+_TG_URL_RE = _re.compile(r'^(?:https?://)?t\.me/([A-Za-z0-9_]{4,})\s*$', _re.IGNORECASE)
 
 _DEFAULT_QUESTIONS = [
     {"text": "请问故障发生的时间是？", "required": True,
@@ -571,17 +575,32 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flask_app = _get_flask_app(context)
     clone_id = _get_clone_id(context)
 
-    # Helper: edit the admin-group message regardless of whether it is a photo
-    # message (has caption) or a plain text message.
-    async def _edit_admin_message(text: str, reply_markup=None):
-        kwargs = dict(parse_mode='HTML', reply_markup=reply_markup)
-        if query.message and query.message.caption is not None:
-            await query.edit_message_caption(caption=text, **kwargs)
-        else:
-            await query.edit_message_text(text=text, **kwargs)
+    # Helper: send a new reply in the admin group with the audit result while
+    # keeping the original submission message intact.  Only the inline keyboard
+    # on the original message is updated (buttons removed / replaced).
+    async def _post_audit_result(text: str, update_keyboard=None):
+        """Send a new reply to the original admin message with the audit result.
+
+        ``update_keyboard`` replaces the original message's keyboard (pass None
+        to strip the buttons entirely).  A new reply message carries the result text.
+        """
+        try:
+            await query.edit_message_reply_markup(reply_markup=update_keyboard)
+        except Exception as e:
+            logger.debug('Could not update original message keyboard: %s', e)
+        if query.message:
+            try:
+                await query.get_bot().send_message(
+                    chat_id=query.message.chat_id,
+                    text=text,
+                    parse_mode='HTML',
+                    reply_to_message_id=query.message.message_id,
+                )
+            except Exception as e:
+                logger.warning('Could not send audit result reply: %s', e)
 
     if flask_app is None:
-        await _edit_admin_message('❌ 服务暂时不可用。')
+        await query.answer('❌ 服务暂时不可用。', show_alert=True)
         return
 
     if data.startswith('audit_approve_'):
@@ -611,7 +630,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_id, already_deleted = await loop.run_in_executor(None, _get_channel_info)
 
         if already_deleted:
-            await _edit_admin_message(f'ℹ️ 报告 #{report_id} 的频道消息已被删除。')
+            await query.answer(f'ℹ️ 报告 #{report_id} 的频道消息已被删除。', show_alert=True)
             return
 
         channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
@@ -631,7 +650,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db.session.commit()
 
         await loop.run_in_executor(None, _mark_deleted)
-        await _edit_admin_message(f'🗑️ 报告 #{report_id} 的频道消息已删除。')
+        await _post_audit_result(f'🗑️ 报告 #{report_id} 的频道消息已删除。')
         return
 
     def _get_report():
@@ -673,12 +692,12 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = await loop.run_in_executor(None, _get_report)
 
     if report is None:
-        await _edit_admin_message('❌ 报告不存在。')
+        await query.answer('❌ 报告不存在。', show_alert=True)
         return
 
     if report['status'] != 'pending':
-        await _edit_admin_message(
-            f'ℹ️ 该报告已被处理（当前状态：{report["status"]}）。'
+        await query.answer(
+            f'ℹ️ 该报告已被处理（当前状态：{report["status"]}）。', show_alert=True
         )
         return
 
@@ -695,7 +714,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db.session.commit()
 
         await loop.run_in_executor(None, _reject)
-        await _edit_admin_message(f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。')
+        await _post_audit_result(f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。')
         submitter_id = report.get('submitter_id')
         if submitter_id:
             try:
@@ -799,9 +818,9 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         delete_keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton('🗑️ 从频道删除', callback_data=f'audit_delete_channel_{report_id}'),
         ]])
-    await _edit_admin_message(
+    await _post_audit_result(
         f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。',
-        reply_markup=delete_keyboard,
+        update_keyboard=delete_keyboard,
     )
     submitter_id = report.get('submitter_id')
     if submitter_id:
@@ -836,6 +855,7 @@ async def report_start_by_text(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(
         '📝 请发送被提交人的用户名或 ID，例如：\n'
         '  • <code>@zhangsan</code>\n'
+        '  • <code>https://t.me/zhangsan</code>\n'
         '  • <code>123456789</code>\n\n'
         '发送 /cancel 可取消。',
         parse_mode='HTML',
@@ -852,20 +872,25 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return ConversationHandler.END
 
-    # Parse input: "@username" → strip @; plain digits → int
+    # Parse input: "@username" / "https://t.me/username" / "t.me/username" → extract username;
+    # plain digits → int user_id
     lookup_username = None
     lookup_user_id = None
     if text.startswith('@'):
         lookup_username = text[1:].strip()
-    elif text.lstrip('-').isdigit():
-        try:
-            lookup_user_id = int(text)
-        except ValueError:
-            pass
+    else:
+        m = _TG_URL_RE.match(text)
+        if m:
+            lookup_username = m.group(1)
+        elif text.lstrip('-').isdigit():
+            try:
+                lookup_user_id = int(text)
+            except ValueError:
+                pass
 
     if not lookup_username and lookup_user_id is None:
         await update.message.reply_text(
-            '⚠️ 格式不正确，请发送用户名（如 @zhangsan）或数字 ID（如 123456789）。'
+            '⚠️ 格式不正确，请发送用户名（如 @zhangsan 或 https://t.me/zhangsan）或数字 ID（如 123456789）。'
         )
         return STEP_TARGET
 

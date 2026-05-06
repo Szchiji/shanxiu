@@ -124,6 +124,8 @@ def run_migrations():
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_system_config_key_name ON system_config(key_name)",
         # user_reports: Store dynamic question answers as JSON
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
+        # user_reports: Track whether the channel message has been deleted
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_msg_deleted BOOLEAN DEFAULT FALSE",
     ]
 
     with app.app_context():

@@ -247,15 +247,23 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show a summary of all answers and ask the user to confirm or cancel."""
+    flask_app = _get_flask_app(context)
+    clone_id = _get_clone_id(context)
     questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
     raw_answers = context.user_data.get('answers', [])
     photo_file_id = context.user_data.get('photo_file_id')
 
-    lines = ['📝 <b>请确认以下报告内容：</b>\n']
-    for i, q in enumerate(questions):
-        ans = raw_answers[i] if i < len(raw_answers) else ''
-        ans_display = ans if ans else '<i>（已跳过）</i>'
-        lines.append(f'❓ {q["text"]}\n💬 {ans_display}')
+    answers = [
+        {"question": questions[i]["text"], "answer": raw_answers[i]}
+        for i in range(min(len(questions), len(raw_answers)))
+    ]
+
+    if flask_app:
+        preview_text = _build_push_caption(flask_app, '预览', answers, clone_id=clone_id)
+    else:
+        preview_text = _build_answers_block(answers)
+
+    lines = ['📝 <b>请确认以下报告内容（预览）：</b>\n', preview_text]
     if photo_file_id:
         lines.append('\n📷 已附带现场照片')
 
@@ -323,15 +331,23 @@ async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def _show_confirm_from_callback(query, context: ContextTypes.DEFAULT_TYPE):
     """Same as _show_confirm but edits an existing message instead of sending a new one."""
+    flask_app = _get_flask_app(context)
+    clone_id = _get_clone_id(context)
     questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
     raw_answers = context.user_data.get('answers', [])
     photo_file_id = context.user_data.get('photo_file_id')
 
-    lines = ['📝 <b>请确认以下报告内容：</b>\n']
-    for i, q in enumerate(questions):
-        ans = raw_answers[i] if i < len(raw_answers) else ''
-        ans_display = ans if ans else '<i>（已跳过）</i>'
-        lines.append(f'❓ {q["text"]}\n💬 {ans_display}')
+    answers = [
+        {"question": questions[i]["text"], "answer": raw_answers[i]}
+        for i in range(min(len(questions), len(raw_answers)))
+    ]
+
+    if flask_app:
+        preview_text = _build_push_caption(flask_app, '预览', answers, clone_id=clone_id)
+    else:
+        preview_text = _build_answers_block(answers)
+
+    lines = ['📝 <b>请确认以下报告内容（预览）：</b>\n', preview_text]
     if photo_file_id:
         lines.append('\n📷 已附带现场照片')
     else:
@@ -386,11 +402,11 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
     if admin_group_id_str:
         try:
             admin_group_id = int(admin_group_id_str)
-            answers_block = _build_answers_block(answers)
+            template_text = _build_push_caption(flask_app, report_id, answers, clone_id=clone_id)
             caption = (
                 f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
                 f"👤 针对用户 ID：<code>{target_user_id}</code>\n\n"
-                f"{answers_block}\n\n"
+                f"{template_text}\n\n"
                 f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
             )
             keyboard = InlineKeyboardMarkup([
@@ -495,8 +511,7 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not reports:
         await update.message.reply_text(
-            f'📭 该认证用户（{identity}）目前还没有任何历史报告。\n\n'
-            '要不要成为第一个给 TA 写报告的人？'
+            f'📭 该认证用户（{identity}）目前还没有任何历史报告。'
         )
         return
 
@@ -504,7 +519,7 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, r in enumerate(reports, 1):
         date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
         line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'
-        if r.channel_msg_id and channel:
+        if r.channel_msg_id and channel and not r.channel_msg_deleted:
             link = _build_channel_link(channel, r.channel_msg_id)
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
         lines.append(line)
@@ -543,7 +558,48 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('audit_reject_'):
         report_id = int(data.split('audit_reject_')[1])
         action = 'reject'
+    elif data.startswith('audit_delete_channel_'):
+        report_id = int(data.split('audit_delete_channel_')[1])
+        action = 'delete_channel'
     else:
+        return
+
+    loop = asyncio.get_running_loop()
+
+    # Handle channel-message deletion separately (no full report data needed)
+    if action == 'delete_channel':
+        def _get_channel_info():
+            with flask_app.app_context():
+                from app.models import UserReport
+                r = UserReport.query.get(report_id)
+                if r:
+                    return r.channel_msg_id, r.channel_msg_deleted
+                return None, None
+
+        msg_id, already_deleted = await loop.run_in_executor(None, _get_channel_info)
+
+        if already_deleted:
+            await _edit_admin_message(f'ℹ️ 报告 #{report_id} 的频道消息已被删除。')
+            return
+
+        channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
+        if channel and msg_id:
+            try:
+                await query.get_bot().delete_message(chat_id=channel, message_id=msg_id)
+            except Exception as e:
+                logger.warning(f'Failed to delete channel message for report #{report_id}: {e}')
+
+        def _mark_deleted():
+            with flask_app.app_context():
+                from app.models import UserReport
+                from app import db
+                r = UserReport.query.get(report_id)
+                if r:
+                    r.channel_msg_deleted = True
+                    db.session.commit()
+
+        await loop.run_in_executor(None, _mark_deleted)
+        await _edit_admin_message(f'🗑️ 报告 #{report_id} 的频道消息已删除。')
         return
 
     def _get_report():
@@ -575,7 +631,6 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'answers': answers,
             }
 
-    loop = asyncio.get_running_loop()
     report = await loop.run_in_executor(None, _get_report)
 
     if report is None:
@@ -695,8 +750,14 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return awarded
 
     awarded_pts = await loop.run_in_executor(None, _approve, channel_msg_id)
+    delete_keyboard = None
+    if channel_msg_id:
+        delete_keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton('🗑️ 从频道删除', callback_data=f'audit_delete_channel_{report_id}'),
+        ]])
     await _edit_admin_message(
-        f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。'
+        f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。',
+        reply_markup=delete_keyboard,
     )
     submitter_id = report.get('submitter_id')
     if submitter_id:
@@ -761,7 +822,7 @@ def make_report_handlers():
     )
     audit_handler = CallbackQueryHandler(
         audit_callback,
-        pattern=r'^audit_(approve|reject)_\d+$',
+        pattern=r'^audit_(approve|reject|delete_channel)_\d+$',
     )
     return conv, view_handler, audit_handler
 

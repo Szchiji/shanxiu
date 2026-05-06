@@ -500,8 +500,10 @@ def page_select_group():
     if not session.get('logged_in'): return redirect('/core')
     session.pop('current_group_id', None)
     clone_id = session.get('clone_id')
-    groups = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
-    return render_template('select_group.html', groups=groups)
+    all_entries = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
+    groups = [g for g in all_entries if g.type in ('group', 'supergroup')]
+    channels = [g for g in all_entries if g.type == 'channel']
+    return render_template('select_group.html', groups=groups, channels=channels)
 
 @core_bp.route('/group/<int:gid>/dashboard')
 def page_dashboard(gid):
@@ -2232,9 +2234,6 @@ def api_push_user():
             val = p.get(f['key'], '')
             text = text.replace(f"{{{f['label']}}}", str(val))
 
-        # Sanitize HTML before sending to Telegram
-        text = sanitize_html_for_telegram(text)
-
         # Select the correct bot: clone bot for clone groups, main bot otherwise
         if group.clone_id is not None:
             clone_info = bot_clone_manager.active_clones.get(group.clone_id)
@@ -2246,8 +2245,11 @@ def api_push_user():
                 return jsonify({'status': 'error', 'msg': 'Bot not initialized'})
             ptb_app = global_ptb_app
 
-        # Inject report deep-link variables using the correct bot's username
+        # Inject report deep-link variables using the correct bot's username (before sanitization)
         text = _inject_report_links(text, user.tg_id, ptb_app.bot.username)
+
+        # Sanitize HTML before sending to Telegram
+        text = sanitize_html_for_telegram(text)
 
         asyncio.run_coroutine_threadsafe(
             ptb_app.bot.send_message(chat_id=cid, text=text, parse_mode='HTML'),
@@ -10477,38 +10479,40 @@ async def on_my_chat_member(update: Update, context):
         
         print(f"📍 on_my_chat_member: chat={chat.title}, type={chat.type}, new_status={status}, old_status={old_status}")
         
-        if chat.type in ['group', 'supergroup']:
-            # 处理机器人被添加到群组 (从 left/kicked 变为 member/administrator)
+        if chat.type in ['group', 'supergroup', 'channel']:
+            is_channel = chat.type == 'channel'
+            label = '频道' if is_channel else '群组'
+            # 处理机器人被添加到群组/频道 (从 left/kicked 变为 member/administrator)
             if status in ['administrator', 'member'] and old_status in ['left', 'kicked', None]:
                 # 使用全局 App Context
                 with global_flask_app.app_context():
                     g = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                     if not g:
-                        # 新群组，创建记录
+                        # 新群组/频道，创建记录
                         bot_clone_id = context.application.bot_data.get('clone_id')
                         g = BotGroup(chat_id=str(chat.id), title=chat.title, type=chat.type, is_active=True, clone_id=bot_clone_id)
                         g.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
                         db.session.add(g)
                         db.session.commit()
-                        print(f"➕ 新群组注册: {chat.title} (chat_id: {chat.id})")
+                        print(f"➕ 新{label}注册: {chat.title} (chat_id: {chat.id})")
                     else:
-                        # 已存在的群组，确保激活并更新标题
+                        # 已存在的群组/频道，确保激活并更新标题
                         g.is_active = True
                         g.title = chat.title
                         g.type = chat.type
                         db.session.commit()
-                        print(f"🔄 群组已重新激活: {chat.title} (chat_id: {chat.id})")
+                        print(f"🔄 {label}已重新激活: {chat.title} (chat_id: {chat.id})")
                     
-                print(f"✅ 机器人已添加到群组 {chat.title}，群组已注册")
+                print(f"✅ 机器人已添加到{label} {chat.title}，{label}已注册")
             
-            # 处理机器人被移出群组 (从 member/administrator 变为 left/kicked)
+            # 处理机器人被移出群组/频道 (从 member/administrator 变为 left/kicked)
             elif status in ['left', 'kicked'] and old_status in ['administrator', 'member']:
                 with global_flask_app.app_context():
                     g = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                     if g:
                         g.is_active = False
                         db.session.commit()
-                        print(f"⛔️ 机器人已被移出群组 {chat.title}，群组已停用")
+                        print(f"⛔️ 机器人已被移出{label} {chat.title}，{label}已停用")
     except Exception as e:
         import traceback
         print(f"Error in on_my_chat_member: {e}")

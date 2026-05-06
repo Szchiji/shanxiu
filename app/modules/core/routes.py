@@ -5954,6 +5954,9 @@ async def check_timed_group_control(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _get_controls():
             with global_flask_app.app_context():
@@ -5985,8 +5988,13 @@ async def check_timed_group_control(context):
                         group = BotGroup.query.get(control.group_id)
                         if not group:
                             continue
-                        if group.clone_id is not None:
-                            continue
+                        # Only process groups belonging to the current bot instance
+                        if current_clone_id is None:
+                            if group.clone_id is not None:
+                                continue
+                        else:
+                            if group.clone_id != current_clone_id:
+                                continue
                         
                         chat_id = int(group.chat_id)
                         
@@ -6491,6 +6499,9 @@ async def check_channel_subscriptions(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _get_subscription_settings():
             with global_flask_app.app_context():
@@ -6507,8 +6518,13 @@ async def check_channel_subscriptions(context):
                     group = BotGroup.query.get(settings.group_id)
                     if not group:
                         continue
-                    if group.clone_id is not None:
-                        continue
+                    # Only process groups belonging to the current bot instance
+                    if current_clone_id is None:
+                        if group.clone_id is not None:
+                            continue
+                    else:
+                        if group.clone_id != current_clone_id:
+                            continue
                     
                     chat_id = int(group.chat_id)
                     
@@ -6601,11 +6617,21 @@ async def update_member_levels(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _update_levels():
             with global_flask_app.app_context():
-                # Get all users with points
-                user_points_list = UserPoints.query.all()
+                # Get users with points only for groups belonging to the current bot instance
+                if current_clone_id is None:
+                    user_points_list = UserPoints.query.join(
+                        BotGroup, UserPoints.group_id == BotGroup.id
+                    ).filter(BotGroup.clone_id.is_(None)).all()
+                else:
+                    user_points_list = UserPoints.query.join(
+                        BotGroup, UserPoints.group_id == BotGroup.id
+                    ).filter(BotGroup.clone_id == current_clone_id).all()
                 
                 updated_count = 0
                 # Collect (chat_id_str, user_tg_id, permissions_json) for changed users
@@ -6679,6 +6705,9 @@ async def update_lottery_status(context):
         logging.warning("🎲 [状态更新] global_flask_app 未初始化")
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _update_pending_lotteries():
             with global_flask_app.app_context():
@@ -6686,12 +6715,27 @@ async def update_lottery_status(context):
                 db.session.expire_all()
                 
                 now = get_beijing_now()
-                # Find lotteries that should be active now
+                # Find lotteries that should be active now, scoped to current bot's groups
+                # Use a subquery-based approach to avoid JOIN in UPDATE (not supported on all DBs)
+                if current_clone_id is None:
+                    group_ids = [g.id for g in BotGroup.query.filter(BotGroup.clone_id.is_(None)).all()]
+                else:
+                    group_ids = [g.id for g in BotGroup.query.filter(BotGroup.clone_id == current_clone_id).all()]
+                
+                if not group_ids:
+                    return 0
+                
                 updated = GroupLottery.query.filter(
                     GroupLottery.status == 'pending',
                     GroupLottery.start_time != None,
-                    GroupLottery.start_time <= now
-                ).update({'status': 'active'})
+                    GroupLottery.start_time <= now,
+                    GroupLottery.group_id.in_(group_ids)
+                ).update(
+                    {'status': 'active'},
+                    # synchronize_session=False: safe here because we commit immediately
+                    # and no caller holds in-memory references to these lottery objects.
+                    synchronize_session=False
+                )
                 
                 if updated > 0:
                     db.session.commit()
@@ -6711,6 +6755,9 @@ async def run_lottery_draws(context):
         logging.warning("🎲 [抽奖任务] global_flask_app 未初始化")
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _get_active_lottery_ids():
             with global_flask_app.app_context():
@@ -6718,16 +6765,29 @@ async def run_lottery_draws(context):
                 db.session.expire_all()
                 
                 now = get_beijing_now()
-                # Find lotteries that have ended but not yet drawn
+                # Find lotteries that have ended but not yet drawn, scoped to current bot's groups
                 # Query both pending and active status to handle edge cases where:
                 # 1. Lottery goes from pending directly to end_time without status update task running first
                 # 2. Status update task hasn't run yet but end_time has been reached
                 # Return only IDs to avoid detached object issues
-                lotteries = GroupLottery.query.filter(
-                    GroupLottery.status.in_(['pending', 'active']),
-                    GroupLottery.end_time != None,
-                    GroupLottery.end_time <= now
-                ).all()
+                if current_clone_id is None:
+                    lotteries = GroupLottery.query.join(
+                        BotGroup, GroupLottery.group_id == BotGroup.id
+                    ).filter(
+                        GroupLottery.status.in_(['pending', 'active']),
+                        GroupLottery.end_time != None,
+                        GroupLottery.end_time <= now,
+                        BotGroup.clone_id.is_(None)
+                    ).all()
+                else:
+                    lotteries = GroupLottery.query.join(
+                        BotGroup, GroupLottery.group_id == BotGroup.id
+                    ).filter(
+                        GroupLottery.status.in_(['pending', 'active']),
+                        GroupLottery.end_time != None,
+                        GroupLottery.end_time <= now,
+                        BotGroup.clone_id == current_clone_id
+                    ).all()
                 lottery_ids = [lottery.id for lottery in lotteries]
                 if lottery_ids:
                     logging.info(f"🎲 [抽奖任务] 发现 {len(lottery_ids)} 个需要开奖的抽奖活动: {lottery_ids}")
@@ -8390,6 +8450,13 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=60)
     app.job_queue.run_repeating(check_inactive_users, interval=86400, first=120)  # Check inactive users daily
+    app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)
+    app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)
+    app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)
+    app.job_queue.run_repeating(update_lottery_status, interval=60, first=45)
+    app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)
+    app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)
+    app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)
 
 
 async def start_all_clone_bots(flask_app):
@@ -9453,6 +9520,9 @@ async def check_auction_expiration(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _get_expired_auctions():
             with global_flask_app.app_context():
@@ -9475,8 +9545,13 @@ async def check_auction_expiration(context):
                     group = BotGroup.query.get(auction.group_id)
                     if not group:
                         continue
-                    if group.clone_id is not None:
-                        continue
+                    # Only process groups belonging to the current bot instance
+                    if current_clone_id is None:
+                        if group.clone_id is not None:
+                            continue
+                    else:
+                        if group.clone_id != current_clone_id:
+                            continue
                     
                     chat_id = int(group.chat_id)
                     
@@ -9528,6 +9603,9 @@ async def check_redpacket_expiration(context):
     if not global_flask_app:
         return
     
+    # Determine which clone this job is running for (None = main bot)
+    current_clone_id = context.application.bot_data.get('clone_id')
+    
     try:
         def _get_expired_packets():
             with global_flask_app.app_context():
@@ -9547,34 +9625,43 @@ async def check_redpacket_expiration(context):
                     packet = RedPacket.query.get(packet_id)
                     if not packet or packet.status != 'active':
                         continue
+                    
+                    group = BotGroup.query.get(packet.group_id)
+                    # Only process groups belonging to the current bot instance;
+                    # skip entirely so the correct bot handles expiry + refund.
+                    if current_clone_id is None:
+                        if group is None or group.clone_id is not None:
+                            continue
+                    else:
+                        if group is None or group.clone_id != current_clone_id:
+                            continue
+                    
                     # Refund remaining points to creator
                     if packet.remaining_points > 0:
-                        group = BotGroup.query.get(packet.group_id)
-                        if group and group.clone_id is None:
-                            user_points = UserPoints.query.filter_by(
-                                group_id=group.id,
-                                user_id=packet.creator_id
-                            ).first()
-                            
-                            if not user_points:
-                                user_points = UserPoints(
-                                    group_id=group.id,
-                                    user_id=packet.creator_id,
-                                    points_balance=0
-                                )
-                                db.session.add(user_points)
-                            
-                            user_points.points_balance += packet.remaining_points
-                            
-                            # Log the refund
-                            log = PointsLog(
+                        user_points = UserPoints.query.filter_by(
+                            group_id=group.id,
+                            user_id=packet.creator_id
+                        ).first()
+                        
+                        if not user_points:
+                            user_points = UserPoints(
                                 group_id=group.id,
                                 user_id=packet.creator_id,
-                                points_change=packet.remaining_points,
-                                reason="红包过期退款",
-                                balance_after=user_points.points_balance
+                                points_balance=0
                             )
-                            db.session.add(log)
+                            db.session.add(user_points)
+                        
+                        user_points.points_balance += packet.remaining_points
+                        
+                        # Log the refund
+                        log = PointsLog(
+                            group_id=group.id,
+                            user_id=packet.creator_id,
+                            points_change=packet.remaining_points,
+                            reason="红包过期退款",
+                            balance_after=user_points.points_balance
+                        )
+                        db.session.add(log)
                     
                     # Update packet status
                     packet.status = 'expired'
@@ -10218,14 +10305,16 @@ async def cmd_start(update: Update, context):
                     }
                 
                 # Check if this user has any expired memberships in groups
+                # Only check groups belonging to the current bot instance
                 now = get_beijing_now()
                 expired_memberships = GroupUser.query.options(
                     joinedload(GroupUser.group)
-                ).filter(
+                ).join(BotGroup, GroupUser.group_id == BotGroup.id).filter(
                     GroupUser.tg_id == user_id,
                     GroupUser.expiration_date.isnot(None),
                     GroupUser.expiration_date < now,
-                    GroupUser.is_banned == False
+                    GroupUser.is_banned == False,
+                    BotGroup.clone_id == bot_clone_id
                 ).all()
                 
                 # Collect expired memberships to process

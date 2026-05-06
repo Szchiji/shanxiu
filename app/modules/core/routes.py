@@ -7296,6 +7296,15 @@ async def update_user_activity(update: Update, context):
                 
                 if group_user:
                     group_user.last_activity = datetime.now()
+                    # Persist Telegram username so @username lookups work reliably
+                    if user.username:
+                        try:
+                            pd = json.loads(group_user.profile_data or '{}')
+                            if pd.get('tg_username') != user.username:
+                                pd['tg_username'] = user.username
+                                group_user.profile_data = json.dumps(pd, ensure_ascii=False)
+                        except Exception:
+                            pass
                     db.session.commit()
         
         await asyncio.get_running_loop().run_in_executor(None, _update_activity)

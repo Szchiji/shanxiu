@@ -172,7 +172,7 @@ def _format_user_identity(user_id, member=None, from_user=None) -> str:
         first_name = member.first_name or ''
         last_name = member.last_name or ''
         username = member.username
-    if first_name is not None:
+    if first_name:
         name = ' '.join(filter(None, [first_name, last_name]))
         if name:
             parts.append(name)
@@ -823,7 +823,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 私聊"写报告"入口 – 用户输入"写报告"后由机器人引导输入被举报人
+# 私聊"写报告"入口 – 用户输入"写报告"后由机器人引导输入被提交人
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def report_start_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -834,7 +834,7 @@ async def report_start_by_text(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     await update.message.reply_text(
-        '📝 请发送被举报人的用户名或 ID，例如：\n'
+        '📝 请发送被提交人的用户名或 ID，例如：\n'
         '  • <code>@zhangsan</code>\n'
         '  • <code>123456789</code>\n\n'
         '发送 /cancel 可取消。',
@@ -904,7 +904,7 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
     identity = _format_user_identity(target_user_id, member=member)
     total = len(questions)
     await update.message.reply_text(
-        f'✅ 已找到被举报人：{identity}\n\n'
+        f'✅ 已找到被提交人：{identity}\n\n'
         f'📝 开始填写报告（共{total}步）\n\n'
         + _prompt_for_question(questions, 0, total),
         parse_mode='HTML',

@@ -28,6 +28,13 @@ _DEFAULT_QUESTIONS = [
 ]
 
 
+def _scoped_key(key: str, clone_id) -> str:
+    """Return a clone-scoped config key, or the bare key for the main bot."""
+    if clone_id:
+        return f'clone_{clone_id}_{key}'
+    return key
+
+
 @report_admin_bp.context_processor
 def inject_context():
     """Provide the same template context as core_bp so base.html renders correctly."""
@@ -47,15 +54,17 @@ def report_settings():
     if not session.get('logged_in'):
         return redirect('/core/')
 
+    clone_id = session.get('clone_id')
+
     if request.method == 'POST':
         # Save simple text config keys
         for key in _SIMPLE_CONFIG_KEYS:
             val = request.form.get(key, '').strip()
-            SystemConfig.set_value(key, val)
+            SystemConfig.set_value(_scoped_key(key, clone_id), val)
 
         # Save push media toggle (checkbox: present = true, absent = false)
         push_media = 'true' if request.form.get('report_push_media') else 'false'
-        SystemConfig.set_value('report_push_media', push_media)
+        SystemConfig.set_value(_scoped_key('report_push_media', clone_id), push_media)
 
         # Save dynamic questions submitted as serialised JSON from the form
         questions_raw = request.form.get('questions_json', '[]')
@@ -73,17 +82,20 @@ def report_settings():
             ]
         except (ValueError, TypeError):
             questions = _DEFAULT_QUESTIONS
-        SystemConfig.set_value('report_questions', json.dumps(questions, ensure_ascii=False))
+        SystemConfig.set_value(_scoped_key('report_questions', clone_id),
+                               json.dumps(questions, ensure_ascii=False))
 
         db.session.commit()
         flash('✅ 系统配置已保存！')
         return redirect(url_for('report_admin.report_settings'))
 
     # GET – load current settings
-    current = {k: SystemConfig.get_value(k, _DEFAULTS.get(k, '')) for k in _SIMPLE_CONFIG_KEYS}
-    current['report_push_media'] = SystemConfig.get_value('report_push_media', _DEFAULTS['report_push_media'])
+    current = {k: SystemConfig.get_value(_scoped_key(k, clone_id), _DEFAULTS.get(k, ''))
+               for k in _SIMPLE_CONFIG_KEYS}
+    current['report_push_media'] = SystemConfig.get_value(
+        _scoped_key('report_push_media', clone_id), _DEFAULTS['report_push_media'])
 
-    questions_json = SystemConfig.get_value('report_questions', '')
+    questions_json = SystemConfig.get_value(_scoped_key('report_questions', clone_id), '')
     try:
         questions = json.loads(questions_json) if questions_json else _DEFAULT_QUESTIONS
     except (ValueError, TypeError):

@@ -65,15 +65,27 @@ def _get_flask_app(context: ContextTypes.DEFAULT_TYPE):
     return context.application.bot_data.get('flask_app')
 
 
-def _db_get_config(flask_app, key: str, default: str = '') -> str:
+def _get_clone_id(context: ContextTypes.DEFAULT_TYPE):
+    """Return the clone_id for the running bot (None for the main bot)."""
+    return context.application.bot_data.get('clone_id')
+
+
+def _scoped_key(key: str, clone_id) -> str:
+    """Return a clone-scoped config key, or the bare key for the main bot."""
+    if clone_id:
+        return f'clone_{clone_id}_{key}'
+    return key
+
+
+def _db_get_config(flask_app, key: str, default: str = '', clone_id=None) -> str:
     with flask_app.app_context():
         from app.models import SystemConfig
-        return SystemConfig.get_value(key, default)
+        return SystemConfig.get_value(_scoped_key(key, clone_id), default)
 
 
-def _load_questions(flask_app) -> list:
+def _load_questions(flask_app, clone_id=None) -> list:
     """Return the configured question list, falling back to defaults."""
-    raw = _db_get_config(flask_app, 'report_questions', '')
+    raw = _db_get_config(flask_app, 'report_questions', '', clone_id=clone_id)
     try:
         qs = json.loads(raw) if raw else _DEFAULT_QUESTIONS
         return qs if qs else _DEFAULT_QUESTIONS
@@ -81,9 +93,9 @@ def _load_questions(flask_app) -> list:
         return _DEFAULT_QUESTIONS
 
 
-def _push_media_enabled(flask_app) -> bool:
+def _push_media_enabled(flask_app, clone_id=None) -> bool:
     """Return True if channel push should include the photo."""
-    val = _db_get_config(flask_app, 'report_push_media', 'true')
+    val = _db_get_config(flask_app, 'report_push_media', 'true', clone_id=clone_id)
     return val.lower() != 'false'
 
 
@@ -97,7 +109,7 @@ def _build_answers_block(answers: list) -> str:
     return '\n\n'.join(lines)
 
 
-def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
+def _build_push_caption(flask_app, report_id: int, answers: list, clone_id=None) -> str:
     """Build the channel-push caption from the configured template.
 
     Supported placeholders:
@@ -109,6 +121,7 @@ def _build_push_caption(flask_app, report_id: int, answers: list) -> str:
         flask_app,
         'report_push_template',
         '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
+        clone_id=clone_id,
     )
     answers_block = _build_answers_block(answers)
     result = template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
@@ -130,9 +143,9 @@ def _prompt_for_question(questions: list, idx: int, total: int) -> str:
     return text
 
 
-def _get_photo_prompt(flask_app) -> str:
+def _get_photo_prompt(flask_app, clone_id=None) -> str:
     """Return the configured photo-step prompt text."""
-    return _db_get_config(flask_app, 'report_photo_prompt', _DEFAULT_PHOTO_PROMPT)
+    return _db_get_config(flask_app, 'report_photo_prompt', _DEFAULT_PHOTO_PROMPT, clone_id=clone_id)
 
 
 def _build_channel_link(channel: str, msg_id: int) -> str:
@@ -177,7 +190,8 @@ async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return ConversationHandler.END
 
-    questions = _load_questions(flask_app)
+    clone_id = _get_clone_id(context)
+    questions = _load_questions(flask_app, clone_id=clone_id)
     context.user_data['questions'] = questions
     context.user_data['answers'] = []
     context.user_data['current_q_idx'] = 0
@@ -215,8 +229,9 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
         return STEP_QUESTION
 
     # All questions answered – check if photo is needed
-    if flask_app and _push_media_enabled(flask_app):
-        photo_prompt = _get_photo_prompt(flask_app)
+    clone_id = _get_clone_id(context)
+    if flask_app and _push_media_enabled(flask_app, clone_id=clone_id):
+        photo_prompt = _get_photo_prompt(flask_app, clone_id=clone_id)
         await update.message.reply_text(f'第{total + 1}步：{photo_prompt}')
         return STEP_PHOTO
 
@@ -327,6 +342,7 @@ async def _show_confirm_from_callback(query, context: ContextTypes.DEFAULT_TYPE)
 async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TYPE, photo_file_id):
     """Like _save_and_notify but called from a CallbackQuery (no update.message)."""
     flask_app = _get_flask_app(context)
+    clone_id = _get_clone_id(context)
     questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
     raw_answers = context.user_data.get('answers', [])
 
@@ -360,7 +376,7 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
     report_id = await loop.run_in_executor(None, _save)
 
     # Notify admin group
-    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '')
+    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '', clone_id=clone_id)
     if admin_group_id_str:
         try:
             admin_group_id = int(admin_group_id_str)
@@ -436,13 +452,15 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return
 
+    clone_id = _get_clone_id(context)
+
     def _get_reports():
         with flask_app.app_context():
             from app.models import UserReport, SystemConfig, GroupMember
             reports = UserReport.query.filter_by(
                 user_id=target_user_id, status='approved'
             ).order_by(UserReport.created_at.desc()).all()
-            channel = SystemConfig.get_value('report_channel', '')
+            channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
             member = GroupMember.query.filter_by(user_id=target_user_id).first()
             return reports, channel, member
 
@@ -492,6 +510,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ''
     flask_app = _get_flask_app(context)
+    clone_id = _get_clone_id(context)
 
     # Helper: edit the admin-group message regardless of whether it is a photo
     # message (has caption) or a plain text message.
@@ -586,10 +605,10 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # approve – build caption from template
-    channel = _db_get_config(flask_app, 'report_channel', '')
+    channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
     channel_msg_id = None
-    push_media = _push_media_enabled(flask_app)
-    caption = _build_push_caption(flask_app, report_id, report['answers'])
+    push_media = _push_media_enabled(flask_app, clone_id=clone_id)
+    caption = _build_push_caption(flask_app, report_id, report['answers'], clone_id=clone_id)
 
     if channel:
         try:
@@ -625,13 +644,15 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Award points to the submitter if configured
             reward_pts = 0
             try:
-                reward_pts = int(SystemConfig.get_value('report_approval_points', '0') or '0')
+                reward_pts = int(SystemConfig.get_value(
+                    _scoped_key('report_approval_points', clone_id), '0') or '0')
             except (ValueError, TypeError):
                 reward_pts = 0
 
             awarded = 0
             if reward_pts > 0 and report.get('submitter_id'):
-                group_chat_id = SystemConfig.get_value('report_points_group_id', '').strip()
+                group_chat_id = SystemConfig.get_value(
+                    _scoped_key('report_points_group_id', clone_id), '').strip()
                 target_group = None
                 if group_chat_id:
                     target_group = BotGroup.query.filter_by(chat_id=group_chat_id).first()
@@ -668,7 +689,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     submitter_id = report.get('submitter_id')
     if submitter_id:
         try:
-            channel = _db_get_config(flask_app, 'report_channel', '')
+            channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
             msg = f'🎉 您提交的报告 #{report_id} 已审核通过'
             if channel_msg_id and channel:
                 link = _build_channel_link(channel, channel_msg_id)

@@ -40,7 +40,7 @@ from telegram.ext import (
 logger = logging.getLogger(__name__)
 
 # Conversation states
-STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM = range(3)
+STEP_QUESTION, STEP_PHOTO, STEP_CONFIRM, STEP_TARGET = range(4)
 
 # Key used to store the target user_id inside conversation user_data
 _TARGET_KEY = '_report_target_user_id'
@@ -152,6 +152,34 @@ def _prompt_for_question(questions: list, idx: int, total: int) -> str:
 def _get_photo_prompt(flask_app, clone_id=None) -> str:
     """Return the configured photo-step prompt text."""
     return _db_get_config(flask_app, 'report_photo_prompt', _DEFAULT_PHOTO_PROMPT, clone_id=clone_id)
+
+
+def _format_user_identity(user_id, member=None, from_user=None) -> str:
+    """Return a rich identity string: 昵称 @username ｜ ID: xxx
+
+    Args:
+        user_id: Telegram numeric user ID (always included).
+        member: GroupMember ORM row (used if from_user is None).
+        from_user: Live Telegram User object (takes priority over member).
+    """
+    parts = []
+    first_name = last_name = username = None
+    if from_user is not None:
+        first_name = from_user.first_name or ''
+        last_name = from_user.last_name or ''
+        username = from_user.username
+    elif member is not None:
+        first_name = member.first_name or ''
+        last_name = member.last_name or ''
+        username = member.username
+    if first_name:
+        name = ' '.join(filter(None, [first_name, last_name]))
+        if name:
+            parts.append(name)
+    if username:
+        parts.append(f'@{username}')
+    parts.append(f'ID: <code>{user_id}</code>')
+    return ' ｜ '.join(parts)
 
 
 def _build_channel_link(channel: str, msg_id: int) -> str:
@@ -378,7 +406,7 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
 
     def _save():
         with flask_app.app_context():
-            from app.models import UserReport
+            from app.models import UserReport, GroupMember
             from app import db
             r = UserReport(
                 user_id=target_user_id,
@@ -392,10 +420,12 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
             )
             db.session.add(r)
             db.session.commit()
-            return r.id
+            # Load GroupMember for the target user to enrich the admin notification
+            target_member = GroupMember.query.filter_by(user_id=target_user_id).first()
+            return r.id, target_member
 
     loop = asyncio.get_running_loop()
-    report_id = await loop.run_in_executor(None, _save)
+    report_id, target_member = await loop.run_in_executor(None, _save)
 
     # Notify admin group
     admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '', clone_id=clone_id)
@@ -403,11 +433,13 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
         try:
             admin_group_id = int(admin_group_id_str)
             template_text = _build_push_caption(flask_app, report_id, answers, clone_id=clone_id)
+            target_identity = _format_user_identity(target_user_id, member=target_member)
+            submitter_identity = _format_user_identity(submitter_id, from_user=query.from_user)
             caption = (
                 f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
-                f"👤 针对用户 ID：<code>{target_user_id}</code>\n\n"
-                f"{template_text}\n\n"
-                f"提交者：<a href='tg://user?id={submitter_id}'>{submitter_id}</a>"
+                f"👤 被提交人：{target_identity}\n"
+                f"📤 提交人：{submitter_identity}\n\n"
+                f"{template_text}"
             )
             keyboard = InlineKeyboardMarkup([
                 [
@@ -604,7 +636,7 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_report():
         with flask_app.app_context():
-            from app.models import UserReport
+            from app.models import UserReport, GroupMember
             r = UserReport.query.get(report_id)
             if r is None:
                 return None
@@ -622,6 +654,11 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     answers.append({"question": "故障现象", "answer": r.fault_desc})
                 if r.process_result:
                     answers.append({"question": "处理结果", "answer": r.process_result})
+            # Load member info for both users in a single query to enrich audit/channel messages
+            user_ids = list(filter(None, {r.user_id, r.submitter_id}))
+            members = {m.user_id: m for m in GroupMember.query.filter(GroupMember.user_id.in_(user_ids)).all()}
+            target_identity = _format_user_identity(r.user_id, member=members.get(r.user_id))
+            submitter_identity = _format_user_identity(r.submitter_id, member=members.get(r.submitter_id)) if r.submitter_id else None
             return {
                 'id': r.id,
                 'user_id': r.user_id,
@@ -629,6 +666,8 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'photo_file_id': r.photo_file_id,
                 'status': r.status,
                 'answers': answers,
+                'target_identity': target_identity,
+                'submitter_identity': submitter_identity,
             }
 
     report = await loop.run_in_executor(None, _get_report)
@@ -675,7 +714,12 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
     channel_msg_id = None
     push_media = _push_media_enabled(flask_app, clone_id=clone_id)
-    caption = _build_push_caption(flask_app, report_id, report['answers'], clone_id=clone_id)
+    template_caption = _build_push_caption(flask_app, report_id, report['answers'], clone_id=clone_id)
+    # Prepend target/submitter identity to the channel push so readers see who is involved
+    identity_header = f"👤 被提交人：{report['target_identity']}"
+    if report.get('submitter_identity'):
+        identity_header += f"\n📤 提交人：{report['submitter_identity']}"
+    caption = f"{identity_header}\n\n{template_caption}"
 
     if channel:
         try:
@@ -779,6 +823,96 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 私聊"写报告"入口 – 用户输入"写报告"后由机器人引导输入被提交人
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def report_start_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point: user sends '写报告' in a private chat."""
+    flask_app = _get_flask_app(context)
+    if flask_app is None:
+        await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        '📝 请发送被提交人的用户名或 ID，例如：\n'
+        '  • <code>@zhangsan</code>\n'
+        '  • <code>123456789</code>\n\n'
+        '发送 /cancel 可取消。',
+        parse_mode='HTML',
+    )
+    return STEP_TARGET
+
+
+async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive @username or numeric user_id, look up GroupMember, then start questions."""
+    text = (update.message.text or '').strip()
+
+    flask_app = _get_flask_app(context)
+    if flask_app is None:
+        await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
+        return ConversationHandler.END
+
+    # Parse input: "@username" → strip @; plain digits → int
+    lookup_username = None
+    lookup_user_id = None
+    if text.startswith('@'):
+        lookup_username = text[1:].strip()
+    elif text.lstrip('-').isdigit():
+        try:
+            lookup_user_id = int(text)
+        except ValueError:
+            pass
+
+    if not lookup_username and lookup_user_id is None:
+        await update.message.reply_text(
+            '⚠️ 格式不正确，请发送用户名（如 @zhangsan）或数字 ID（如 123456789）。'
+        )
+        return STEP_TARGET
+
+    def _find_member():
+        with flask_app.app_context():
+            from app.models import GroupMember
+            from sqlalchemy import func
+            if lookup_user_id is not None:
+                return GroupMember.query.filter_by(user_id=lookup_user_id).first()
+            # Username lookup – case-insensitive
+            return GroupMember.query.filter(
+                func.lower(GroupMember.username) == lookup_username.lower()
+            ).first()
+
+    loop = asyncio.get_running_loop()
+    member = await loop.run_in_executor(None, _find_member)
+
+    if member is None:
+        hint = f'@{lookup_username}' if lookup_username else str(lookup_user_id)
+        await update.message.reply_text(
+            f'❌ 未找到用户 {hint}，请确认用户名或 ID 正确，然后重新发送。\n\n'
+            '发送 /cancel 可取消。'
+        )
+        return STEP_TARGET
+
+    target_user_id = member.user_id
+    context.user_data[_TARGET_KEY] = target_user_id
+
+    clone_id = _get_clone_id(context)
+    questions = _load_questions(flask_app, clone_id=clone_id)
+    context.user_data['questions'] = questions
+    context.user_data['answers'] = []
+    context.user_data['current_q_idx'] = 0
+
+    # Show who we found before starting questions
+    identity = _format_user_identity(target_user_id, member=member)
+    total = len(questions)
+    await update.message.reply_text(
+        f'✅ 已找到被提交人：{identity}\n\n'
+        f'📝 开始填写报告（共{total}步）\n\n'
+        + _prompt_for_question(questions, 0, total),
+        parse_mode='HTML',
+    )
+    return STEP_QUESTION
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Handler factory – call this for every Application that needs report handlers
 # (main bot AND each clone bot).  Each Application must receive its *own*
 # handler instances; sharing a single ConversationHandler object across
@@ -793,9 +927,14 @@ def make_report_handlers():
             MessageHandler(
                 filters.Regex(r'^/start report_\d+') & filters.ChatType.PRIVATE,
                 report_start,
-            )
+            ),
+            MessageHandler(
+                filters.Regex(r'^写报告$') & filters.ChatType.PRIVATE,
+                report_start_by_text,
+            ),
         ],
         states={
+            STEP_TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_receive_target)],
             STEP_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_step_question)],
             STEP_PHOTO: [
                 MessageHandler(filters.PHOTO | filters.Document.IMAGE, report_step_photo),

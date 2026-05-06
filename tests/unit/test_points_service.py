@@ -11,6 +11,8 @@ from app.services.points_service import (
     award_points,
     deduct_points,
     apply_points_change,
+    can_earn_more_today,
+    clamp_award_to_daily_cap,
     InsufficientPointsError,
 )
 
@@ -97,3 +99,57 @@ class TestApplyPointsChange:
 
     def test_exact_deduction_to_zero(self):
         assert apply_points_change(100, -100) == 0
+
+
+# ---------------------------------------------------------------------------
+# can_earn_more_today
+# ---------------------------------------------------------------------------
+
+class TestCanEarnMoreToday:
+    def test_no_cap_always_true(self):
+        assert can_earn_more_today(0, None) is True
+        assert can_earn_more_today(9999, None) is True
+
+    def test_zero_cap_always_false(self):
+        assert can_earn_more_today(0, 0) is False
+
+    def test_under_cap_returns_true(self):
+        assert can_earn_more_today(30, 50) is True
+
+    def test_at_cap_returns_false(self):
+        assert can_earn_more_today(50, 50) is False
+
+    def test_over_cap_returns_false(self):
+        assert can_earn_more_today(60, 50) is False
+
+    def test_negative_cap_returns_false(self):
+        assert can_earn_more_today(0, -1) is False
+
+
+# ---------------------------------------------------------------------------
+# clamp_award_to_daily_cap
+# ---------------------------------------------------------------------------
+
+class TestClampAwardToDailyCap:
+    def test_no_cap_returns_full_amount(self):
+        assert clamp_award_to_daily_cap(10, 0, None) == 10
+        assert clamp_award_to_daily_cap(10, 999, None) == 10
+
+    def test_cap_not_reached_returns_full_amount(self):
+        assert clamp_award_to_daily_cap(10, 30, 50) == 10
+
+    def test_partial_cap_remaining(self):
+        # 45 earned today, cap=50 → can still earn 5 of the requested 10
+        assert clamp_award_to_daily_cap(10, 45, 50) == 5
+
+    def test_cap_already_reached_returns_zero(self):
+        assert clamp_award_to_daily_cap(10, 50, 50) == 0
+
+    def test_cap_exceeded_returns_zero(self):
+        assert clamp_award_to_daily_cap(10, 60, 50) == 0
+
+    def test_exactly_fills_cap(self):
+        assert clamp_award_to_daily_cap(10, 40, 50) == 10
+
+    def test_amount_capped_at_exact_remaining(self):
+        assert clamp_award_to_daily_cap(100, 48, 50) == 2

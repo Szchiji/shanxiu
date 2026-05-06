@@ -4921,15 +4921,37 @@ def logout():
 # 🤖 机器人逻辑 (核心)
 # =======================
 
+def _get_bot_for_clone(clone_id, default_bot):
+    """Return the correct Telegram Bot instance for a group.
+
+    All periodic background jobs run on the main bot's scheduler.  For groups
+    that belong to a clone bot (clone_id is not None) we must use the clone's
+    own Bot object, because only that bot is a member of those groups.
+
+    Args:
+        clone_id: BotGroup.clone_id (None = main bot's group)
+        default_bot: context.bot from the scheduler job (main bot)
+
+    Returns:
+        The Bot to use for Telegram API calls, or None if the clone is
+        registered but not currently running (caller should skip the group).
+    """
+    if clone_id is None:
+        return default_bot
+    clone_info = bot_clone_manager.active_clones.get(clone_id)
+    if clone_info:
+        return clone_info['app'].bot
+    # Clone is configured but not currently running — skip to avoid sending
+    # messages from the wrong bot or raising untimely Telegram errors.
+    return None
+
+
 async def check_expired_users(context):
     """
     Periodic job to check for expired users and mute them in groups
     """
     if not global_flask_app:
         return
-    
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
     
     def _sync_check():
         with global_flask_app.app_context():
@@ -4948,19 +4970,11 @@ async def check_expired_users(context):
                 if expired_users:
                     print(f"🔍 Found {len(expired_users)} expired users to ban (batch limit: {EXPIRED_USERS_BATCH_SIZE})", flush=True)
                 
-                # Collect users to ban and prepare async operations
-                # Also retrieve configurations here to avoid repeated context creation
+                # Collect users to ban across ALL groups (main + clone)
                 users_to_ban = []
                 for user in expired_users:
                     if not user.group or not user.group.is_active:
                         continue
-                    # Only process groups belonging to the current bot instance
-                    if current_clone_id is None:
-                        if user.group.clone_id is not None:
-                            continue
-                    else:
-                        if user.group.clone_id != current_clone_id:
-                            continue
                     # Get configuration in sync context
                     conf = get_group_conf(user.group)
                     ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
@@ -4980,7 +4994,8 @@ async def check_expired_users(context):
                         'group_id': group.id,
                         'group_user_id': user.id,  # Store user.id to update database later
                         'group_title': group.title,
-                        'ban_msg': ban_msg
+                        'ban_msg': ban_msg,
+                        'clone_id': group.clone_id,  # which bot to use for Telegram API calls
                     })
                 print(f"📦 [定时任务] Extracted data for {len(users_data)} users to ban", flush=True)
                 
@@ -5029,6 +5044,12 @@ async def check_expired_users(context):
         group_title = user_data['group_title']
         ban_msg = user_data['ban_msg']
         
+        # Use the bot that owns the group (main or clone)
+        bot = _get_bot_for_clone(user_data.get('clone_id'), context.bot)
+        if bot is None:
+            print(f"⏭️ [定时任务] 跳过群组 {group_title}：对应克隆机器人未运行", flush=True)
+            return
+        
         print(f"🔧 [定时任务] ban_user_async CALLED for user {user_tg_id} in group {group_title}", flush=True)
         try:
             # Convert chat_id to integer for Telegram API
@@ -5039,7 +5060,7 @@ async def check_expired_users(context):
             
             # Mute the user in the group with comprehensive restrictions
             try:
-                await context.bot.restrict_chat_member(
+                await bot.restrict_chat_member(
                     chat_id=chat_id_int,
                     user_id=user_tg_id,
                     permissions=get_muted_permissions()
@@ -5067,7 +5088,7 @@ async def check_expired_users(context):
             try:
                 # Sanitize HTML before sending to Telegram
                 sanitized_msg = sanitize_html_for_telegram(ban_msg)
-                await context.bot.send_message(
+                await bot.send_message(
                     chat_id=user_tg_id,
                     text=sanitized_msg,
                     parse_mode='HTML'
@@ -5109,9 +5130,6 @@ async def check_scheduled_messages(context):
     if not global_flask_app:
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     def _sync_check():
         with global_flask_app.app_context():
             try:
@@ -5133,16 +5151,6 @@ async def check_scheduled_messages(context):
                     # 检查群组是否活跃
                     if not msg.group or not msg.group.is_active:
                         continue
-                    
-                    # Only process groups belonging to the current bot instance
-                    if current_clone_id is None:
-                        # Main bot: only handle groups not associated with any clone
-                        if msg.group.clone_id is not None:
-                            continue
-                    else:
-                        # Clone bot: only handle groups for this clone
-                        if msg.group.clone_id != current_clone_id:
-                            continue
                     
                     # 检查模块是否启用
                     conf = get_group_conf(msg.group)
@@ -5173,6 +5181,7 @@ async def check_scheduled_messages(context):
                         messages_to_send.append({
                             'id': msg.id,
                             'chat_id': msg.group.chat_id,
+                            'clone_id': msg.group.clone_id,  # which bot to use
                             'media_type': msg.media_type,
                             'media_url': msg.media_url,
                             'content': msg.content,
@@ -5235,6 +5244,12 @@ async def check_scheduled_messages(context):
             chat_id = msg_data['chat_id']
             message_thread_id = msg_data.get('message_thread_id')
 
+            # Resolve which bot should send to this group
+            bot = _get_bot_for_clone(msg_data.get('clone_id'), context.bot)
+            if bot is None:
+                print(f"⏭️ 跳过消息 {msg_data['id']}：对应克隆机器人未运行", flush=True)
+                continue
+
             # Atomically claim the message before sending.
             # If another scheduler instance already claimed it (last_sent_at changed),
             # skip to prevent duplicate delivery.
@@ -5248,7 +5263,7 @@ async def check_scheduled_messages(context):
             # 如果需要删除上一条消息
             if msg_data['delete_previous'] and msg_data['last_message_id']:
                 try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=msg_data['last_message_id'])
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_data['last_message_id'])
                 except Exception as e:
                     print(f"Failed to delete previous message: {e}")
             
@@ -5284,7 +5299,7 @@ async def check_scheduled_messages(context):
                     copy_kwargs['caption'] = content
                     copy_kwargs['parse_mode'] = 'HTML'
                 try:
-                    sent_message = await context.bot.copy_message(**copy_kwargs)
+                    sent_message = await bot.copy_message(**copy_kwargs)
                 except Exception as copy_err:
                     print(f"⚠️ copy_message 失败，尝试 forward_message: {copy_err}", flush=True)
                     # Fallback 1: forward_message (shows "Forwarded from" header)
@@ -5296,12 +5311,12 @@ async def check_scheduled_messages(context):
                     if message_thread_id:
                         fwd_kwargs['message_thread_id'] = message_thread_id
                     try:
-                        sent_message = await context.bot.forward_message(**fwd_kwargs)
+                        sent_message = await bot.forward_message(**fwd_kwargs)
                     except Exception as fwd_err:
                         print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
                         # Fallback 2: send link as text with preview so recipients can open it
                         fallback_text = f"{content}\n{media_url}" if content else media_url
-                        sent_message = await context.bot.send_message(
+                        sent_message = await bot.send_message(
                             chat_id=chat_id,
                             text=fallback_text,
                             parse_mode='HTML',
@@ -5309,7 +5324,7 @@ async def check_scheduled_messages(context):
                             **({'message_thread_id': message_thread_id} if message_thread_id else {})
                         )
             elif msg_data['media_type'] == 'image' and media_url:
-                sent_message = await context.bot.send_photo(
+                sent_message = await bot.send_photo(
                     chat_id=chat_id,
                     photo=media_url,
                     caption=content if content else None,
@@ -5318,7 +5333,7 @@ async def check_scheduled_messages(context):
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif msg_data['media_type'] == 'video' and media_url:
-                sent_message = await context.bot.send_video(
+                sent_message = await bot.send_video(
                     chat_id=chat_id,
                     video=media_url,
                     caption=content if content else None,
@@ -5327,7 +5342,7 @@ async def check_scheduled_messages(context):
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
             elif content:
-                sent_message = await context.bot.send_message(
+                sent_message = await bot.send_message(
                     chat_id=chat_id,
                     text=content,
                     parse_mode='HTML',
@@ -5357,7 +5372,7 @@ async def check_scheduled_messages(context):
                 # 自动置顶
                 if msg_data.get('auto_pin'):
                     try:
-                        await context.bot.pin_chat_message(
+                        await bot.pin_chat_message(
                             chat_id=chat_id,
                             message_id=sent_message.message_id,
                             disable_notification=True
@@ -5964,9 +5979,6 @@ async def check_timed_group_control(context):
     if not global_flask_app:
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _get_controls():
             with global_flask_app.app_context():
@@ -5993,57 +6005,50 @@ async def check_timed_group_control(context):
                         # Overnight case: open at 9pm, close at 6am
                         should_be_open = current_time >= control.open_time or current_time < control.close_time
                     
-                    # Get group to check current state
+                    # Get group to check current state; capture clone_id before awaiting
                     with global_flask_app.app_context():
                         group = BotGroup.query.get(control.group_id)
                         if not group:
                             continue
-                        # Only process groups belonging to the current bot instance
-                        if current_clone_id is None:
-                            if group.clone_id is not None:
-                                continue
-                        else:
-                            if group.clone_id != current_clone_id:
-                                continue
                         
                         chat_id = int(group.chat_id)
+                        group_clone_id = group.clone_id
                         
                         # Track state in group config to avoid repeated messages
                         conf = get_group_conf(group)
                         last_state = conf.get('_timed_control_state', None)
                         
-                        # Only act if state has changed
-                        if last_state != should_be_open:
-                            try:
-                                if should_be_open:
-                                    # Open the group - allow all members to send messages
-                                    # Note: This requires bot to have appropriate admin rights
-                                    # For supergroups, we can't change permissions for all users at once
-                                    # Instead, we send the open message
-                                    if control.open_message:
-                                        open_text = sanitize_html_for_telegram(control.open_message)
-                                        await context.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=open_text,
-                                            parse_mode='HTML'
-                                        )
-                                else:
-                                    # Close the group - send close message
-                                    if control.close_message:
-                                        close_text = sanitize_html_for_telegram(control.close_message)
-                                        await context.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=close_text,
-                                            parse_mode='HTML'
-                                        )
-                                
-                                # Update state
-                                conf['_timed_control_state'] = should_be_open
-                                group.config = json.dumps(conf, ensure_ascii=False)
-                                db.session.commit()
-                                
-                            except Exception as e:
-                                print(f"Error applying timed control for group {chat_id}: {e}")
+                        # Only act if state has changed; pre-save new state here so we
+                        # can commit inside the app context without mixing DB + async.
+                        if last_state == should_be_open:
+                            continue
+                        conf['_timed_control_state'] = should_be_open
+                        group.config = json.dumps(conf, ensure_ascii=False)
+                        db.session.commit()
+                    
+                    # Now perform the Telegram API call outside the app context
+                    bot = _get_bot_for_clone(group_clone_id, context.bot)
+                    if bot is None:
+                        continue
+                    try:
+                        if should_be_open:
+                            if control.open_message:
+                                open_text = sanitize_html_for_telegram(control.open_message)
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=open_text,
+                                    parse_mode='HTML'
+                                )
+                        else:
+                            if control.close_message:
+                                close_text = sanitize_html_for_telegram(control.close_message)
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=close_text,
+                                    parse_mode='HTML'
+                                )
+                    except Exception as e:
+                        print(f"Error applying timed control for group {chat_id}: {e}")
                         
             except Exception as e:
                 print(f"Error processing timed control for group {control.group_id}: {e}")
@@ -6509,9 +6514,6 @@ async def check_channel_subscriptions(context):
     if not global_flask_app:
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _get_subscription_settings():
             with global_flask_app.app_context():
@@ -6524,85 +6526,85 @@ async def check_channel_subscriptions(context):
                 if not settings.channel_id:
                     continue
                 
-                with global_flask_app.app_context():
-                    group = BotGroup.query.get(settings.group_id)
-                    if not group:
-                        continue
-                    # Only process groups belonging to the current bot instance
-                    if current_clone_id is None:
-                        if group.clone_id is not None:
-                            continue
-                    else:
-                        if group.clone_id != current_clone_id:
-                            continue
-                    
-                    chat_id = int(group.chat_id)
-                    
-                    # Get all group members (this is simplified - actual implementation 
-                    # would need to track active members)
-                    # Use configurable batch size to respect API rate limits
-                    SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Check 10 users per run
-                    group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
-                    
-                    for group_user in group_users:
-                        try:
-                            # Check if user is subscribed to the channel
-                            member = await context.bot.get_chat_member(
-                                settings.channel_id,
-                                group_user.tg_id
-                            )
+                def _get_group_and_users(group_id):
+                    with global_flask_app.app_context():
+                        group = BotGroup.query.get(group_id)
+                        if not group:
+                            return None, None, None
+                        SUBSCRIPTION_CHECK_BATCH_SIZE = 10
+                        group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
+                        return int(group.chat_id), group.clone_id, [u.tg_id for u in group_users]
+                
+                chat_id, group_clone_id, user_ids = await asyncio.get_running_loop().run_in_executor(
+                    None, _get_group_and_users, settings.group_id
+                )
+                if chat_id is None:
+                    continue
+                
+                # Use the bot that owns this group
+                bot = _get_bot_for_clone(group_clone_id, context.bot)
+                if bot is None:
+                    continue
+                
+                for tg_id in user_ids:
+                    try:
+                        # Check if user is subscribed to the channel
+                        member = await bot.get_chat_member(
+                            settings.channel_id,
+                            tg_id
+                        )
+                        
+                        # If not subscribed (left or kicked), apply action
+                        if member.status in ['left', 'kicked']:
+                            # Check if user is chat owner in the group - skip all actions for chat owners
+                            is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
+                            if is_owner:
+                                print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                continue
                             
-                            # If not subscribed (left or kicked), apply action
-                            if member.status in ['left', 'kicked']:
-                                # Check if user is chat owner in the group - skip all actions for chat owners
-                                is_owner = await is_user_chat_owner(context.bot, chat_id, group_user.tg_id)
-                                if is_owner:
-                                    print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {group_user.tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                    continue
-                                
-                                if settings.unsubscribe_action == 'kick':
-                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
-                                    await context.bot.unban_chat_member(chat_id, group_user.tg_id)
-                                elif settings.unsubscribe_action == 'ban':
-                                    await context.bot.ban_chat_member(chat_id, group_user.tg_id)
-                                elif settings.unsubscribe_action == 'mute':
-                                    try:
-                                        print(f"🔄 [频道订阅检测] 准备禁言未订阅用户 {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                        await context.bot.restrict_chat_member(
-                                            chat_id=chat_id,
-                                            user_id=group_user.tg_id,
-                                            permissions=get_muted_permissions()
-                                        )
-                                        print(f"✅ [频道订阅检测] Successfully called restrict_chat_member API - Muted unsubscribed user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                    except Exception as restrict_error:
-                                        print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                        print(f"   Error type: {type(restrict_error).__name__}", flush=True)
-                                        print(f"   Error details: {str(restrict_error)}", flush=True)
-                                        print(f"   Traceback: {traceback.format_exc()}", flush=True)
-                            # If subscribed (member, administrator, creator), unmute if action was mute
-                            elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
-                                # Check if user is chat owner in the group - skip unmute for chat owners
-                                is_owner = await is_user_chat_owner(context.bot, chat_id, group_user.tg_id)
-                                if is_owner:
-                                    print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {group_user.tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                    continue
-                                
+                            if settings.unsubscribe_action == 'kick':
+                                await bot.ban_chat_member(chat_id, tg_id)
+                                await bot.unban_chat_member(chat_id, tg_id)
+                            elif settings.unsubscribe_action == 'ban':
+                                await bot.ban_chat_member(chat_id, tg_id)
+                            elif settings.unsubscribe_action == 'mute':
                                 try:
-                                    print(f"🔄 [频道订阅检测] 检测到用户 {group_user.tg_id} 已订阅频道，准备解除禁言 in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                    await context.bot.restrict_chat_member(
+                                    print(f"🔄 [频道订阅检测] 准备禁言未订阅用户 {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    await bot.restrict_chat_member(
                                         chat_id=chat_id,
-                                        user_id=group_user.tg_id,
-                                        permissions=get_unrestricted_permissions()
+                                        user_id=tg_id,
+                                        permissions=get_muted_permissions()
                                     )
-                                    print(f"✅ [频道订阅检测] Successfully unmuted subscribed user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                except Exception as unmute_error:
-                                    print(f"❌ [频道订阅检测] Failed to unmute user {group_user.tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
-                                    print(f"   Error type: {type(unmute_error).__name__}", flush=True)
-                                    print(f"   Error details: {str(unmute_error)}", flush=True)
-                        except Exception as e:
-                            # User may not be in channel or bot doesn't have access
-                            print(f"Error checking subscription for user {group_user.tg_id}: {e}")
+                                    print(f"✅ [频道订阅检测] Successfully called restrict_chat_member API - Muted unsubscribed user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                except Exception as restrict_error:
+                                    print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    print(f"   Error type: {type(restrict_error).__name__}", flush=True)
+                                    print(f"   Error details: {str(restrict_error)}", flush=True)
+                                    print(f"   Traceback: {traceback.format_exc()}", flush=True)
+                        # If subscribed (member, administrator, creator), unmute if action was mute
+                        elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
+                            # Check if user is chat owner in the group - skip unmute for chat owners
+                            is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
+                            if is_owner:
+                                print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                continue
                             
+                            try:
+                                print(f"🔄 [频道订阅检测] 检测到用户 {tg_id} 已订阅频道，准备解除禁言 in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                await bot.restrict_chat_member(
+                                    chat_id=chat_id,
+                                    user_id=tg_id,
+                                    permissions=get_unrestricted_permissions()
+                                )
+                                print(f"✅ [频道订阅检测] Successfully unmuted subscribed user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                            except Exception as unmute_error:
+                                print(f"❌ [频道订阅检测] Failed to unmute user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"   Error type: {type(unmute_error).__name__}", flush=True)
+                                print(f"   Error details: {str(unmute_error)}", flush=True)
+                    except Exception as e:
+                        # User may not be in channel or bot doesn't have access
+                        print(f"Error checking subscription for user {tg_id}: {e}")
+                        
             except Exception as e:
                 print(f"Error processing channel subscription for group {settings.group_id}: {e}")
                 
@@ -6627,24 +6629,16 @@ async def update_member_levels(context):
     if not global_flask_app:
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _update_levels():
             with global_flask_app.app_context():
-                # Get users with points only for groups belonging to the current bot instance
-                if current_clone_id is None:
-                    user_points_list = UserPoints.query.join(
-                        BotGroup, UserPoints.group_id == BotGroup.id
-                    ).filter(BotGroup.clone_id.is_(None)).all()
-                else:
-                    user_points_list = UserPoints.query.join(
-                        BotGroup, UserPoints.group_id == BotGroup.id
-                    ).filter(BotGroup.clone_id == current_clone_id).all()
+                # Get all users with points across ALL groups (main + clone)
+                user_points_list = UserPoints.query.join(
+                    BotGroup, UserPoints.group_id == BotGroup.id
+                ).all()
                 
                 updated_count = 0
-                # Collect (chat_id_str, user_tg_id, permissions_json) for changed users
+                # Collect (chat_id_str, user_tg_id, perms_str, clone_id) for changed users
                 permission_actions = []
                 for user_points in user_points_list:
                     # Find the highest level this user qualifies for
@@ -6671,7 +6665,7 @@ async def update_member_levels(context):
                             group = BotGroup.query.get(user_points.group_id)
                             if group and group.chat_id:
                                 permission_actions.append(
-                                    (group.chat_id, user_points.user_id, perms_str)
+                                    (group.chat_id, user_points.user_id, perms_str, group.clone_id)
                                 )
                 
                 db.session.commit()
@@ -6682,8 +6676,11 @@ async def update_member_levels(context):
             print(f"✅ Updated member levels for {count} users")
 
         # Apply Telegram ChatPermissions for users whose level changed
-        for chat_id_str, user_tg_id, perms_str in permission_actions:
+        for chat_id_str, user_tg_id, perms_str, group_clone_id in permission_actions:
             try:
+                bot = _get_bot_for_clone(group_clone_id, context.bot)
+                if bot is None:
+                    continue
                 perms = json.loads(perms_str)
                 # JSON key → Telegram ChatPermissions field mapping.
                 # All keys default to True when omitted (permissive default).
@@ -6698,7 +6695,7 @@ async def update_member_levels(context):
                     can_pin_messages=perms.get('can_pin_messages', True),
                     can_change_info=perms.get('can_change_info', True),
                 )
-                await context.bot.restrict_chat_member(
+                await bot.restrict_chat_member(
                     chat_id=int(chat_id_str),
                     user_id=int(user_tg_id),
                     permissions=tg_perms,
@@ -6715,9 +6712,6 @@ async def update_lottery_status(context):
         logging.warning("🎲 [状态更新] global_flask_app 未初始化")
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _update_pending_lotteries():
             with global_flask_app.app_context():
@@ -6725,12 +6719,8 @@ async def update_lottery_status(context):
                 db.session.expire_all()
                 
                 now = get_beijing_now()
-                # Find lotteries that should be active now, scoped to current bot's groups
-                # Use a subquery-based approach to avoid JOIN in UPDATE (not supported on all DBs)
-                if current_clone_id is None:
-                    group_ids = [g.id for g in BotGroup.query.filter(BotGroup.clone_id.is_(None)).all()]
-                else:
-                    group_ids = [g.id for g in BotGroup.query.filter(BotGroup.clone_id == current_clone_id).all()]
+                # Find all lotteries that should be active now, across ALL groups (main + clone)
+                group_ids = [g.id for g in BotGroup.query.all()]
                 
                 if not group_ids:
                     return 0
@@ -6765,9 +6755,6 @@ async def run_lottery_draws(context):
         logging.warning("🎲 [抽奖任务] global_flask_app 未初始化")
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _get_active_lottery_ids():
             with global_flask_app.app_context():
@@ -6775,29 +6762,16 @@ async def run_lottery_draws(context):
                 db.session.expire_all()
                 
                 now = get_beijing_now()
-                # Find lotteries that have ended but not yet drawn, scoped to current bot's groups
+                # Find lotteries that have ended but not yet drawn, across ALL groups (main + clone)
                 # Query both pending and active status to handle edge cases where:
                 # 1. Lottery goes from pending directly to end_time without status update task running first
                 # 2. Status update task hasn't run yet but end_time has been reached
                 # Return only IDs to avoid detached object issues
-                if current_clone_id is None:
-                    lotteries = GroupLottery.query.join(
-                        BotGroup, GroupLottery.group_id == BotGroup.id
-                    ).filter(
-                        GroupLottery.status.in_(['pending', 'active']),
-                        GroupLottery.end_time != None,
-                        GroupLottery.end_time <= now,
-                        BotGroup.clone_id.is_(None)
-                    ).all()
-                else:
-                    lotteries = GroupLottery.query.join(
-                        BotGroup, GroupLottery.group_id == BotGroup.id
-                    ).filter(
-                        GroupLottery.status.in_(['pending', 'active']),
-                        GroupLottery.end_time != None,
-                        GroupLottery.end_time <= now,
-                        BotGroup.clone_id == current_clone_id
-                    ).all()
+                lotteries = GroupLottery.query.filter(
+                    GroupLottery.status.in_(['pending', 'active']),
+                    GroupLottery.end_time != None,
+                    GroupLottery.end_time <= now,
+                ).all()
                 lottery_ids = [lottery.id for lottery in lotteries]
                 if lottery_ids:
                     logging.info(f"🎲 [抽奖任务] 发现 {len(lottery_ids)} 个需要开奖的抽奖活动: {lottery_ids}")
@@ -6903,6 +6877,7 @@ async def run_lottery_draws(context):
                         
                         return {
                             'chat_id': chat_id,
+                            'clone_id': group.clone_id,  # which bot to use
                             'lottery_name': lottery.lottery_name,
                             'prize_description': lottery.prize_description,
                             'winners': winners
@@ -6920,15 +6895,19 @@ async def run_lottery_draws(context):
                     if result['prize_description']:
                         message += f"奖品：{result['prize_description']}\n"
                     
-                    try:
-                        await context.bot.send_message(
-                            chat_id=result['chat_id'],
-                            text=message,
-                            parse_mode='HTML'
-                        )
-                        logging.info(f"📢 [抽奖任务] 成功在群组 {result['chat_id']} 发送获奖公告")
-                    except Exception as send_error:
-                        logging.error(f"❌ [抽奖任务] 发送获奖公告失败 (群组: {result['chat_id']}): {send_error}")
+                    bot = _get_bot_for_clone(result.get('clone_id'), context.bot)
+                    if bot is None:
+                        logging.warning(f"⏭️ [抽奖任务] 跳过公告：对应克隆机器人未运行 (群组: {result['chat_id']})")
+                    else:
+                        try:
+                            await bot.send_message(
+                                chat_id=result['chat_id'],
+                                text=message,
+                                parse_mode='HTML'
+                            )
+                            logging.info(f"📢 [抽奖任务] 成功在群组 {result['chat_id']} 发送获奖公告")
+                        except Exception as send_error:
+                            logging.error(f"❌ [抽奖任务] 发送获奖公告失败 (群组: {result['chat_id']}): {send_error}")
                         
             except Exception as e:
                 logging.error(f"❌ [抽奖任务] 处理抽奖 {lottery_id} 时出错: {e}")
@@ -6943,9 +6922,6 @@ async def check_inactive_users(context):
     """检查并处理不活跃用户 - Background task"""
     if not global_flask_app: return
     try:
-        # Identify which bot (main or clone) is running this job
-        bot_clone_id = context.application.bot_data.get('clone_id')
-
         def _check_inactive():
             """Sync part: query database and collect users for moderation actions"""
             with global_flask_app.app_context():
@@ -6959,9 +6935,6 @@ async def check_inactive_users(context):
                         try:
                             group = BotGroup.query.get(settings.group_id)
                             if not group or not group.is_active:
-                                continue
-                            # Only process groups that belong to this bot instance
-                            if group.clone_id != bot_clone_id:
                                 continue
                             
                             # Convert chat_id to integer for Telegram API
@@ -6987,7 +6960,8 @@ async def check_inactive_users(context):
                                         'chat_id': chat_id_int,
                                         'user_id': user.tg_id,
                                         'group_id': settings.group_id,
-                                        'user_db_id': user.id  # Store DB ID for later update
+                                        'user_db_id': user.id,
+                                        'clone_id': group.clone_id,  # which bot to use
                                     })
                                 elif settings.action_type == 'ban':
                                     users_to_mute.append({
@@ -6995,7 +6969,8 @@ async def check_inactive_users(context):
                                         'chat_id': chat_id_int,
                                         'user_id': user.tg_id,
                                         'group_id': settings.group_id,
-                                        'user_db_id': user.id  # Store DB ID for later update
+                                        'user_db_id': user.id,
+                                        'clone_id': group.clone_id,
                                     })
                                 elif settings.action_type == 'mute':
                                     users_to_mute.append({
@@ -7003,7 +6978,8 @@ async def check_inactive_users(context):
                                         'chat_id': chat_id_int,
                                         'user_id': user.tg_id,
                                         'group_id': settings.group_id,
-                                        'user_db_id': user.id  # Store DB ID for later update
+                                        'user_db_id': user.id,
+                                        'clone_id': group.clone_id,
                                     })
                                 elif settings.action_type == 'mute_permanent':
                                     users_to_mute.append({
@@ -7011,7 +6987,8 @@ async def check_inactive_users(context):
                                         'chat_id': chat_id_int,
                                         'user_id': user.tg_id,
                                         'group_id': settings.group_id,
-                                        'user_db_id': user.id  # Store DB ID for later update
+                                        'user_db_id': user.id,
+                                        'clone_id': group.clone_id,
                                     })
                                     
                         except Exception as e:
@@ -7031,11 +7008,15 @@ async def check_inactive_users(context):
         if users_to_mute:
             for item in users_to_mute:
                 try:
+                    bot = _get_bot_for_clone(item.get('clone_id'), context.bot)
+                    if bot is None:
+                        print(f"⏭️ [不活跃用户检测] 跳过群组 {item['group_id']}：对应克隆机器人未运行", flush=True)
+                        continue
                     if item['action'] == 'kick':
-                        await context.bot.ban_chat_member(item['chat_id'], item['user_id'])
-                        await context.bot.unban_chat_member(item['chat_id'], item['user_id'])
+                        await bot.ban_chat_member(item['chat_id'], item['user_id'])
+                        await bot.unban_chat_member(item['chat_id'], item['user_id'])
                     elif item['action'] == 'ban':
-                        await context.bot.ban_chat_member(item['chat_id'], item['user_id'])
+                        await bot.ban_chat_member(item['chat_id'], item['user_id'])
                         # Update database only after successful API call
                         def _update_banned_status():
                             with global_flask_app.app_context():
@@ -7051,7 +7032,7 @@ async def check_inactive_users(context):
                     elif item['action'] == 'mute':
                         try:
                             print(f"🔄 [不活跃用户检测] 准备禁言不活跃用户 {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
-                            await context.bot.restrict_chat_member(
+                            await bot.restrict_chat_member(
                                 chat_id=item['chat_id'],
                                 user_id=item['user_id'],
                                 permissions=get_muted_permissions()
@@ -7065,7 +7046,7 @@ async def check_inactive_users(context):
                     elif item['action'] == 'mute_permanent':
                         try:
                             print(f"🔄 [不活跃用户检测] 准备永久禁言不活跃用户 {item['user_id']} in group {item['group_id']} (chat_id={item['chat_id']})", flush=True)
-                            await context.bot.restrict_chat_member(
+                            await bot.restrict_chat_member(
                                 chat_id=item['chat_id'],
                                 user_id=item['user_id'],
                                 permissions=get_muted_permissions()
@@ -9523,9 +9504,6 @@ async def check_auction_expiration(context):
     if not global_flask_app:
         return
     
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
-    
     try:
         def _get_expired_auctions():
             with global_flask_app.app_context():
@@ -9548,15 +9526,9 @@ async def check_auction_expiration(context):
                     group = BotGroup.query.get(auction.group_id)
                     if not group:
                         continue
-                    # Only process groups belonging to the current bot instance
-                    if current_clone_id is None:
-                        if group.clone_id is not None:
-                            continue
-                    else:
-                        if group.clone_id != current_clone_id:
-                            continue
                     
                     chat_id = int(group.chat_id)
+                    group_clone_id = group.clone_id
                     
                     # Update auction status
                     auction.status = 'ended'
@@ -9569,6 +9541,9 @@ async def check_auction_expiration(context):
                     current_bid = auction.current_bid
                 
                 # Notify winner (outside app_context so we can await)
+                bot = _get_bot_for_clone(group_clone_id, context.bot)
+                if bot is None:
+                    continue
                 if current_bidder_id and current_bid > 0:
                     message = (
                         f"🎉 <b>竞拍结束！</b>\n\n"
@@ -9586,7 +9561,7 @@ async def check_auction_expiration(context):
                         f"⚠️ 无人出价，流拍"
                     )
                 
-                await context.bot.send_message(
+                await bot.send_message(
                     chat_id=chat_id,
                     text=message,
                     parse_mode='HTML'
@@ -9605,9 +9580,6 @@ async def check_redpacket_expiration(context):
     """Background task to check and expire red packets"""
     if not global_flask_app:
         return
-    
-    # Determine which clone this job is running for (None = main bot)
-    current_clone_id = context.application.bot_data.get('clone_id')
     
     try:
         def _get_expired_packets():
@@ -9630,14 +9602,8 @@ async def check_redpacket_expiration(context):
                         continue
                     
                     group = BotGroup.query.get(packet.group_id)
-                    # Only process groups belonging to the current bot instance;
-                    # skip entirely so the correct bot handles expiry + refund.
-                    if current_clone_id is None:
-                        if group is None or group.clone_id is not None:
-                            continue
-                    else:
-                        if group is None or group.clone_id != current_clone_id:
-                            continue
+                    if group is None:
+                        continue
                     
                     # Refund remaining points to creator
                     if packet.remaining_points > 0:

@@ -177,7 +177,10 @@ async def is_user_admin_in_group(bot, chat_id, user_id):
         return False
 
 async def is_user_chat_owner(bot, chat_id, user_id):
-    """Check if a user is the chat owner (creator) in a specific group
+    """Check if a user is the chat owner (creator) or administrator in a specific group.
+
+    Both creators and administrators cannot be restricted via restrictChatMember,
+    so this helper returns True for either status.
     
     Args:
         bot: Telegram bot instance
@@ -185,11 +188,11 @@ async def is_user_chat_owner(bot, chat_id, user_id):
         user_id: The user's Telegram ID
         
     Returns:
-        bool: True if user is chat owner, False otherwise
+        bool: True if user is chat owner or administrator, False otherwise
     """
     try:
         member = await bot.get_chat_member(chat_id, user_id)
-        return member.status == 'creator'
+        return member.status in ('creator', 'administrator')
     except Exception as e:
         print(f"Error checking chat owner status: {e}")
         return False
@@ -295,11 +298,11 @@ def unban_user_in_group(group_id, user_tg_id):
         if chat_id_int is None:
             return False
         
-        # Check if user is chat owner - skip unmute for chat owners
+        # Check if user is chat owner/admin - skip unmute for them (cannot restrict admins)
         async def _check_and_unban():
             is_owner = await is_user_chat_owner(global_ptb_app.bot, chat_id_int, user_tg_id)
             if is_owner:
-                print(f"⏭️ [解除禁言] 跳过解除禁言操作 - 用户 {user_tg_id} 是群主 (Chat Owner) in group {group.chat_id} (chat_id={chat_id_int})", flush=True)
+                print(f"⏭️ [解除禁言] 跳过解除禁言操作 - 用户 {user_tg_id} 是群主/管理员 (Owner/Admin) in group {group.chat_id} (chat_id={chat_id_int})", flush=True)
                 return True  # Return True since no action needed for chat owner
             
             await global_ptb_app.bot.restrict_chat_member(
@@ -6587,10 +6590,10 @@ async def check_channel_subscriptions(context):
 
                         # If not subscribed (left or kicked), apply action
                         if member.status in ['left', 'kicked']:
-                            # Check if user is chat owner in the group - skip all actions for chat owners
+                            # Check if user is chat owner/admin in the group - skip all actions for them
                             is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
-                                print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                 continue
                             
                             if settings.unsubscribe_action == 'kick':
@@ -6618,7 +6621,7 @@ async def check_channel_subscriptions(context):
                             if is_owner is None:
                                 is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
-                                print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主 (Chat Owner) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                 continue
                             
                             try:

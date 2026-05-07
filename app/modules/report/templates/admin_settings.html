@@ -1,7 +1,26 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
-<div class="container py-4" style="max-width:760px">
-    <h2 class="mb-4">⚙️ 报告系统设置</h2>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-flag me-2"></i>举报管理</h4>
+            <p class="mb-0 opacity-75">配置举报系统的频道、问题模板与审核奖励</p>
+        </div>
+    </div>
+</div>
+
+{% call feature_description('report_settings') %}
+<ul>
+    <li>设置<strong>管理员审核群组</strong>，举报提交后审核消息将发送到该群；设置<strong>报告展示频道</strong>，审核通过的举报将自动发布。</li>
+    <li><strong>机器人问答模板</strong>：自定义 Bot 与用户的交互问题，支持拖拽排序，可标记必填与跳过。</li>
+    <li><strong>推送展示内容</strong>：自定义频道发布的模板，支持占位符（如 <code>{answers}</code>、<code>{q1}</code>）和 Telegram HTML 标签。</li>
+    <li><strong>审核通过积分奖励</strong>：举报被管理员通过后，可自动向提交者发放指定积分。</li>
+</ul>
+{% endcall %}
+
+<div class="container-fluid px-0" style="max-width:760px">
 
     {% with messages = get_flashed_messages() %}
       {% if messages %}

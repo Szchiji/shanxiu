@@ -8,7 +8,7 @@
     .section-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 14px;
+        border-radius: 10px;
         margin-bottom: 1.5rem;
         overflow: hidden;
     }
@@ -42,8 +42,8 @@
     }
 
     .product-card:hover {
-        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
-        transform: translateY(-2px);
+        box-shadow: var(--hover-shadow);
+        
     }
 
     .product-card .status-badge {
@@ -120,15 +120,6 @@
         border-radius: 14px;
         border: 1px solid var(--border-color);
     }
-
-    .modal-header {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        color: white;
-        border-radius: 14px 14px 0 0;
-        border-bottom: none;
-    }
-
-    .modal-header .btn-close { filter: brightness(0) invert(1); }
 
     @media (max-width: 576px) {
         .product-grid { grid-template-columns: 1fr; }

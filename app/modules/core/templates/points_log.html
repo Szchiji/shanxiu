@@ -3,9 +3,9 @@
 {% block content %}
 <style>
     .logs-card {
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--card-shadow);
     }
     
     .log-item {
@@ -28,7 +28,7 @@
     }
 
     .search-card {
-        border-radius: 12px;
+        border-radius: 10px;
         border: 1px solid var(--border-color);
         box-shadow: var(--card-shadow);
         margin-bottom: 1.5rem;
@@ -54,7 +54,7 @@
     }
 
     .pagination-wrap .pg-active {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: var(--accent);
         color: white;
         border-color: transparent;
     }

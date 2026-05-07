@@ -2,21 +2,21 @@
 {% macro pagination(current_page, total_pages, per_page, total_items, page_name='page', per_page_options=[10, 20, 50, 100]) %}
 <style>
     .pagination-container {
-        background: #ffffff;
-        border-radius: 15px;
+        background: var(--bg-card);
+        border-radius: 10px;
         padding: 1rem;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.06);
         margin-top: 1rem;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--border-color);
     }
     
     .pagination-info {
         font-size: 0.875rem;
-        color: #64748b;
+        color: var(--text-muted);
     }
     
     .pagination-info strong {
-        color: #334155;
+        color: var(--text-secondary);
         font-weight: 600;
     }
     
@@ -26,23 +26,22 @@
         font-size: 0.875rem;
         font-weight: 500;
         transition: all 0.3s ease;
-        border: 2px solid #e2e8f0;
-        background: white;
-        color: #475569;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        color: var(--text-secondary);
     }
     
     .btn-pagination:not(:disabled):hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(59, 130, 246, 0.2);
-        border-color: #3b82f6;
-        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        box-shadow: var(--hover-shadow);
+        border-color: var(--accent);
+        background: var(--accent);
         color: white;
     }
     
     .btn-pagination:disabled {
         opacity: 0.5;
         cursor: not-allowed;
-        background: #f8fafc;
+        background: var(--bg-card-hover);
         border-color: #e2e8f0;
     }
     
@@ -52,7 +51,7 @@
     
     .per-page-select {
         border-radius: 8px;
-        border: 2px solid #e2e8f0;
+        border: 1px solid var(--border-color);
         padding: 0.375rem 0.75rem;
         font-size: 0.875rem;
         transition: all 0.3s ease;
@@ -64,7 +63,7 @@
     }
     
     .page-number-display {
-        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        background: var(--accent);
         color: white;
         padding: 0.5rem 1rem;
         border-radius: 10px;

@@ -7,21 +7,21 @@
 <style>
 .settings-card {
         border-radius: 12px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-color);
+        box-shadow: var(--card-shadow);
         transition: all 0.3s ease;
         margin-bottom: 1.5rem;
     }
     
     @media (min-width: 768px) {
         .settings-card {
-            border-radius: 15px;
+            border-radius: 10px;
         }
     }
     
     .settings-card:hover {
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-        transform: translateY(-2px);
+        box-shadow: var(--hover-shadow);
+        
     }
     
     .form-switch .form-check-input {
@@ -30,10 +30,7 @@
         cursor: pointer;
     }
     
-    .form-switch .form-check-input:checked {
-        background-color: #43e97b;
-        border-color: #43e97b;
-    }
+    
     
     .form-label {
         font-weight: 600;

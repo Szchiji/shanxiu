@@ -2,16 +2,14 @@
 {% block content %}
 <style>
 .table-container {
-        background: white;
-        border-radius: 12px;
+        background: var(--bg-card);
+        border-radius: 10px;
         overflow: hidden;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        box-shadow: var(--card-shadow);
     }
     
     @media (min-width: 768px) {
-        .table-container {
-            border-radius: 15px;
-        }
+    
     }
     
     .table {
@@ -44,19 +42,18 @@
     }
     
     .table thead th {
-        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-        color: white;
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
         font-weight: 600;
-        border: none;
     }
     
     .table tbody tr {
         transition: background-color 0.3s ease;
-        border-bottom: 1px solid #f0f0f0;
+        border-bottom: 1px solid var(--border-color);
     }
     
     .table tbody tr:hover {
-        background: rgba(67, 233, 123, 0.05);
+        background: var(--bg-hover);
     }
     
     .badge {
@@ -67,15 +64,15 @@
     }
     
     .badge-success {
-        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        background: #22c55e;
     }
     
     .badge-danger {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: #ef4444;
     }
     
     .badge-warning {
-        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        background: #f59e0b;
     }
     
     .content-preview {
@@ -92,7 +89,7 @@
     }
     
     .btn-settings {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--accent);
         color: white;
         border: none;
         padding: 0.5rem 1.25rem;
@@ -100,12 +97,10 @@
         font-weight: 600;
         font-size: 0.85rem;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
     }
     
     .btn-settings:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        box-shadow: var(--hover-shadow);
         color: white;
     }
     

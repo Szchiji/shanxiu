@@ -6,19 +6,19 @@
 
 <style>
 .card {
-        border-radius: 12px;
+        border-radius: 10px;
         transition: all 0.3s ease;
     }
     
     @media (min-width: 768px) {
         .card {
-            border-radius: 15px;
+            border-radius: 10px;
         }
     }
     
     .card:hover {
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
-        transform: translateY(-2px);
+        box-shadow: var(--hover-shadow);
     }
     
     .card-header {
@@ -49,7 +49,7 @@
     }
     
     .btn:hover {
-        transform: scale(1.02);
+        
     }
     
     .form-control {
@@ -102,33 +102,22 @@
     }
     
     .modal-content {
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        
+        
     }
     
     @media (min-width: 768px) {
         .modal-content {
-            border-radius: 20px;
+            border-radius: 10px;
         }
-    }
-    
-    .modal-header {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        color: white;
-        border-radius: 15px 15px 0 0;
-        padding: 1rem 1.25rem;
     }
     
     @media (min-width: 768px) {
         .modal-header {
-            border-radius: 20px 20px 0 0;
+            border-radius: 10px 10px 0 0;
             padding: 1.5rem;
         }
-    }
-    
-    .modal-header .btn-close {
-        filter: brightness(0) invert(1);
     }
     
     #editor {

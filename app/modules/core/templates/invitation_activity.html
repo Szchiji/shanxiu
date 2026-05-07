@@ -6,16 +6,16 @@
 
 <style>
     .settings-card {
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--card-shadow);
         transition: all 0.3s ease;
         margin-bottom: 1.5rem;
     }
     
     .settings-card:hover {
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-        transform: translateY(-2px);
+        box-shadow: var(--hover-shadow);
+        
     }
     
     .form-switch .form-check-input {
@@ -24,17 +24,12 @@
         cursor: pointer;
     }
     
-    .form-switch .form-check-input:checked {
-        background-color: #667eea;
-        border-color: #667eea;
-    }
-    
     .leaderboard-item {
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 0.75rem 1rem;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--border-color);
         transition: background-color 0.2s;
     }
     
@@ -43,7 +38,7 @@
     }
     
     .leaderboard-item:hover {
-        background-color: #f8f9fa;
+        background-color: var(--bg-card-hover);
     }
     
     .rank-badge {
@@ -61,12 +56,12 @@
     .rank-1 { background: linear-gradient(135deg, #ffd700, #ffb800); color: white; }
     .rank-2 { background: linear-gradient(135deg, #c0c0c0, #a0a0a0); color: white; }
     .rank-3 { background: linear-gradient(135deg, #cd7f32, #b5651d); color: white; }
-    .rank-other { background: #e9ecef; color: #666; }
+    .rank-other { background: var(--bg-card-hover); color: var(--text-muted); }
     
     .stats-badge {
         display: inline-block;
         padding: 0.5rem 1rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--accent);
         color: white;
         border-radius: 50px;
         font-weight: bold;
@@ -76,7 +71,7 @@
     
     .recent-invitation {
         padding: 0.5rem 1rem;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--border-color);
         font-size: 0.9rem;
     }
     
@@ -113,7 +108,7 @@
             <i class="fa-solid fa-users me-2"></i>{{ total_invitations }} 总邀请
         </span>
         {% if leaderboard %}
-        <span class="stats-badge" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">
+        <span class="stats-badge" style="background: #22c55e;">
             <i class="fa-solid fa-trophy me-2"></i>{{ leaderboard|length }} 邀请者
         </span>
         {% endif %}

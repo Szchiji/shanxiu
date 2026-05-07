@@ -92,14 +92,14 @@
     
     @media (min-width: 768px) {
         .config-card {
-            border-radius: 14px;
+            border-radius: 10px;
         }
     }
     
     .config-card:hover {
-        border-color: rgba(124, 58, 237, 0.5);
-        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.2);
-        transform: translateY(-2px);
+        border-color: rgba(59, 130, 246, 0.35);
+        box-shadow: var(--hover-shadow);
+        
     }
     
     .config-section {
@@ -162,11 +162,6 @@
         }
     }
     
-    .form-switch .form-check-input:checked {
-        background-color: #7c3aed;
-        border-color: #7c3aed;
-    }
-    
     .template-selector {
         border-radius: 8px;
         border: 1px solid var(--border-color);
@@ -204,9 +199,8 @@
     }
     
     .btn-toolbar-action:hover {
-        background: var(--primary-gradient);
+        background: var(--accent);
         color: white;
-        transform: scale(1.05);
         border-color: transparent;
     }
     
@@ -226,8 +220,7 @@
     }
     
     .badge-variable:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        box-shadow: var(--hover-shadow);
     }
     
     .card-header {
@@ -246,11 +239,11 @@
     
     /* Custom buttons row-grouped styles */
     .button-row-container {
-        background: #f8f9fa;
+        background: var(--bg-secondary);
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 10px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid var(--border-color);
     }
     
     .button-row-header {
@@ -317,7 +310,7 @@
     .add-row-button:hover {
         border-color: #0d6efd;
         color: #0d6efd;
-        background: #f8f9fa;
+        background: var(--bg-secondary);
     }
 </style>
 
@@ -347,7 +340,7 @@
     <div class="col-lg-4 mb-4">
         <div class="config-card card h-100">
             <div class="card-header bg-white fw-bold py-3 border-0">
-                <i class="fa-solid fa-gear me-2" style="color: #4facfe;"></i>交互参数
+                <i class="fa-solid fa-gear me-2 text-primary"></i>交互参数
             </div>
             <div class="card-body">
                 
@@ -477,7 +470,7 @@
         <!-- 文案编辑器 -->
         <div class="config-card card mb-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-pen-to-square me-2" style="color: #4facfe;"></i>文案与模板</span>
+                <span class="fw-bold"><i class="fa-solid fa-pen-to-square me-2 text-primary"></i>文案与模板</span>
                 <select class="template-selector form-select w-auto" id="msgSelector" onchange="loadMsg()">
                     <option value="template">👤 列表单行模板</option>
                     <option value="msg_query_header">📝 普通查询抬头</option>
@@ -519,7 +512,7 @@
                     <span class="badge-variable badge bg-secondary text-white border" onmousedown="insert('{查报告链接}', event)" title="查看历史报告的 Bot 深链接">📋查报告</span>
                 </div>
                 
-                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
+                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: var(--bg-card); font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
                 
                 <div class="p-3 border-top bg-light text-end">
                     <button class="btn btn-secondary" onclick="saveTmp()">
@@ -532,7 +525,7 @@
         <!-- 自定义按钮 -->
         <div class="config-card card">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-square-plus me-2" style="color: #4facfe;"></i>自定义按钮 (列表底部)</span>
+                <span class="fw-bold"><i class="fa-solid fa-square-plus me-2 text-primary"></i>自定义按钮 (列表底部)</span>
             </div>
             <div class="card-body">
                 <div id="btnContainer"></div>
@@ -546,7 +539,7 @@
         <!-- 群管理机器人命令 -->
         <div class="config-card card">
             <div class="card-header bg-white py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-robot me-2" style="color: #667eea;"></i>群管理机器人命令</span>
+                <span class="fw-bold"><i class="fa-solid fa-robot me-2 text-primary"></i>群管理机器人命令</span>
             </div>
             <div class="card-body">
                 <div class="alert alert-info mb-3">

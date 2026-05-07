@@ -382,7 +382,8 @@ def clone_webhook(clone_id):
 def inject_context():
     data = {'all_groups': []}
     if session.get('logged_in'):
-        data['all_groups'] = BotGroup.query.order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
+        clone_id = session.get('clone_id')
+        data['all_groups'] = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
     gid = session.get('current_group_id')
     if gid: data['current_group'] = BotGroup.query.get(gid)
     return data
@@ -1910,7 +1911,12 @@ def api_delete_user():
     d = request.json
     if not d or 'id' not in d:
         return jsonify({'status':'error', 'msg':'Missing required parameter: id'})
-    GroupUser.query.filter_by(id=d['id']).delete()
+    user = GroupUser.query.get(d['id'])
+    if not user:
+        return jsonify({'status':'error', 'msg':'User not found'})
+    err = _api_check_group_access(BotGroup.query.get(user.group_id))
+    if err: return err
+    db.session.delete(user)
     db.session.commit()
     return jsonify({'status':'ok'})
 
@@ -2272,6 +2278,11 @@ def api_save_auto_reply():
     
     group_id = d.get('group_id')
     if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     trigger_keyword = d.get('trigger_keyword', '').strip()
     if not trigger_keyword: return jsonify({'status':'error','msg':'触发关键词不能为空'})
@@ -2318,6 +2329,8 @@ def api_toggle_auto_reply():
     try:
         item = AutoReply.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Rule not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
         item.is_active = not item.is_active
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2335,6 +2348,8 @@ def api_delete_auto_reply():
     try:
         item = AutoReply.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Rule not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3040,6 +3055,11 @@ def api_save_start_message():
     
     message_type = d.get('message_type', 'user')
     if message_type not in ['user', 'admin']: return jsonify({'status':'error','msg':'Invalid message_type'})
+
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     try:
         item_id = d.get('id')
@@ -3075,6 +3095,8 @@ def api_toggle_start_message():
     try:
         item = StartMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
         item.is_active = not item.is_active
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3092,6 +3114,8 @@ def api_delete_start_message():
     try:
         item = StartMessage.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Message not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3106,7 +3130,12 @@ def api_save_entry_exit_settings():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = GroupEntryExitSettings.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3114,8 +3143,24 @@ def api_save_entry_exit_settings():
             db.session.add(settings)
         
         settings.entry_verification_enabled = d.get('entry_verification_enabled', False)
+        verification_type = d.get('verification_type', 'question')
+        if verification_type not in ('question', 'captcha', 'emoji', 'multiple_choice'):
+            verification_type = 'question'
+        settings.verification_type = verification_type
         settings.verification_question = d.get('verification_question')
         settings.verification_answer = d.get('verification_answer')
+        verification_options = d.get('verification_options')
+        if verification_options is not None:
+            if isinstance(verification_options, list):
+                verification_options = json.dumps(verification_options, ensure_ascii=False)
+            elif isinstance(verification_options, str):
+                try:
+                    json.loads(verification_options)
+                except (ValueError, TypeError):
+                    verification_options = None
+            else:
+                verification_options = None
+        settings.verification_options = verification_options
         settings.verification_timeout = d.get('verification_timeout', 60)
         settings.welcome_enabled = d.get('welcome_enabled', False)
         settings.welcome_message = d.get('welcome_message')
@@ -3137,7 +3182,12 @@ def api_save_spam_protection():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = SpamProtection.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3166,7 +3216,12 @@ def api_save_timed_group_control():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = TimedGroupControl.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3196,7 +3251,12 @@ def api_save_other_settings():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = OtherSettings.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3221,7 +3281,12 @@ def api_save_invitation_activity():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = InvitationActivity.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3269,7 +3334,12 @@ def api_save_forced_channel_subscription():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         settings = ForcedChannelSubscription.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -3295,11 +3365,17 @@ def api_save_points_rule():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             rule = PointsRule.query.get(d['id'])
             if not rule: return jsonify({'status':'error','msg':'Rule not found'})
+            if rule.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             rule = PointsRule(group_id=d['group_id'])
             db.session.add(rule)
@@ -3329,6 +3405,8 @@ def api_delete_points_rule():
     try:
         rule = PointsRule.query.get(d['id'])
         if not rule: return jsonify({'status':'error','msg':'Rule not found'})
+        err = _api_check_group_access(BotGroup.query.get(rule.group_id))
+        if err: return err
         db.session.delete(rule)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3342,11 +3420,17 @@ def api_save_points_auto_reply():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             reply = PointsAutoReply.query.get(d['id'])
             if not reply: return jsonify({'status':'error','msg':'Reply not found'})
+            if reply.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             reply = PointsAutoReply(group_id=d['group_id'])
             db.session.add(reply)
@@ -3374,6 +3458,8 @@ def api_delete_points_auto_reply():
     try:
         reply = PointsAutoReply.query.get(d['id'])
         if not reply: return jsonify({'status':'error','msg':'Reply not found'})
+        err = _api_check_group_access(BotGroup.query.get(reply.group_id))
+        if err: return err
         db.session.delete(reply)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3387,11 +3473,17 @@ def api_save_points_auction():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             auction = PointsAuction.query.get(d['id'])
             if not auction: return jsonify({'status':'error','msg':'Auction not found'})
+            if auction.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             auction = PointsAuction(group_id=d['group_id'])
             db.session.add(auction)
@@ -3433,6 +3525,8 @@ def api_delete_points_auction():
     try:
         auction = PointsAuction.query.get(d['id'])
         if not auction: return jsonify({'status':'error','msg':'Auction not found'})
+        err = _api_check_group_access(BotGroup.query.get(auction.group_id))
+        if err: return err
         db.session.delete(auction)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3772,11 +3866,17 @@ def api_save_exchange_item():
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
 
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         is_new_item = not d.get('id')
         if not is_new_item:
             item = PointsExchangeItem.query.get(d['id'])
             if not item: return jsonify({'status':'error','msg':'Item not found'})
+            if item.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             item = PointsExchangeItem(group_id=d['group_id'])
             db.session.add(item)
@@ -3811,6 +3911,8 @@ def api_delete_exchange_item():
     try:
         item = PointsExchangeItem.query.get(d['id'])
         if not item: return jsonify({'status':'error','msg':'Item not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
         group_id = item.group_id
         db.session.delete(item)
         db.session.commit()
@@ -3830,6 +3932,8 @@ def api_save_exchange_channel():
     try:
         group = BotGroup.query.get(d['group_id'])
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         conf = get_group_conf(group)
         new_channel = d.get('exchange_channel_id', '').strip()
         # 频道切换时重置旧消息ID，以便在新频道重新发布
@@ -3851,11 +3955,17 @@ def api_save_group_lottery():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             lottery = GroupLottery.query.get(d['id'])
             if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
+            if lottery.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             lottery = GroupLottery(group_id=d['group_id'])
             db.session.add(lottery)
@@ -3899,6 +4009,8 @@ def api_delete_group_lottery():
     try:
         lottery = GroupLottery.query.get(d['id'])
         if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
+        err = _api_check_group_access(BotGroup.query.get(lottery.group_id))
+        if err: return err
         db.session.delete(lottery)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3912,11 +4024,17 @@ def api_save_member_level():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             level = MemberLevel.query.get(d['id'])
             if not level: return jsonify({'status':'error','msg':'Level not found'})
+            if level.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             level = MemberLevel(group_id=d['group_id'])
             db.session.add(level)
@@ -3942,6 +4060,8 @@ def api_delete_member_level():
     try:
         level = MemberLevel.query.get(d['id'])
         if not level: return jsonify({'status':'error','msg':'Level not found'})
+        err = _api_check_group_access(BotGroup.query.get(level.group_id))
+        if err: return err
         db.session.delete(level)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3955,11 +4075,17 @@ def api_save_group_bottom_button():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     try:
         if d.get('id'):
             button = GroupBottomButton.query.get(d['id'])
             if not button: return jsonify({'status':'error','msg':'Button not found'})
+            if button.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             button = GroupBottomButton(group_id=d['group_id'])
             db.session.add(button)
@@ -3992,6 +4118,8 @@ def api_delete_group_bottom_button():
     try:
         button = GroupBottomButton.query.get(d['id'])
         if not button: return jsonify({'status':'error','msg':'Button not found'})
+        err = _api_check_group_access(BotGroup.query.get(button.group_id))
+        if err: return err
         db.session.delete(button)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4009,6 +4137,8 @@ def api_move_group_bottom_button():
     try:
         button = GroupBottomButton.query.get(d['id'])
         if not button: return jsonify({'status':'error','msg':'Button not found'})
+        err = _api_check_group_access(BotGroup.query.get(button.group_id))
+        if err: return err
         
         direction = d['direction']
         current_order = button.button_order
@@ -4156,7 +4286,12 @@ def api_save_sync_group_messages():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     # Validate target_group_id is provided
     target_group_id = d.get('target_group_id', '').strip()
     if not target_group_id:
@@ -4511,6 +4646,8 @@ def api_save_inactive_user_settings():
         gid = safe_int(d.get('group_id'))
         group = BotGroup.query.get(gid)
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         
         settings = InactiveUserSettings.query.filter_by(group_id=gid).first()
         if not settings:
@@ -4543,11 +4680,14 @@ def api_save_keyword_filter():
         gid = safe_int(d.get('group_id'))
         group = BotGroup.query.get(gid)
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         
         filter_id = safe_int(d.get('id', 0))
         if filter_id:
             kf = KeywordFilter.query.get(filter_id)
             if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+            if kf.group_id != gid: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             kf = KeywordFilter(group_id=gid)
             db.session.add(kf)
@@ -4575,6 +4715,8 @@ def api_delete_keyword_filter():
     try:
         kf = KeywordFilter.query.get(d['id'])
         if not kf: return jsonify({'status':'error','msg':'Filter not found'})
+        err = _api_check_group_access(BotGroup.query.get(kf.group_id))
+        if err: return err
         db.session.delete(kf)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4594,11 +4736,14 @@ def api_save_group_vote():
         gid = safe_int(d.get('group_id'))
         group = BotGroup.query.get(gid)
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         
         vote_id = safe_int(d.get('id', 0))
         if vote_id:
             vote = GroupVote.query.get(vote_id)
             if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+            if vote.group_id != gid: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             vote = GroupVote(group_id=gid)
             db.session.add(vote)
@@ -4640,6 +4785,8 @@ def api_delete_group_vote():
     try:
         vote = GroupVote.query.get(d['id'])
         if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+        err = _api_check_group_access(BotGroup.query.get(vote.group_id))
+        if err: return err
         db.session.delete(vote)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4659,11 +4806,14 @@ def api_save_quiz_game():
         gid = safe_int(d.get('group_id'))
         group = BotGroup.query.get(gid)
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         
         quiz_id = safe_int(d.get('id', 0))
         if quiz_id:
             quiz = QuizGame.query.get(quiz_id)
             if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+            if quiz.group_id != gid: return jsonify({'status':'error','msg':'Permission denied'})
         else:
             quiz = QuizGame(group_id=gid)
             db.session.add(quiz)
@@ -4695,6 +4845,8 @@ def api_delete_quiz_game():
     try:
         quiz = QuizGame.query.get(d['id'])
         if not quiz: return jsonify({'status':'error','msg':'Quiz not found'})
+        err = _api_check_group_access(BotGroup.query.get(quiz.group_id))
+        if err: return err
         db.session.delete(quiz)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4895,6 +5047,8 @@ def api_adjust_points():
     group = BotGroup.query.get(group_id)
     if not group:
         return jsonify({'status': 'error', 'msg': '群组不存在'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     # 获取或创建用户积分记录
     user_points = UserPoints.query.filter_by(

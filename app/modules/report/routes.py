@@ -41,7 +41,8 @@ def inject_context():
     """Provide the same template context as core_bp so base.html renders correctly."""
     data = {'all_groups': []}
     if session.get('logged_in'):
-        data['all_groups'] = BotGroup.query.order_by(
+        clone_id = session.get('clone_id')
+        data['all_groups'] = BotGroup.query.filter_by(clone_id=clone_id).order_by(
             BotGroup.is_active.desc(), BotGroup.updated_at.desc()
         ).all()
     gid = session.get('current_group_id')

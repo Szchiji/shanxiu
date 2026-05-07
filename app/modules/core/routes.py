@@ -382,7 +382,8 @@ def clone_webhook(clone_id):
 def inject_context():
     data = {'all_groups': []}
     if session.get('logged_in'):
-        data['all_groups'] = BotGroup.query.order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
+        clone_id = session.get('clone_id')
+        data['all_groups'] = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
     gid = session.get('current_group_id')
     if gid: data['current_group'] = BotGroup.query.get(gid)
     return data
@@ -2277,6 +2278,11 @@ def api_save_auto_reply():
     
     group_id = d.get('group_id')
     if not group_id: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     trigger_keyword = d.get('trigger_keyword', '').strip()
     if not trigger_keyword: return jsonify({'status':'error','msg':'触发关键词不能为空'})
@@ -3049,6 +3055,11 @@ def api_save_start_message():
     
     message_type = d.get('message_type', 'user')
     if message_type not in ['user', 'admin']: return jsonify({'status':'error','msg':'Invalid message_type'})
+
+    group = BotGroup.query.get(group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
     
     try:
         item_id = d.get('id')
@@ -4275,7 +4286,12 @@ def api_save_sync_group_messages():
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
-    
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
     # Validate target_group_id is provided
     target_group_id = d.get('target_group_id', '').strip()
     if not target_group_id:

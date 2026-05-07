@@ -3132,10 +3132,24 @@ def api_save_entry_exit_settings():
             db.session.add(settings)
         
         settings.entry_verification_enabled = d.get('entry_verification_enabled', False)
-        settings.verification_type = d.get('verification_type', 'question')
+        verification_type = d.get('verification_type', 'question')
+        if verification_type not in ('question', 'captcha', 'emoji', 'multiple_choice'):
+            verification_type = 'question'
+        settings.verification_type = verification_type
         settings.verification_question = d.get('verification_question')
         settings.verification_answer = d.get('verification_answer')
-        settings.verification_options = d.get('verification_options')
+        verification_options = d.get('verification_options')
+        if verification_options is not None:
+            if isinstance(verification_options, list):
+                verification_options = json.dumps(verification_options, ensure_ascii=False)
+            elif isinstance(verification_options, str):
+                try:
+                    json.loads(verification_options)
+                except (ValueError, TypeError):
+                    verification_options = None
+            else:
+                verification_options = None
+        settings.verification_options = verification_options
         settings.verification_timeout = d.get('verification_timeout', 60)
         settings.welcome_enabled = d.get('welcome_enabled', False)
         settings.welcome_message = d.get('welcome_message')

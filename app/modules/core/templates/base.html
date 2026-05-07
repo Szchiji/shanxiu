@@ -888,6 +888,44 @@
             }
         }
         
+        /* ── Unified page header ── */
+        .page-header, .page-header-fields {
+            background: var(--accent);
+            color: white;
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+        }
+
+        @media (min-width: 768px) {
+            .page-header, .page-header-fields {
+                padding: 1.5rem 2rem;
+                border-radius: 15px;
+                margin-bottom: 2rem;
+            }
+        }
+
+        .page-header h4, .page-header-fields h4 {
+            font-size: 1.1rem;
+        }
+
+        @media (min-width: 768px) {
+            .page-header h4, .page-header-fields h4 {
+                font-size: 1.5rem;
+            }
+        }
+
+        .page-header p, .page-header-fields p {
+            font-size: 0.8rem;
+        }
+
+        @media (min-width: 768px) {
+            .page-header p, .page-header-fields p {
+                font-size: 1rem;
+            }
+        }
+
         /* Dark mode alert overrides */
         [data-bs-theme="dark"] .alert-info {
             background: rgba(59, 130, 246, 0.12);

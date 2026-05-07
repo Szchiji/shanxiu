@@ -1064,9 +1064,16 @@ def page_points_log(gid):
     )
     logs = pagination.items
     filter_qs = urlencode({'search_user': search_user, 'search_reason': search_reason})
+
+    # Top 10 leaderboard for points_log sidebar
+    top_users = db.session.query(UserPoints.user_id, UserPoints.points_balance).filter(
+        UserPoints.group_id == gid
+    ).order_by(UserPoints.points_balance.desc()).limit(10).all()
+    top_users = [{'user_id': u.user_id, 'total_points': u.points_balance} for u in top_users]
+
     return render_template('points_log.html', page='points_log', group=group, logs=logs,
                            pagination=pagination, search_user=search_user, search_reason=search_reason,
-                           filter_qs=filter_qs)
+                           filter_qs=filter_qs, top_users=top_users)
 
 @core_bp.route('/group/<int:gid>/points_exchange')
 def page_points_exchange(gid):

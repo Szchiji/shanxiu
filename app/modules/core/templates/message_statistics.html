@@ -12,18 +12,25 @@
     }
     
     .stats-card {
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--card-shadow);
         margin-bottom: 1.5rem;
         padding: 1.5rem;
+        background: var(--bg-card);
     }
     
     .stat-item {
-        padding: 1rem;
-        border-radius: 10px;
-        background: #f8f9fa;
-        margin-bottom: 1rem;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        background: var(--bg-card-hover);
+        margin-bottom: 0.75rem;
+    }
+
+    .chart-container {
+        position: relative;
+        height: 260px;
+        margin-bottom: 0.5rem;
     }
 </style>
 
@@ -50,6 +57,17 @@
 
 <div class="row">
     <div class="col-md-10 mx-auto">
+
+        {% if stats %}
+        <!-- Chart -->
+        <div class="stats-card">
+            <h5 class="fw-bold mb-3"><i class="fa-solid fa-chart-bar me-2 text-primary"></i>每日消息趋势</h5>
+            <div class="chart-container">
+                <canvas id="msgChart"></canvas>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="stats-card">
             <h5 class="fw-bold mb-3"><i class="fa-solid fa-calendar-days me-2"></i>每日消息统计</h5>
             {% if stats %}
@@ -57,7 +75,7 @@
                 <div class="stat-item">
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
-                            <strong>{{ s.date.strftime('%Y-%m-%d %A') }}</strong>
+                            <strong style="color:var(--text-primary);">{{ s.date.strftime('%Y-%m-%d %A') }}</strong>
                         </div>
                         <div class="text-end">
                             <span class="badge bg-primary me-2">
@@ -118,4 +136,63 @@
         </div>
     </div>
 </div>
+
+{% if stats %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+    const labelColor = isDark ? '#8b949e' : '#64748b';
+
+    const labels = {{ stats | map(attribute='date') | map('string') | list | tojson }};
+    const messages = {{ stats | map(attribute='total_messages') | list | tojson }};
+    const activeUsers = {{ stats | map(attribute='active_users') | list | tojson }};
+
+    new Chart(document.getElementById('msgChart'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: '消息数',
+                    data: messages,
+                    backgroundColor: 'rgba(59,130,246,0.6)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    yAxisID: 'y'
+                },
+                {
+                    label: '活跃用户',
+                    data: activeUsers,
+                    type: 'line',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34,197,94,0.12)',
+                    pointBackgroundColor: '#22c55e',
+                    tension: 0.3,
+                    fill: true,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: labelColor, font: { size: 12 } } },
+                tooltip: { backgroundColor: isDark ? '#1c2128' : '#fff', titleColor: labelColor, bodyColor: labelColor, borderColor: gridColor, borderWidth: 1 }
+            },
+            scales: {
+                x: { ticks: { color: labelColor, maxRotation: 45 }, grid: { color: gridColor } },
+                y: { position: 'left', ticks: { color: labelColor }, grid: { color: gridColor }, title: { display: true, text: '消息数', color: labelColor } },
+                y1: { position: 'right', ticks: { color: '#22c55e' }, grid: { drawOnChartArea: false }, title: { display: true, text: '活跃用户', color: '#22c55e' } }
+            }
+        }
+    });
+})();
+</script>
+{% endif %}
+
 {% endblock %}

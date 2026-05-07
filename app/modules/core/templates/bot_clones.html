@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -55,6 +55,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('bot_clones') %}
+<ul>
+    <li>克隆机器人允许您使用<strong>不同的 Bot Token</strong> 运行多个机器人实例，各自独立管理不同群组。</li>
+    <li>克隆实例仅能管理分配给它的群组，与主实例数据隔离，适合多品牌/多项目运营。</li>
+    <li>每个克隆实例有独立的管理后台入口，使用克隆账号登录后只能看到该克隆的群组。</li>
+    <li><strong>注意</strong>：克隆机器人的 Token 使用加密存储，仅在启动时解密使用。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

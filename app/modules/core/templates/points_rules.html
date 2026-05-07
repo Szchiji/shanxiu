@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -48,6 +48,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('points_rules') %}
+<ul>
+    <li>定义群内哪些行为可以获得积分，如：每日打卡、发言、拉人等。</li>
+    <li>每条规则可设置<strong>积分数量</strong>和<strong>每日上限</strong>，防止刷分。</li>
+    <li>规则类型支持：<code>checkin</code>（打卡）、<code>message</code>（发言）、<code>invite</code>（邀请）等。</li>
+    <li>规则可单独启用或禁用，不影响其他规则。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

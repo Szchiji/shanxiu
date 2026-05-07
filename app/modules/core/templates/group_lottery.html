@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -82,6 +82,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('group_lottery') %}
+<ul>
+    <li>在群内创建限时抽奖活动，成员通过回复消息或指令参与。</li>
+    <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
+    <li>可设置最大参与人数，达到后自动关闭报名。</li>
+    <li>开奖后系统自动公布中奖名单并发送恭喜消息，可配置奖励积分自动发放。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

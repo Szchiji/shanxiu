@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -50,6 +50,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('forced_sub') %}
+<ul>
+    <li>要求群内成员必须订阅指定的 Telegram 频道，才能在群内正常发言。</li>
+    <li>未订阅者发消息时，机器人会自动删除其消息并提示订阅链接。</li>
+    <li>填写频道的 <strong>用户名（@xxx）</strong> 或 <strong>数字 ID</strong>，并确保机器人是该频道的管理员。</li>
+    <li>可自定义提示文案，引导用户前往订阅。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

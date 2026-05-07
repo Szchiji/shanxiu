@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -155,6 +155,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('points_exchange') %}
+<ul>
+    <li>设置可供群成员用积分兑换的商品，如激活码、服务资格等虚拟物品。</li>
+    <li>每件商品可设置<strong>积分售价</strong>、<strong>库存数量</strong>（-1 为无限）和兑换说明。</li>
+    <li>配置<strong>展示频道</strong>后，商品目录会自动推送到频道；新品上架/售罄下架时自动更新公告。</li>
+    <li>成员在群内使用 <code>/exchange</code> 命令查看商品并发起兑换申请，管理员审核后发放。</li>
+</ul>
+{% endcall %}
 
 <!-- Channel config -->
 <div class="section-card">

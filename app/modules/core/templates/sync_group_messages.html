@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -106,6 +106,15 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('sync_group') %}
+<ul>
+    <li>将本群内的消息实时转发同步到另一个群组或频道。</li>
+    <li>填写<strong>目标群组 ID</strong>（以负号开头的数字），机器人需要是目标群的管理员。</li>
+    <li>可选择同步所有消息或仅同步包含特定关键词的消息。</li>
+    <li>同步日志记录每条消息的转发状态，便于排查问题。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

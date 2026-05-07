@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -48,6 +48,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('member_level') %}
+<ul>
+    <li>根据群成员的积分总量，自动划分等级（如：青铜、白银、黄金……）。</li>
+    <li>每个等级可设置<strong>所需积分下限</strong>、<strong>等级名称</strong>和<strong>专属权限</strong>（发言/媒体/链接等）。</li>
+    <li>系统每 30 分钟自动更新一次成员等级和对应的 Telegram 权限。</li>
+    <li>可用于激励活跃成员，高等级可解锁更多群内权限。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

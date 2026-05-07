@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -332,6 +332,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('settings') %}
+<ul>
+    <li><strong>打卡</strong>：配置打卡触发指令、提示消息和回复删除时长。</li>
+    <li><strong>积分查询</strong>：配置 <code>/points</code> 等指令的格式和返回样式。</li>
+    <li><strong>消息模板</strong>：编辑打卡成功、积分不足等场景的回复文案，支持变量占位符。</li>
+    <li><strong>认证系统</strong>：控制哪些功能仅限已认证用户使用。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <!-- 左侧：参数配置 -->

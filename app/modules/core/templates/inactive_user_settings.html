@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -44,6 +44,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('inactive_user') %}
+<ul>
+    <li>定期扫描群内长期未发言的成员，根据设定的天数阈值进行处理。</li>
+    <li><strong>警告模式</strong>：向不活跃成员发送提示，要求其在指定时间内发言，否则踢出。</li>
+    <li><strong>直接移除</strong>：超过不活跃天数后直接踢出群组。</li>
+    <li>可豁免管理员及特定角色，避免误踢。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-8 mx-auto">

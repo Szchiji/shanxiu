@@ -356,6 +356,35 @@ document.getElementById('confirmButton').addEventListener('click', function() {
 </div>
 {% endmacro %}
 
+{# 功能说明可折叠面板 - Feature Description Panel #}
+{# Usage:
+    {% from "components.html" import feature_description %}
+    {% call feature_description('unique_page_id') %}
+    <ul>
+        <li>说明条目一</li>
+        <li>说明条目二</li>
+    </ul>
+    {% endcall %}
+#}
+{% macro feature_description(page_id, label='功能说明') %}
+<div class="mb-3">
+    <button class="feature-desc-toggle"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#desc_{{ page_id }}"
+            aria-expanded="false"
+            aria-controls="desc_{{ page_id }}">
+        <i class="fa-solid fa-circle-question me-1"></i>{{ label }}
+        <i class="fa-solid fa-chevron-down ms-1 feature-desc-chevron"></i>
+    </button>
+    <div class="collapse mt-2" id="desc_{{ page_id }}">
+        <div class="feature-desc-panel">
+            {{ caller() }}
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
 {# 空状态提示 - Empty State #}
 {% macro empty_state(icon='fa-solid fa-inbox', message='暂无数据', action_text='', action_onclick='') %}
 <div class="text-center py-5">

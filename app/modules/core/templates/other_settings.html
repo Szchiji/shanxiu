@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 
 {% block content %}
 {{ toast_notification() }}
@@ -45,6 +45,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('other_settings') %}
+<ul>
+    <li><strong>自动删除系统消息</strong>：自动删除 Telegram 的加群/退群通知等系统消息，保持群内整洁。</li>
+    <li><strong>取消频道置顶</strong>：自动取消关联频道的置顶消息，防止转发内容堆积。</li>
+    <li><strong>反链接预览</strong>：对所有消息关闭链接预览，减少消息占屏空间。</li>
+    <li>以上为不属于其他独立分类的辅助管理功能集合。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-8 mx-auto">

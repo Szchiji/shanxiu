@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -44,6 +44,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('timed_group') %}
+<ul>
+    <li>设置群组每天自动在指定时间<strong>开启发言</strong>（解禁所有成员）和<strong>关闭发言</strong>（禁言所有成员）。</li>
+    <li>适合运营「定时开放讨论」或「夜间静默」的群。</li>
+    <li>可设置关闭群时的提示消息，告知成员开放时间。</li>
+    <li>启用后机器人每分钟检测一次时间，到点自动执行操作。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-8 mx-auto">

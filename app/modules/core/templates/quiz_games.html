@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -33,6 +33,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('quiz_games') %}
+<ul>
+    <li>预设知识问答题库，成员在群内使用 <code>/quiz</code> 命令触发随机出题。</li>
+    <li>答对可获得设定的<strong>积分奖励</strong>，答错无惩罚。</li>
+    <li>每道题可设置<strong>难度等级</strong>和<strong>正确答案选项</strong>（最多 4 个选项）。</li>
+    <li>适合用于每日一题、群内互动激励等场景。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-10 mx-auto">

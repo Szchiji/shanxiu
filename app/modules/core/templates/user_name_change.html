@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -34,6 +35,14 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('user_name_change') %}
+<ul>
+    <li>自动记录群成员更改 Telegram 用户名或昵称的历史，保留完整改名轨迹。</li>
+    <li>可用于追溯改名前的身份，防止不良成员通过改名逃避追责。</li>
+    <li>展示最近 100 条改名记录，包括旧名称、新名称和时间。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

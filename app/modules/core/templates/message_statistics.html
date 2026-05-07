@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -38,6 +39,14 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('message_statistics') %}
+<ul>
+    <li>展示群内过去 N 天的每日消息数量与活跃用户数趋势。</li>
+    <li>活跃用户排行榜统计该时间段内发言最多的成员。</li>
+    <li>可用于评估群活跃度、识别核心用户，辅助运营决策。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-10 mx-auto">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -44,6 +44,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('spam_protection') %}
+<ul>
+    <li>自动检测群内刷屏、转发广告等垃圾消息，超出每分钟消息上限后触发惩罚。</li>
+    <li><strong>惩罚方式</strong>：可选禁言（限制发言权限）、踢出群组或封禁。</li>
+    <li>机器人发送的检测通知消息可设置几秒后自动删除，减少打扰。</li>
+    <li>只有启用后，所有检测规则才会生效。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-8 mx-auto">

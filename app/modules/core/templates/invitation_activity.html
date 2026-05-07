@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -105,6 +105,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('invitation') %}
+<ul>
+    <li>开启后，每次成员通过邀请链接带新人进群，邀请人可获得积分奖励。</li>
+    <li>可设置每次邀请的<strong>积分奖励数量</strong>和<strong>每日邀请上限</strong>。</li>
+    <li>邀请排行榜自动统计并展示，可激励成员积极拉人。</li>
+    <li>注意：同一用户重复进退群不重复计算邀请数。</li>
+</ul>
+{% endcall %}
 
 <!-- Stats Overview -->
 <div class="row mb-4">

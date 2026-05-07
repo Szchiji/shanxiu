@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -44,6 +44,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('keyword_filter') %}
+<ul>
+    <li>添加关键词后，机器人会自动检测群内消息是否包含这些词汇。</li>
+    <li><strong>黑名单</strong>：包含该词的消息将被删除，可同时对发送者禁言。</li>
+    <li><strong>白名单</strong>：仅允许包含该词的消息，其余会被过滤（适合频道转发群）。</li>
+    <li>支持精确匹配和正则表达式两种模式。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-10 mx-auto">

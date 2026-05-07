@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -50,6 +50,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('entry_exit') %}
+<ul>
+    <li><strong>进群验证</strong>：新成员加入时，可开启人机验证（按钮/数字/算术题），防止机器人刷群。</li>
+    <li>验证通过前成员将被限制发言，超时未完成可自动踢出。</li>
+    <li><strong>欢迎消息</strong>：成员加入后自动发送欢迎语，支持 <code>{{name}}</code> 等变量占位。</li>
+    <li><strong>退群通知</strong>：成员退出或被踢时，可自动发送告别提示消息。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <!-- 进群验证 -->

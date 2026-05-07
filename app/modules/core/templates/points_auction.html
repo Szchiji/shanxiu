@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -52,6 +52,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('points_auction') %}
+<ul>
+    <li>创建限时竞拍活动，群成员用积分出价，结束时最高出价者获得物品。</li>
+    <li>可设置<strong>起拍价</strong>、<strong>最低加价幅度</strong>和<strong>截止时间</strong>。</li>
+    <li>成员在群内使用 <code>/bid 金额</code> 参与竞价，每次出价会刷新排行并通知前一名。</li>
+    <li>拍卖结束后，积分从获胜者账户自动扣除，其余出价者积分原路返还。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

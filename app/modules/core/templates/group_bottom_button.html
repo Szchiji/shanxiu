@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -113,15 +113,14 @@
 </div>
 
 <!-- Feature Description -->
-<div class="alert alert-info mb-3">
-    <h6 class="fw-bold mb-2"><i class="fa-solid fa-info-circle me-2"></i>功能说明</h6>
-    <ul class="mb-0 small">
-        <li><strong>群底部按钮：</strong>为群组设置自定义菜单按钮，方便群成员快速访问常用功能</li>
-        <li><strong>按钮排列：</strong>按行分组显示，每行可包含多个按钮并排显示</li>
-        <li><strong>输入提示：</strong>可以为按钮设置输入框提示文案，点击按钮后会在群输入框显示</li>
-        <li><strong>使用方法：</strong>配置完成后点击"推送到群组"，菜单键盘将立即显示给所有群成员</li>
-    </ul>
-</div>
+{% call feature_description('group_bottom_button') %}
+<ul>
+    <li><strong>群底部按钮：</strong>为群组设置自定义菜单按钮，方便群成员快速访问常用功能。</li>
+    <li><strong>按钮排列：</strong>按行分组显示，每行可包含多个按钮并排显示。</li>
+    <li><strong>输入提示：</strong>可以为按钮设置输入框提示文案，点击按钮后在群输入框中预填。</li>
+    <li><strong>使用方法：</strong>配置完成后点击「推送到群组」，菜单键盘立即显示给所有群成员。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

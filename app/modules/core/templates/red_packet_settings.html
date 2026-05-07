@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -19,6 +20,16 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('red_packet') %}
+<ul>
+    <li>群成员可用 <code>/redpacket 总积分 数量 [祝福语]</code> 发出积分红包。</li>
+    <li><strong>拼手气红包</strong>：每人抢到的积分随机，先到先得，手气好者得最多。</li>
+    <li><strong>普通红包</strong>：每人平均分配，总积分 ÷ 数量。</li>
+    <li>红包超时未领完，剩余积分自动退回发送者账户。</li>
+    <li>此页面可查看群内历史红包记录。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-md-10 mx-auto">

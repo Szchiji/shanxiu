@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -75,6 +76,15 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('points_log') %}
+<ul>
+    <li>完整记录群内每位成员的积分变动流水，包括：获得原因、变动数量和时间。</li>
+    <li>可按<strong>用户 ID</strong> 或<strong>备注关键词</strong>筛选查找特定记录。</li>
+    <li>常见来源：打卡、发言、管理员手动调整、兑换消耗、红包等。</li>
+    <li>用于审计积分异常或核对奖励发放情况。</li>
+</ul>
+{% endcall %}
 
 <!-- Search / Filter -->
 <div class="card search-card p-3">

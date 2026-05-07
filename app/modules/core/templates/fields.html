@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -164,6 +164,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('fields') %}
+<ul>
+    <li>自定义用户资料档案的字段结构，例如：身高、年龄、城市、职业等。</li>
+    <li>每个字段需设置<strong>字段名（key）</strong>、<strong>显示名（label）</strong>和<strong>类型</strong>（文本/数字/单选等）。</li>
+    <li>配置后群成员使用 <code>/profile</code> 命令可查看和填写自己的资料。</li>
+    <li>字段顺序影响资料卡的展示顺序，可拖拽调整。</li>
+</ul>
+{% endcall %}
 
 <div class="card shadow-sm border-0" style="border-radius: 15px;">
     <div class="card-body p-4">

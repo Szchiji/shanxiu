@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components.html" import toast_notification, loading_spinner %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
@@ -48,6 +48,15 @@
         </button>
     </div>
 </div>
+
+{% call feature_description('points_auto_reply') %}
+<ul>
+    <li>设置需要消耗积分才能触发的「付费回复」内容，成员发送关键词后扣除积分并返回内容。</li>
+    <li>适合用于发布付费资料、内容订阅、解锁隐藏信息等场景。</li>
+    <li>可设置每次触发的<strong>积分消耗量</strong>和回复内容（文字/图片/文件）。</li>
+    <li>积分不足的成员无法触发，机器人会自动提示余额不足。</li>
+</ul>
+{% endcall %}
 
 <div class="row">
     <div class="col-12">

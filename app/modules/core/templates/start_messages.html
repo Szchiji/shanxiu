@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -223,6 +224,15 @@
     <i class="fa-solid fa-mobile-screen-button me-2 fs-5"></i>
     <div>💡 以下消息仅在用户<strong>私聊机器人</strong>发送 <code>/start</code> 时触发，与群组内的消息无关。</div>
 </div>
+
+{% call feature_description('start_messages') %}
+<ul>
+    <li>配置用户私聊机器人发送 <code>/start</code> 时收到的欢迎消息（与群组无关）。</li>
+    <li>可添加多条消息，按顺序依次发送，支持文字、图片、视频等格式。</li>
+    <li>每条消息可配置<strong>底部链接按钮</strong>，引导用户访问网站或频道。</li>
+    <li>可选择消息是否包含<strong>加群引导按钮</strong>，便于私聊引流到群组。</li>
+</ul>
+{% endcall %}
 
 <!-- 私聊全局设置卡片 -->
 <div class="card mb-4 shadow-sm border-0">

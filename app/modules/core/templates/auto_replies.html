@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "components.html" import feature_description %}
 {% block content %}
 <style>
     .page-header {
@@ -462,6 +463,16 @@
         </div>
     </div>
 </div>
+
+{% call feature_description('auto_replies') %}
+<ul>
+    <li>设置关键词触发的自动回复：成员发送含关键词的消息时，机器人自动回复设定内容。</li>
+    <li>支持<strong>精确匹配</strong>和<strong>包含匹配</strong>两种触发方式。</li>
+    <li>回复内容支持：文字、图片、视频、文件等多媒体格式。</li>
+    <li>可设置<strong>回复冷却时间</strong>，防止同一关键词被频繁触发刷屏。</li>
+    <li>支持导入/导出配置文件，方便批量管理。</li>
+</ul>
+{% endcall %}
 
 <!-- Search Box -->
 <div class="search-box">

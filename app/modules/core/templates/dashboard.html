@@ -2,83 +2,72 @@
 {% block content %}
 <style>
     .stat-card {
-        background: var(--primary-gradient);
-        border-radius: 16px;
-        padding: 1.5rem;
-        color: white;
-        box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .stat-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(circle at top right, rgba(255,255,255,0.15) 0%, transparent 60%);
+        background: var(--bg-card);
+        border-radius: 10px;
+        padding: 1.25rem 1.5rem;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--card-shadow);
     }
     
     .stat-number {
-        font-size: 2.5rem;
+        font-size: 2rem;
         font-weight: 700;
+        color: var(--text-primary);
     }
     
     .stat-label {
-        font-size: 0.9rem;
-        opacity: 0.9;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        font-size: 0.85rem;
+        color: var(--text-muted);
     }
     
     .stat-badge {
-        font-size: 1.25rem;
-        font-weight: 700;
-        padding: 0.6rem 1.25rem;
-        border-radius: 50px;
-        background: rgba(255, 255, 255, 0.15);
+        font-size: 1rem;
+        font-weight: 600;
+        padding: 0.4rem 1rem;
+        border-radius: 6px;
+        background: var(--bg-card-hover);
+        color: var(--text-primary);
         display: inline-block;
         margin: 0 0.25rem;
+        border: 1px solid var(--border-color);
     }
     
     .stats-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 1rem;
+        gap: 0.75rem;
     }
     
     .mini-stat-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 1.25rem;
+        border-radius: 8px;
+        padding: 1rem;
         text-align: center;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     
     .mini-stat-card:hover {
-        border-color: rgba(59, 130, 246, 0.35);
-        box-shadow: 0 4px 16px rgba(59, 130, 246, 0.1);
+        border-color: rgba(59, 130, 246, 0.3);
     }
     
     .mini-stat-card .icon {
-        width: 46px;
-        height: 46px;
-        border-radius: 10px;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin: 0 auto 0.75rem;
-        font-size: 1.1rem;
+        margin: 0 auto 0.6rem;
+        font-size: 1rem;
+        background: var(--bg-card-hover);
+        color: var(--accent);
     }
     
     .mini-stat-card h3 {
-        font-size: 1.6rem;
+        font-size: 1.4rem;
         font-weight: 700;
         color: var(--text-primary);
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.2rem;
     }
     
     .mini-stat-card p {
@@ -90,7 +79,7 @@
     .security-status {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
+        border-radius: 8px;
         padding: 1rem;
     }
     
@@ -98,7 +87,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0.5rem 0;
+        padding: 0.4rem 0;
         border-bottom: 1px solid var(--border-color);
     }
     
@@ -107,63 +96,63 @@
     }
     
     .status-badge {
-        padding: 0.25rem 0.75rem;
-        border-radius: 50px;
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
         font-size: 0.75rem;
-        font-weight: 600;
+        font-weight: 500;
     }
     
     .status-enabled {
-        background: rgba(34, 197, 94, 0.15);
-        color: #22c55e;
+        background: rgba(34, 197, 94, 0.12);
+        color: #16a34a;
     }
     
     .status-disabled {
-        background: rgba(239, 68, 68, 0.15);
-        color: #ef4444;
+        background: rgba(100, 116, 139, 0.12);
+        color: var(--text-muted);
     }
     
     .quick-action-card {
-        border-radius: 16px;
-        padding: 1.5rem;
+        border-radius: 8px;
+        padding: 1.25rem;
         text-decoration: none;
         display: block;
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     
     .quick-action-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(59, 130, 246, 0.12);
-        border-color: rgba(59, 130, 246, 0.35);
+        box-shadow: var(--hover-shadow);
+        border-color: rgba(59, 130, 246, 0.3);
     }
     
     .icon-users { color: #3b82f6; }
     .icon-settings { color: #06b6d4; }
-    .icon-fields { color: #ec4899; }
+    .icon-fields { color: #8b5cf6; }
     .icon-security { color: #22c55e; }
     .icon-points { color: #f59e0b; }
+    .badge-purple { background: #8b5cf6; color: #fff; }
 </style>
 
-<div class="row mb-4">
+<div class="row mb-3">
     <div class="col-12">
         <div class="stat-card">
-            <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center position-relative" style="z-index: 1;">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center">
                 <div class="mb-2 mb-md-0">
-                    <h2 class="fw-bold mb-2" style="font-size: 1.5rem;">{{ group.title }}</h2>
-                    <p class="mb-0 opacity-75" style="font-size: 0.9rem;">
-                        <i class="fa-solid fa-hashtag"></i> ID: {{ group.chat_id }} 
-                        <span class="mx-2">|</span> 
-                        <i class="fa-solid fa-tag"></i> {{ group.type }}
+                    <h5 class="fw-bold mb-1" style="color: var(--text-primary);">{{ group.title }}</h5>
+                    <p class="mb-0" style="font-size: 0.82rem; color: var(--text-muted);">
+                        <i class="fa-solid fa-hashtag"></i> {{ group.chat_id }} 
+                        <span class="mx-2">·</span> 
+                        {{ group.type }}
                     </p>
                 </div>
-                <div class="text-start text-md-end d-flex flex-wrap gap-2 mt-2 mt-md-0">
+                <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
                     <div class="stat-badge">
-                        <i class="fa-solid fa-users me-2"></i>{{ stats.users }}
+                        <i class="fa-solid fa-users me-1"></i>{{ stats.users }}
                     </div>
-                    <div class="stat-badge" style="background: rgba(16, 185, 129, 0.3);">
-                        <i class="fa-solid fa-circle text-success me-2" style="font-size: 10px;"></i>{{ stats.online }}
+                    <div class="stat-badge">
+                        <i class="fa-solid fa-circle text-success me-1" style="font-size: 9px;"></i>{{ stats.online }}
                     </div>
                 </div>
             </div>
@@ -171,47 +160,35 @@
     </div>
 </div>
 
-<!-- Key Statistics (merged into one row of 6) -->
-<div class="stats-grid mb-4">
+<!-- Key Statistics -->
+<div class="stats-grid mb-3">
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);">
-            <i class="fa-solid fa-calendar-check" style="color: #3b82f6;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-calendar-check"></i></div>
         <h3>{{ stats.today_checkins }}</h3>
         <p>今日打卡</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.12) 0%, rgba(34, 211, 238, 0.12) 100%);">
-            <i class="fa-solid fa-message" style="color: #06b6d4;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-message"></i></div>
         <h3>{{ stats.today_messages }}</h3>
         <p>今日消息</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(74, 222, 128, 0.12) 100%);">
-            <i class="fa-solid fa-user-plus" style="color: #22c55e;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-user-plus"></i></div>
         <h3>{{ stats.new_users_week }}</h3>
         <p>本周新用户</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(251, 191, 36, 0.12) 100%);">
-            <i class="fa-solid fa-coins" style="color: #f59e0b;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-coins"></i></div>
         <h3>{{ stats.total_points }}</h3>
         <p>总积分</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(236, 72, 153, 0.12) 0%, rgba(244, 63, 94, 0.12) 100%);">
-            <i class="fa-solid fa-filter" style="color: #ec4899;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-filter"></i></div>
         <h3>{{ stats.keyword_filters }}</h3>
         <p>关键词过滤</p>
     </div>
     <div class="mini-stat-card">
-        <div class="icon" style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(74, 222, 128, 0.12) 100%);">
-            <i class="fa-solid fa-clock" style="color: #22c55e;"></i>
-        </div>
+        <div class="icon"><i class="fa-solid fa-clock"></i></div>
         <h3>{{ stats.scheduled_msgs }}</h3>
         <p>定时消息</p>
     </div>
@@ -271,39 +248,39 @@
     <!-- Quick Action Cards -->
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/users" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-users fa-3x icon-users mb-3"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">用户管理</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">添加、修改、删除本群的认证用户</p>
-                <div>
-                    <span class="badge bg-primary">{{ stats.users }} 用户</span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-users fa-lg icon-users"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">用户管理</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">添加、修改、删除本群的认证用户</p>
+                <span class="badge bg-primary">{{ stats.users }} 用户</span>
             </div>
         </a>
     </div>
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/spam_protection" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-shield fa-3x icon-security mb-3"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">群组安全</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">垃圾防护、关键词过滤、强制订阅</p>
-                <div>
-                    <span class="badge {{ 'bg-success' if stats.spam_protection_enabled else 'bg-secondary' }}">
-                        {{ '已启用' if stats.spam_protection_enabled else '未启用' }}
-                    </span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-shield fa-lg icon-security"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">群组安全</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">垃圾防护、关键词过滤、强制订阅</p>
+                <span class="badge {{ 'bg-success' if stats.spam_protection_enabled else 'bg-secondary' }}">
+                    {{ '已启用' if stats.spam_protection_enabled else '未启用' }}
+                </span>
             </div>
         </a>
     </div>
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/points_rules" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-coins fa-3x icon-points mb-3"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">积分系统</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">积分规则、积分排行、积分日志</p>
-                <div>
-                    <span class="badge bg-warning">{{ stats.total_points }} 总积分</span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-coins fa-lg icon-points"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">积分系统</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">积分规则、积分排行、积分日志</p>
+                <span class="badge bg-warning">{{ stats.total_points }} 总积分</span>
             </div>
         </a>
     </div>
@@ -312,37 +289,37 @@
 <div class="row g-3 mt-1">
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/settings" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-sliders fa-3x icon-settings mb-3"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">功能设置</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">配置打卡指令、欢迎语、自动回复</p>
-                <div>
-                    <span class="badge bg-info">智能配置</span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-sliders fa-lg icon-settings"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">功能设置</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">配置打卡指令、欢迎语、自动回复</p>
+                <span class="badge bg-info">智能配置</span>
             </div>
         </a>
     </div>
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/fields" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-list-check fa-3x icon-fields mb-3"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">字段配置</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">定义本群用户的资料字段 (如身高/地区)</p>
-                <div>
-                    <span class="badge bg-warning">自定义字段</span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-list-check fa-lg icon-fields"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">字段配置</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">定义本群用户的资料字段 (如身高/地区)</p>
+                <span class="badge bg-secondary">自定义字段</span>
             </div>
         </a>
     </div>
     <div class="col-md-4">
         <a href="/core/group/{{ group.id }}/message_statistics" class="quick-action-card card h-100">
-            <div class="card-body text-center p-4">
-                <i class="fa-solid fa-chart-bar fa-3x mb-3" style="color: #8b5cf6;"></i>
-                <h5 class="fw-bold mb-2" style="color: var(--text-primary);">消息统计</h5>
-                <p class="mb-3" style="color: var(--text-muted); font-size: 0.85rem;">查看群消息统计和活跃度分析</p>
-                <div>
-                    <span class="badge bg-purple" style="background-color: #8b5cf6;">{{ stats.today_messages }} 今日</span>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <i class="fa-solid fa-chart-bar fa-lg" style="color: #8b5cf6;"></i>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">消息统计</h6>
                 </div>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">查看群消息统计和活跃度分析</p>
+                <span class="badge badge-purple">{{ stats.today_messages }} 今日</span>
             </div>
         </a>
     </div>

@@ -178,6 +178,9 @@
             font-size: 0.8rem;
             transition: all 0.2s ease;
             border: 1px solid transparent;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
         }
         
         .sidebar .nav-link:hover {
@@ -197,6 +200,82 @@
             width: 18px;
             text-align: center;
             font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        
+        /* Accordion-style sidebar group toggles */
+        .sidebar-group-toggle {
+            background: none;
+            border: 1px solid transparent;
+            width: calc(100% - 20px);
+            text-align: left;
+            cursor: pointer;
+            color: var(--text-secondary);
+            padding: 8px 14px;
+            margin: 2px 10px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            min-height: 36px;
+            text-decoration: none;
+        }
+        
+        .sidebar-group-toggle:hover {
+            color: var(--text-primary);
+            background: var(--bg-card);
+            border-color: var(--border-color);
+        }
+        
+        .sidebar-group-toggle.active-group {
+            color: var(--accent);
+            background: rgba(59, 130, 246, 0.08);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+        
+        .sidebar-group-toggle .group-icon {
+            margin-right: 10px;
+            width: 18px;
+            text-align: center;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        
+        .sidebar-chevron {
+            margin-left: auto;
+            font-size: 0.65rem;
+            transition: transform 0.2s ease;
+            opacity: 0.6;
+        }
+        
+        .sidebar-group-toggle[aria-expanded="true"] .sidebar-chevron {
+            transform: rotate(180deg);
+        }
+        
+        /* Sub-menu items inside accordion */
+        .sidebar-submenu {
+            padding-left: 0;
+        }
+        
+        .sidebar-submenu .nav-link {
+            padding: 6px 14px 6px 40px;
+            margin: 1px 10px;
+            font-size: 0.78rem;
+            min-height: 32px;
+            border-left: 2px solid transparent;
+        }
+        
+        .sidebar-submenu .nav-link:hover {
+            border-left-color: var(--accent);
+        }
+        
+        .sidebar-submenu .nav-link.active {
+            background: rgba(59, 130, 246, 0.12);
+            color: var(--accent);
+            border-color: transparent;
+            border-left: 2px solid var(--accent);
         }
         
         /* Feature description for nav-links */
@@ -215,6 +294,41 @@
         
         .sidebar .nav-link.active .feature-desc {
             color: rgba(255, 255, 255, 0.8);
+        }
+        
+        /* Mobile overlay backdrop */
+        .sidebar-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 1039;
+        }
+        
+        @media (max-width: 767.98px) {
+            .sidebar-backdrop.show {
+                display: block;
+            }
+        }
+        
+        /* Minimum touch target for buttons */
+        .btn {
+            min-height: 36px;
+        }
+        
+        @media (max-width: 767.98px) {
+            .btn {
+                min-height: 44px;
+            }
+        }
+        
+        /* Ensure tables are always scrollable on small screens */
+        .table-responsive {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
         
         .sidebar-heading {
@@ -825,9 +939,11 @@
         </div>
     </header>
 
+    <!-- Mobile sidebar backdrop -->
+    <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="toggleSidebar()"></div>
+
     <div class="container-fluid">
         <div class="row">
-            <!-- ⚡️ 修复点：无论登录状态，侧边栏始终显示，提供切换功能 -->
             {% if session.get('logged_in') %}
             <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
                 <div class="sidebar-sticky">
@@ -847,223 +963,161 @@
                             </a>
                         </li>
                         
-                        <!-- User Management -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['users', 'group_members', 'fields', 'settings'] %}active{% endif %}" 
-                               id="managementDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-user-check"></i> 用户管理
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="managementDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/users" class="dropdown-item {% if page == 'users' %}active{% endif %}">
-                                        <i class="fa-solid fa-users"></i> 认证用户
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/members" class="dropdown-item {% if page == 'group_members' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-group"></i> 群成员列表
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/fields" class="dropdown-item {% if page == 'fields' %}active{% endif %}">
-                                        <i class="fa-solid fa-list-check"></i> 资料字段
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/settings" class="dropdown-item {% if page == 'settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-sliders"></i> 功能配置
-                                    </a>
-                                </li>
-                            </ul>
-                        </li>
-                        
-                        <!-- Private Chat Settings -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['start_messages'] %}active{% endif %}"
-                               id="privateDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-mobile-screen-button"></i> 私聊设置
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="privateDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/start_messages" class="dropdown-item {% if page == 'start_messages' %}active{% endif %}">
-                                        <i class="fa-solid fa-rocket"></i> /start 消息
-                                    </a>
-                                </li>
-                            </ul>
+                        <!-- User Management (accordion) -->
+                        {% set grp_users_active = page in ['users', 'group_members', 'fields', 'settings'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_users_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_users"
+                                    aria-expanded="{{ 'true' if grp_users_active else 'false' }}">
+                                <i class="fa-solid fa-user-check group-icon"></i>
+                                用户管理
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_users_active %}show{% endif %}" id="sg_users">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/users" class="nav-link {% if page == 'users' %}active{% endif %}"><i class="fa-solid fa-users"></i> 认证用户</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/members" class="nav-link {% if page == 'group_members' %}active{% endif %}"><i class="fa-solid fa-user-group"></i> 群成员列表</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/fields" class="nav-link {% if page == 'fields' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 资料字段</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/settings" class="nav-link {% if page == 'settings' %}active{% endif %}"><i class="fa-solid fa-sliders"></i> 功能配置</a></li>
+                                </ul>
+                            </div>
                         </li>
 
-                        <!-- Group Automation -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['auto_replies', 'scheduled_messages', 'group_bottom_button'] %}active{% endif %}" 
-                               id="messagesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-robot"></i> 群组自动化
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="messagesDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/auto_replies" class="dropdown-item {% if page == 'auto_replies' %}active{% endif %}">
-                                        <i class="fa-solid fa-reply"></i> 自动回复
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/scheduled_messages" class="dropdown-item {% if page == 'scheduled_messages' %}active{% endif %}">
-                                        <i class="fa-solid fa-clock"></i> 定时消息
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/group_bottom_button" class="dropdown-item {% if page == 'group_bottom_button' %}active{% endif %}">
-                                        <i class="fa-solid fa-hand-pointer"></i> 底部按钮
-                                    </a>
-                                </li>
-                            </ul>
+                        <!-- Private Chat Settings (accordion) -->
+                        {% set grp_private_active = page in ['start_messages'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_private_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_private"
+                                    aria-expanded="{{ 'true' if grp_private_active else 'false' }}">
+                                <i class="fa-solid fa-mobile-screen-button group-icon"></i>
+                                私聊设置
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_private_active %}show{% endif %}" id="sg_private">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}"><i class="fa-solid fa-rocket"></i> /start 消息</a></li>
+                                </ul>
+                            </div>
                         </li>
-                        
-                        <!-- Group Security & Control -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['entry_exit_settings', 'spam_protection', 'keyword_filter', 'forced_channel_subscription', 'inactive_user_settings'] %}active{% endif %}" 
-                               id="securityDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-shield"></i> 群组安全
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="securityDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="dropdown-item {% if page == 'entry_exit_settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-shield"></i> 进退群设置
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/spam_protection" class="dropdown-item {% if page == 'spam_protection' %}active{% endif %}">
-                                        <i class="fa-solid fa-shield-virus"></i> 垃圾防护
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/keyword_filter" class="dropdown-item {% if page == 'keyword_filter' %}active{% endif %}">
-                                        <i class="fa-solid fa-filter"></i> 关键词过滤
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="dropdown-item {% if page == 'forced_channel_subscription' %}active{% endif %}">
-                                        <i class="fa-solid fa-rss"></i> 强制订阅
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="dropdown-item {% if page == 'inactive_user_settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-clock"></i> 不活跃用户
-                                    </a>
-                                </li>
-                            </ul>
+
+                        <!-- Group Automation (accordion) -->
+                        {% set grp_auto_active = page in ['auto_replies', 'scheduled_messages', 'group_bottom_button'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_auto_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_automation"
+                                    aria-expanded="{{ 'true' if grp_auto_active else 'false' }}">
+                                <i class="fa-solid fa-robot group-icon"></i>
+                                群组自动化
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_auto_active %}show{% endif %}" id="sg_automation">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_bottom_button" class="nav-link {% if page == 'group_bottom_button' %}active{% endif %}"><i class="fa-solid fa-hand-pointer"></i> 底部按钮</a></li>
+                                </ul>
+                            </div>
                         </li>
-                        
-                        <!-- Group Features -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['timed_group_control', 'invitation_activity', 'member_level', 'sync_group_messages', 'sync_message_logs'] %}active{% endif %}" 
-                               id="featuresDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-layer-group"></i> 群组功能
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="featuresDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/timed_group_control" class="dropdown-item {% if page == 'timed_group_control' %}active{% endif %}">
-                                        <i class="fa-solid fa-clock"></i> 定时开关群
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/invitation_activity" class="dropdown-item {% if page == 'invitation_activity' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-plus"></i> 邀请活动
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/member_level" class="dropdown-item {% if page == 'member_level' %}active{% endif %}">
-                                        <i class="fa-solid fa-medal"></i> 成员等级
-                                    </a>
-                                </li>
-                                <li><hr class="dropdown-divider"></li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/sync_group_messages" class="dropdown-item {% if page == 'sync_group_messages' %}active{% endif %}">
-                                        <i class="fa-solid fa-sync"></i> 同步设置
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/sync_message_logs" class="dropdown-item {% if page == 'sync_message_logs' %}active{% endif %}">
-                                        <i class="fa-solid fa-list"></i> 同步日志
-                                    </a>
-                                </li>
-                            </ul>
+
+                        <!-- Group Security (accordion) -->
+                        {% set grp_sec_active = page in ['entry_exit_settings', 'spam_protection', 'keyword_filter', 'forced_channel_subscription', 'inactive_user_settings'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_sec_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_security"
+                                    aria-expanded="{{ 'true' if grp_sec_active else 'false' }}">
+                                <i class="fa-solid fa-shield group-icon"></i>
+                                群组安全
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_sec_active %}show{% endif %}" id="sg_security">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}"><i class="fa-solid fa-user-shield"></i> 进退群设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}"><i class="fa-solid fa-shield-virus"></i> 垃圾防护</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/keyword_filter" class="nav-link {% if page == 'keyword_filter' %}active{% endif %}"><i class="fa-solid fa-filter"></i> 关键词过滤</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="nav-link {% if page == 'forced_channel_subscription' %}active{% endif %}"><i class="fa-solid fa-rss"></i> 强制订阅</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="nav-link {% if page == 'inactive_user_settings' %}active{% endif %}"><i class="fa-solid fa-user-clock"></i> 不活跃用户</a></li>
+                                </ul>
+                            </div>
                         </li>
-                        
-                        <!-- Analytics & Monitoring -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['message_statistics', 'user_name_change'] %}active{% endif %}" 
-                               id="analyticsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-chart-bar"></i> 统计 & 监控
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="analyticsDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/message_statistics" class="dropdown-item {% if page == 'message_statistics' %}active{% endif %}">
-                                        <i class="fa-solid fa-chart-line"></i> 消息统计
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/user_name_change" class="dropdown-item {% if page == 'user_name_change' %}active{% endif %}">
-                                        <i class="fa-solid fa-user-edit"></i> 改名监控
-                                    </a>
-                                </li>
-                            </ul>
+
+                        <!-- Group Features (accordion) -->
+                        {% set grp_feat_active = page in ['timed_group_control', 'invitation_activity', 'member_level', 'sync_group_messages', 'sync_message_logs'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_feat_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_features"
+                                    aria-expanded="{{ 'true' if grp_feat_active else 'false' }}">
+                                <i class="fa-solid fa-layer-group group-icon"></i>
+                                群组功能
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_feat_active %}show{% endif %}" id="sg_features">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时开关群</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}"><i class="fa-solid fa-user-plus"></i> 邀请活动</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}"><i class="fa-solid fa-medal"></i> 成员等级</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
+                                </ul>
+                            </div>
                         </li>
-                        
-                        <!-- Points & Activities -->
-                        <li class="nav-item dropdown">
-                            <a href="#" class="nav-link dropdown-toggle {% if page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}active{% endif %}" 
-                               id="pointsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                <i class="fa-solid fa-coins"></i> 积分 & 互动
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="pointsDropdown">
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_rules" class="dropdown-item {% if page == 'points_rules' %}active{% endif %}">
-                                        <i class="fa-solid fa-list-check"></i> 积分规则
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_exchange" class="dropdown-item {% if page == 'points_exchange' %}active{% endif %}">
-                                        <i class="fa-solid fa-gift"></i> 积分兑换
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_auto_reply" class="dropdown-item {% if page == 'points_auto_reply' %}active{% endif %}">
-                                        <i class="fa-solid fa-comments-dollar"></i> 积分回复
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_auction" class="dropdown-item {% if page == 'points_auction' %}active{% endif %}">
-                                        <i class="fa-solid fa-gavel"></i> 积分竞拍
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/points_log" class="dropdown-item {% if page == 'points_log' %}active{% endif %}">
-                                        <i class="fa-solid fa-history"></i> 积分日志
-                                    </a>
-                                </li>
-                                <li><hr class="dropdown-divider"></li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/group_lottery" class="dropdown-item {% if page == 'group_lottery' %}active{% endif %}">
-                                        <i class="fa-solid fa-trophy"></i> 群抽奖
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/group_votes" class="dropdown-item {% if page == 'group_votes' %}active{% endif %}">
-                                        <i class="fa-solid fa-square-poll-vertical"></i> 群投票
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/quiz_games" class="dropdown-item {% if page == 'quiz_games' %}active{% endif %}">
-                                        <i class="fa-solid fa-brain"></i> 问答游戏
-                                    </a>
-                                </li>
-                                <li>
-                                    <a href="/core/group/{{ current_group.id }}/red_packet_settings" class="dropdown-item {% if page == 'red_packet_settings' %}active{% endif %}">
-                                        <i class="fa-solid fa-gift"></i> 红包
-                                    </a>
-                                </li>
-                            </ul>
+
+                        <!-- Analytics & Monitoring (accordion) -->
+                        {% set grp_analytics_active = page in ['message_statistics', 'user_name_change'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_analytics_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_analytics"
+                                    aria-expanded="{{ 'true' if grp_analytics_active else 'false' }}">
+                                <i class="fa-solid fa-chart-bar group-icon"></i>
+                                统计 &amp; 监控
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_analytics_active %}show{% endif %}" id="sg_analytics">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}"><i class="fa-solid fa-user-edit"></i> 改名监控</a></li>
+                                </ul>
+                            </div>
                         </li>
-                        
+
+                        <!-- Points & Activities (accordion) -->
+                        {% set grp_points_active = page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if grp_points_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_points"
+                                    aria-expanded="{{ 'true' if grp_points_active else 'false' }}">
+                                <i class="fa-solid fa-coins group-icon"></i>
+                                积分 &amp; 互动
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if grp_points_active %}show{% endif %}" id="sg_points">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 积分规则</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_exchange" class="nav-link {% if page == 'points_exchange' %}active{% endif %}"><i class="fa-solid fa-gift"></i> 积分兑换</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}"><i class="fa-solid fa-comments-dollar"></i> 积分回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_auction" class="nav-link {% if page == 'points_auction' %}active{% endif %}"><i class="fa-solid fa-gavel"></i> 积分竞拍</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}"><i class="fa-solid fa-history"></i> 积分日志</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}"><i class="fa-solid fa-trophy"></i> 群抽奖</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_votes" class="nav-link {% if page == 'group_votes' %}active{% endif %}"><i class="fa-solid fa-square-poll-vertical"></i> 群投票</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/quiz_games" class="nav-link {% if page == 'quiz_games' %}active{% endif %}"><i class="fa-solid fa-brain"></i> 问答游戏</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/red_packet_settings" class="nav-link {% if page == 'red_packet_settings' %}active{% endif %}"><i class="fa-solid fa-gift"></i> 红包</a></li>
+                                </ul>
+                            </div>
+                        </li>
+
                         <!-- Report Management -->
                         <li class="nav-item">
                             <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">
@@ -1079,7 +1133,7 @@
                         </li>
                         {% endif %}
                         
-                        <!-- Bot Clones - Global feature, not group-specific, only visible on main instance and to main admins -->
+                        <!-- Bot Clones - Global feature, only visible on main instance and to main admins -->
                         {% if is_main_instance and not session.get('clone_id') %}
                         <li class="nav-item">
                             <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
@@ -1101,6 +1155,30 @@
             <main class="{% if session.get('logged_in') %}col-md-9 ms-sm-auto col-lg-10{% else %}col-md-12 ms-sm-auto col-lg-12{% endif %} px-md-4">
                 {% block content %}{% endblock %}
             </main>
+        </div>
+    </div>
+
+    <!-- Global Confirm Dialog (available to all pages) -->
+    <div class="modal fade" id="globalConfirmDialog" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header" id="globalConfirmHeader">
+                    <h5 class="modal-title">
+                        <i class="fa-solid fa-triangle-exclamation me-2" id="globalConfirmIcon"></i>
+                        <span id="globalConfirmTitle">确认操作</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="globalConfirmMessage">您确定要执行此操作吗？</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fa-solid fa-times me-1"></i>取消
+                    </button>
+                    <button type="button" class="btn btn-danger" id="globalConfirmBtn">
+                        <i class="fa-solid fa-check me-1"></i>确认
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1130,11 +1208,13 @@
         // ── Responsive sidebar toggle ─────────────────────────────────
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebarMenu');
+            const backdrop = document.getElementById('sidebarBackdrop');
             const main = document.querySelector('main');
             
             if (window.innerWidth < DESKTOP_BREAKPOINT) {
-                // Mobile: slide-in overlay
-                if (sidebar) sidebar.classList.toggle('show');
+                // Mobile: slide-in overlay with backdrop
+                const isShowing = sidebar && sidebar.classList.toggle('show');
+                if (backdrop) backdrop.classList.toggle('show', isShowing);
             } else {
                 // Desktop: collapse sidebar and expand main content
                 const hidden = sidebar && sidebar.classList.toggle('sidebar-hidden');
@@ -1153,20 +1233,128 @@
             }
         })();
         
-        // Close sidebar when clicking outside on mobile
-        document.addEventListener('click', function(event) {
-            const sidebar = document.getElementById('sidebarMenu');
-            const toggle = document.querySelector('.sidebar-toggle');
+        // ── Global Confirm Dialog ─────────────────────────────────────
+        let _confirmCallback = null;
+        
+        /**
+         * Show a themed confirm dialog instead of native window.confirm().
+         * @param {string} message    - Body text shown to the user.
+         * @param {Function} callback - Called if the user clicks confirm.
+         * @param {Object} [opts]     - Optional: { title, isDanger, confirmText }
+         */
+        function showConfirm(message, callback, opts) {
+            opts = opts || {};
+            document.getElementById('globalConfirmTitle').textContent = opts.title || '确认操作';
+            document.getElementById('globalConfirmMessage').textContent = message;
             
-            if (sidebar && toggle && window.innerWidth < DESKTOP_BREAKPOINT) {
-                if (!sidebar.contains(event.target) && 
-                    !toggle.contains(event.target) && 
-                    sidebar.classList.contains('show')) {
-                    sidebar.classList.remove('show');
-                }
+            const btn = document.getElementById('globalConfirmBtn');
+            const header = document.getElementById('globalConfirmHeader');
+            const icon = document.getElementById('globalConfirmIcon');
+            
+            // Style based on danger flag
+            if (opts.isDanger !== false) {
+                btn.className = 'btn btn-danger';
+                header.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+                header.style.color = '#fff';
+                icon.className = 'fa-solid fa-triangle-exclamation me-2';
+            } else {
+                btn.className = 'btn btn-primary';
+                header.style.background = 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)';
+                header.style.color = '#fff';
+                icon.className = 'fa-solid fa-question-circle me-2';
+            }
+            btn.innerHTML = '<i class="fa-solid fa-check me-1"></i>' + (opts.confirmText || '确认');
+            
+            _confirmCallback = callback;
+            const modal = new bootstrap.Modal(document.getElementById('globalConfirmDialog'));
+            modal.show();
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            const confirmBtn = document.getElementById('globalConfirmBtn');
+            if (confirmBtn) {
+                confirmBtn.addEventListener('click', function() {
+                    if (_confirmCallback) {
+                        _confirmCallback();
+                        _confirmCallback = null;
+                    }
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('globalConfirmDialog'));
+                    if (modal) modal.hide();
+                });
             }
         });
         
+        // ── Toast notification system ─────────────────────────────────
+        /**
+         * Show a themed toast notification.
+         * @param {string} message
+         * @param {string} type  - 'success' | 'error' | 'danger' | 'warning' | 'info'
+         */
+        function showToast(message, type) {
+            type = type || 'info';
+            if (type === 'error') type = 'danger';
+            
+            // Use globalToast from components.html if present, else fallback
+            const toastEl = document.getElementById('globalToast');
+            if (toastEl) {
+                const toastIcon = document.getElementById('toastIcon');
+                const toastTitle = document.getElementById('toastTitle');
+                const toastBody = document.getElementById('toastBody');
+                const toastHeader = toastEl.querySelector('.toast-header');
+                
+                toastHeader.classList.remove('bg-success', 'bg-danger', 'bg-warning', 'bg-info', 'text-white');
+                toastIcon.className = 'me-2';
+                
+                if (type === 'success') {
+                    toastHeader.classList.add('bg-success', 'text-white');
+                    toastIcon.classList.add('fas', 'fa-check-circle');
+                    toastTitle.textContent = '成功';
+                } else if (type === 'danger') {
+                    toastHeader.classList.add('bg-danger', 'text-white');
+                    toastIcon.classList.add('fas', 'fa-exclamation-circle');
+                    toastTitle.textContent = '错误';
+                } else if (type === 'warning') {
+                    toastHeader.classList.add('bg-warning');
+                    toastIcon.classList.add('fas', 'fa-exclamation-triangle');
+                    toastTitle.textContent = '警告';
+                } else {
+                    toastHeader.classList.add('bg-info', 'text-white');
+                    toastIcon.classList.add('fas', 'fa-info-circle');
+                    toastTitle.textContent = '提示';
+                }
+                toastBody.textContent = message;
+                
+                const toast = bootstrap.Toast.getOrCreateInstance(toastEl, { autohide: true, delay: 4000 });
+                toast.show();
+                return;
+            }
+            
+            // Fallback: create a floating alert using CSS variables
+            let container = document.getElementById('toastContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.style.cssText = 'position:fixed;top:70px;right:20px;z-index:9999;min-width:300px;max-width:400px;';
+                document.body.appendChild(container);
+            }
+            
+            const toast = document.createElement('div');
+            toast.className = 'alert alert-' + type + ' alert-dismissible fade show';
+            toast.style.cssText = 'box-shadow:0 4px 16px rgba(0,0,0,0.18);margin-bottom:10px;border-radius:10px;';
+            
+            const icons = { success: 'fa-check-circle', danger: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+            const iconClass = icons[type] || icons.info;
+            toast.innerHTML = '<i class="fas ' + iconClass + ' me-2"></i>' + message +
+                '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+            
+            container.appendChild(toast);
+            setTimeout(function() {
+                toast.classList.remove('show');
+                setTimeout(function() { toast.remove(); }, 150);
+            }, 4000);
+        }
+        
+        // ── postApi helper (uses toast instead of alert) ──────────────
         async function postApi(url, data) {
             try {
                 let res = await fetch(url, {
@@ -1176,43 +1364,45 @@
                 });
                 let json = await res.json();
                 if (json.status === 'ok') {
-                    alert('操作成功');
-                    location.reload();
+                    showToast('操作成功', 'success');
+                    setTimeout(() => location.reload(), 800);
                 } else {
-                    alert('操作失败: ' + (json.msg || '未知错误'));
+                    showToast('操作失败: ' + (json.msg || '未知错误'), 'danger');
                 }
             } catch (e) {
-                alert('网络请求错误');
+                showToast('网络请求错误', 'danger');
             }
         }
         
-        // Toast notification system
-        function showToast(message, type = 'info') {
-            // Create toast container if it doesn't exist
-            let container = document.getElementById('toastContainer');
-            if (!container) {
-                container = document.createElement('div');
-                container.id = 'toastContainer';
-                container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
-                document.body.appendChild(container);
-            }
+        // ── Inline save feedback ──────────────────────────────────────
+        /**
+         * Show an inline "✅ 已保存" message next to a save button.
+         * The message auto-disappears after 1.5 s.
+         * @param {HTMLElement|string} btnOrId  - Save button element or its id.
+         * @param {string} [msg]                - Message text (default "已保存").
+         * @param {string} [type]               - 'success' | 'danger' (default 'success').
+         */
+        function showInlineSave(btnOrId, msg, type) {
+            const btn = typeof btnOrId === 'string' ? document.getElementById(btnOrId) : btnOrId;
+            if (!btn) return;
+            msg = msg || '已保存';
+            type = type || 'success';
             
-            // Create toast element
-            const toast = document.createElement('div');
-            toast.className = `alert alert-${type} alert-dismissible fade show`;
-            toast.style.cssText = 'min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-bottom: 10px;';
-            toast.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
+            // Remove any existing feedback
+            const existing = btn.parentElement.querySelector('.inline-save-feedback');
+            if (existing) existing.remove();
             
-            container.appendChild(toast);
+            const span = document.createElement('span');
+            span.className = 'inline-save-feedback ms-2 fw-semibold';
+            span.style.cssText = 'font-size:0.82rem;transition:opacity 0.4s;';
+            span.style.color = type === 'success' ? '#16a34a' : '#dc2626';
+            span.textContent = (type === 'success' ? '✅ ' : '❌ ') + msg;
+            btn.insertAdjacentElement('afterend', span);
             
-            // Auto remove after 5 seconds
-            setTimeout(() => {
-                toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 150);
-            }, 5000);
+            setTimeout(function() {
+                span.style.opacity = '0';
+                setTimeout(function() { span.remove(); }, 400);
+            }, 1500);
         }
     </script>
 </body>

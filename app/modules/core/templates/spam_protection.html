@@ -39,9 +39,11 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-shield-virus me-2"></i>垃圾防护</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">自动检测和过滤垃圾消息、广告和恶意内容</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="saveSettings()">
-            <i class="fa-solid fa-save me-2"></i>保存设置
-        </button>
+        <div class="d-flex align-items-center gap-3">
+            <button id="saveBtn" class="btn btn-light fw-bold" onclick="saveSettings()">
+                <i class="fa-solid fa-save me-2"></i>保存设置
+            </button>
+        </div>
     </div>
 </div>
 
@@ -131,17 +133,6 @@
         const whitelistText = document.getElementById('whitelist_users').value.trim();
         const whitelistArray = whitelistText ? whitelistText.split('\n').map(id => parseInt(id.trim())).filter(id => !isNaN(id) && id > 0) : [];
         
-        // Warn user if there are invalid IDs
-        if (whitelistText) {
-            const allLines = whitelistText.split('\n').filter(l => l.trim());
-            if (allLines.length > whitelistArray.length) {
-                const invalidCount = allLines.length - whitelistArray.length;
-                if (!confirm(`检测到 ${invalidCount} 个无效的用户ID将被忽略。是否继续保存？`)) {
-                    return;
-                }
-            }
-        }
-        
         const data = {
             group_id: groupId,
             enabled: document.getElementById('enabled').checked,
@@ -153,22 +144,41 @@
             punishment_duration: parseInt(document.getElementById('punishment_duration').value),
             whitelist_users: whitelistArray
         };
-        
+
+        // Warn user if there are invalid IDs
+        if (whitelistText) {
+            const allLines = whitelistText.split('\n').filter(l => l.trim());
+            if (allLines.length > whitelistArray.length) {
+                const invalidCount = allLines.length - whitelistArray.length;
+                showConfirm(
+                    '检测到 ' + invalidCount + ' 个无效的用户ID将被忽略。是否继续保存？',
+                    function() { doSave(data); },
+                    { title: '确认保存', isDanger: false, confirmText: '继续保存' }
+                );
+                return;
+            }
+        }
+        doSave(data);
+    }
+
+    function doSave(data) {
         fetch('/core/api/save_spam_protection', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
             if (result.status === 'ok') {
-                showToast('设置已保存', 'success');
-                setTimeout(() => location.reload(), 1000);
+                showInlineSave('saveBtn', '已保存', 'success');
             } else {
-                showToast('保存失败: ' + (result.msg || '未知错误'));
+                showInlineSave('saveBtn', '保存失败', 'danger');
+                showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
             }
         }).catch(e => {
-            showToast('网络错误，请重试', 'error');
+            showInlineSave('saveBtn', '保存失败', 'danger');
+            showToast('网络错误，请重试', 'danger');
             console.error('操作失败:', e);
         });
     }
+</script>
 </script>
 {% endblock %}

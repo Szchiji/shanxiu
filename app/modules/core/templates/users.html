@@ -265,11 +265,25 @@
 </div>
 
 <div class="table-container">
+    <!-- Bulk action toolbar (hidden until rows selected) -->
+    <div id="bulkToolbar" class="d-none px-3 py-2 d-flex align-items-center gap-2 flex-wrap"
+         style="background:rgba(59,130,246,0.07);border-bottom:1px solid var(--border-color);">
+        <span id="bulkCount" class="text-muted small fw-semibold"></span>
+        <button class="btn btn-sm btn-danger" onclick="bulkDelete()">
+            <i class="fa-solid fa-trash me-1"></i>批量删除
+        </button>
+        <button class="btn btn-sm btn-secondary ms-auto" onclick="clearBulkSelection()">
+            <i class="fa-solid fa-times me-1"></i>取消选择
+        </button>
+    </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4">用户</th>
+                    <th class="ps-3" style="width:40px;">
+                        <input type="checkbox" id="selectAll" class="form-check-input" title="全选">
+                    </th>
+                    <th class="ps-2">用户</th>
                     {% for f in fields %}
                     <th>{{ f.label }}</th>
                     {% endfor %}
@@ -281,7 +295,10 @@
             <tbody id="userTable">
                 {% for user in users %}
                 <tr>
-                    <td class="ps-3 ps-md-4">
+                    <td class="ps-3">
+                        <input type="checkbox" class="form-check-input row-select" value="{{ user.id }}" data-tgid="{{ user.tg_id }}">
+                    </td>
+                    <td class="ps-2">
                         <div class="d-flex align-items-center gap-2">
                             <div class="user-avatar" data-uid="{{ user.tg_id }}">
                                 {{ (user.tg_display_name[:1] or '#')|upper }}
@@ -300,11 +317,11 @@
                     {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
                     <td>
                         {% if user.is_banned %}
-                        <span class="badge-status badge bg-danger">封禁</span>
+                        <span class="badge-status badge bg-danger">🚫 封禁</span>
                         {% elif user.expiration_date %}
-                        <span class="badge-status badge bg-success">正常</span>
+                        <span class="badge-status badge bg-success">✅ 正常</span>
                         {% else %}
-                        <span class="badge-status badge bg-secondary">永久</span>
+                        <span class="badge-status badge bg-info">♾ 永久</span>
                         {% endif %}
                     </td>
                     <td>{{ user.expiration_date }}</td>
@@ -315,7 +332,7 @@
                         <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }})" title="删除">
+                        <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ user.tg_display_name or user.tg_id }}')" title="删除">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </td>
@@ -343,13 +360,86 @@
     // Helper function to convert server datetime format (YYYY-MM-DD HH:MM:SS) to datetime-local format (YYYY-MM-DDTHH:MM)
     function formatDatetimeForInput(serverDatetime) {
         if (!serverDatetime) return '';
-        // Handle both 'YYYY-MM-DD HH:MM:SS' and 'YYYY-MM-DDTHH:MM' formats
         return serverDatetime.replace(' ', 'T').substring(0, 16);
     }
 
+    // ── Bulk selection logic ──────────────────────────────────────────
+    function updateBulkToolbar() {
+        const checked = document.querySelectorAll('.row-select:checked');
+        const toolbar = document.getElementById('bulkToolbar');
+        const countEl = document.getElementById('bulkCount');
+        if (checked.length > 0) {
+            toolbar.classList.remove('d-none');
+            toolbar.classList.add('d-flex');
+            countEl.textContent = '已选 ' + checked.length + ' 个用户';
+        } else {
+            toolbar.classList.add('d-none');
+            toolbar.classList.remove('d-flex');
+        }
+    }
+
+    function clearBulkSelection() {
+        document.querySelectorAll('.row-select').forEach(cb => { cb.checked = false; });
+        document.getElementById('selectAll').checked = false;
+        updateBulkToolbar();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) {
+            selectAll.addEventListener('change', function() {
+                document.querySelectorAll('.row-select').forEach(cb => { cb.checked = this.checked; });
+                updateBulkToolbar();
+            });
+        }
+        document.querySelectorAll('.row-select').forEach(cb => {
+            cb.addEventListener('change', function() {
+                const all = document.querySelectorAll('.row-select');
+                const checked = document.querySelectorAll('.row-select:checked');
+                if (selectAll) selectAll.checked = all.length === checked.length;
+                updateBulkToolbar();
+            });
+        });
+        
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') searchUsers();
+        });
+    });
+
+    function bulkDelete() {
+        const checked = document.querySelectorAll('.row-select:checked');
+        if (checked.length === 0) return;
+        const ids = Array.from(checked).map(cb => parseInt(cb.value));
+        showConfirm(
+            '确定要删除选中的 ' + ids.length + ' 个用户吗？此操作不可撤销。',
+            async function() {
+                let successCount = 0, failCount = 0;
+                for (const id of ids) {
+                    try {
+                        const res = await fetch('/core/api/delete_user', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: id })
+                        });
+                        const data = await res.json();
+                        if (data.status === 'ok') successCount++;
+                        else failCount++;
+                    } catch (e) { failCount++; }
+                }
+                if (failCount === 0) {
+                    showToast('成功删除 ' + successCount + ' 个用户', 'success');
+                } else {
+                    showToast('删除完成，成功 ' + successCount + ' 个，失败 ' + failCount + ' 个', 'warning');
+                }
+                setTimeout(() => location.reload(), 800);
+            },
+            { title: '批量删除用户', isDanger: true, confirmText: '确认删除' }
+        );
+    }
+
+    // ── Search ────────────────────────────────────────────────────────
     function searchUsers() {
         const query = document.getElementById("searchInput").value.trim();
-        // Navigate to first page with search parameter
         const params = new URLSearchParams(window.location.search);
         if (query) {
             params.set('search', query);
@@ -361,19 +451,11 @@
     }
 
     function clearSearch() {
-        // Clear search parameter but preserve other parameters
         const params = new URLSearchParams(window.location.search);
         params.delete('search');
         params.set('page', 1);
         window.location.search = params.toString();
     }
-
-    // Enter key for search
-    document.addEventListener('DOMContentLoaded', function() {
-        document.getElementById('searchInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') searchUsers();
-        });
-    });
 </script>
 
 <!-- Add User Modal -->
@@ -484,30 +566,33 @@
     }
     
     // Delete User
-    async function delUser(id) {
-        if (!confirm('确定要删除该用户吗？')) return;
-        
-        try {
-            const res = await fetch("/core/api/delete_user", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: id }),
-            });
-            
-            if (!res.ok) {
-                throw new Error('Network response was not ok');
-            }
-            
-            const data = await res.json();
-            if (data.status === 'ok') {
-                location.reload();
-            } else {
-                alert(data.msg || '删除失败');
-            }
-        } catch (error) {
-            alert('网络错误或请求失败，请稍后重试');
-            console.error('Error:', error);
-        }
+    async function delUser(id, userName) {
+        showConfirm(
+            '确定要删除用户「' + (userName || id) + '」吗？此操作不可撤销。',
+            async function() {
+                try {
+                    const res = await fetch("/core/api/delete_user", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: id }),
+                    });
+                    
+                    if (!res.ok) throw new Error('Network response was not ok');
+                    
+                    const data = await res.json();
+                    if (data.status === 'ok') {
+                        showToast('用户已删除', 'success');
+                        setTimeout(() => location.reload(), 800);
+                    } else {
+                        showToast(data.msg || '删除失败', 'danger');
+                    }
+                } catch (error) {
+                    showToast('网络错误或请求失败，请稍后重试', 'danger');
+                    console.error('Error:', error);
+                }
+            },
+            { title: '删除用户', isDanger: true, confirmText: '确认删除' }
+        );
     }
 
     // Submit Add User Form
@@ -533,44 +618,46 @@
                 body: JSON.stringify(data), 
             });
             
-            if (!res.ok) {
-                throw new Error('Network response was not ok');
-            }
+            if (!res.ok) throw new Error('Network response was not ok');
             
             const resData = await res.json();
             if (resData.status === 'ok') {
-                location.reload();
+                showToast('用户已保存', 'success');
+                setTimeout(() => location.reload(), 800);
             } else {
-                alert(resData.msg || '保存失败');
+                showToast(resData.msg || '保存失败', 'danger');
             }
         } catch (error) {
-            alert('网络错误或请求失败，请稍后重试');
+            showToast('网络错误或请求失败，请稍后重试', 'danger');
             console.error('Error:', error);
         }
     }
 
     // Push User
     function pushUser(id) {
-        if (!confirm('确定要推送用户信息吗？')) return;
-        fetch("/core/api/push_user", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: id }),
-        })
-        .then(res => {
-            if (!res.ok) {
-                throw new Error('Network response was not ok');
-            }
-            return res.json();
-        })
-        .then(data => {
-            if (data.status === 'ok') alert('推送成功');
-            else alert(data.msg || '推送失败');
-        })
-        .catch(error => {
-            alert('网络错误或请求失败，请稍后重试');
-            console.error('Error:', error);
-        });
+        showConfirm(
+            '确定要推送该用户信息吗？',
+            function() {
+                fetch("/core/api/push_user", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: id }),
+                })
+                .then(res => {
+                    if (!res.ok) throw new Error('Network response was not ok');
+                    return res.json();
+                })
+                .then(data => {
+                    if (data.status === 'ok') showToast('推送成功', 'success');
+                    else showToast(data.msg || '推送失败', 'danger');
+                })
+                .catch(error => {
+                    showToast('网络错误或请求失败，请稍后重试', 'danger');
+                    console.error('Error:', error);
+                });
+            },
+            { title: '推送用户', isDanger: false, confirmText: '确认推送' }
+        );
     }
 
     // Open Bulk Import Modal
@@ -593,26 +680,26 @@
                     }
                     const xlsx_base64 = btoa(binary);
                     
-                    // Prompt for add_days
-                    const addDays = prompt('请输入有效天数 (0-3650):', '30');
+                    // Show import days modal instead of prompt
+                    const addDays = window.prompt('请输入有效天数 (0-3650):', '30');
                     if (addDays === null) return;
                     
                     const add_days = parseInt(addDays);
                     if (isNaN(add_days) || add_days < 0 || add_days > 3650) {
-                        alert('有效天数必须在 0-3650 之间');
+                        showToast('有效天数必须在 0-3650 之间', 'warning');
                         return;
                     }
                     
-                    if (!confirm(`确认导入用户？有效期设置为 ${add_days} 天`)) {
-                        return;
-                    }
-                    
-                    await submitXLSXImport(xlsx_base64, add_days);
+                    showConfirm(
+                        '确认导入用户？有效期设置为 ' + add_days + ' 天',
+                        async function() { await submitXLSXImport(xlsx_base64, add_days); },
+                        { title: '批量导入', isDanger: false, confirmText: '确认导入' }
+                    );
                 };
                 reader.readAsArrayBuffer(file);
             } catch (e) {
                 console.error('Import error:', e);
-                alert('导入失败：文件格式错误');
+                showToast('导入失败：文件格式错误', 'danger');
             }
         };
         input.click();
@@ -631,26 +718,23 @@
                 }),
             });
             
-            if (!res.ok) {
-                throw new Error('Network response was not ok');
-            }
+            if (!res.ok) throw new Error('Network response was not ok');
             
             const data = await res.json();
             if (data.status === 'ok') {
-                alert(`成功导入 ${data.success_count} 个用户${data.skipped_count > 0 ? '，跳过 ' + data.skipped_count + ' 个已存在的用户' : ''}`);
-                location.reload();
+                showToast('成功导入 ' + data.success_count + ' 个用户' + (data.skipped_count > 0 ? '，跳过 ' + data.skipped_count + ' 个已存在的用户' : ''), 'success');
+                setTimeout(() => location.reload(), 1200);
             } else {
-                alert(data.msg || '导入失败');
+                showToast(data.msg || '导入失败', 'danger');
             }
         } catch (error) {
-            alert('网络错误或请求失败，请稍后重试');
+            showToast('网络错误或请求失败，请稍后重试', 'danger');
             console.error('Error:', error);
         }
     }
 
     // Export Users to XLSX
     function exportUsers() {
-        // Get all users from current page or fetch all
         fetch("/core/api/export_users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -659,7 +743,6 @@
         .then(res => res.json())
         .then(data => {
             if (data.status === 'ok') {
-                // Create download link for XLSX
                 const binaryString = atob(data.xlsx_content);
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
@@ -675,12 +758,13 @@
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
+                showToast('导出成功', 'success');
             } else {
-                alert(data.msg || '导出失败');
+                showToast(data.msg || '导出失败', 'danger');
             }
         })
         .catch(error => {
-            alert('网络错误或请求失败，请稍后重试');
+            showToast('网络错误或请求失败，请稍后重试', 'danger');
             console.error('Error:', error);
         });
     }

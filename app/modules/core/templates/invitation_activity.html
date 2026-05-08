@@ -136,6 +136,14 @@
                 </div>
                 
                 <div class="mb-3">
+                    <label class="form-label fw-bold">专属链接触发关键词</label>
+                    <input type="text" class="form-control" id="link_keyword" 
+                           value="{{ settings.link_keyword if settings and settings.link_keyword else '' }}" 
+                           placeholder="例如：邀请，多个关键词用逗号分隔">
+                    <div class="form-text">群成员在群内发送该关键词时，Bot 自动回复其专属邀请链接。留空则不启用关键词触发。</div>
+                </div>
+                
+                <div class="mb-3">
                     <label class="form-label">每邀请一人获得积分</label>
                     <input type="number" class="form-control" id="reward_points" 
                            value="{{ settings.reward_points if settings else 10 }}" 
@@ -240,6 +248,7 @@ function saveSettings() {
         group_id: {{ group.id }},
         enabled: document.getElementById('enabled').checked,
         announce_in_group: document.getElementById('announce_in_group').checked,
+        link_keyword: document.getElementById('link_keyword').value.trim(),
         reward_points: parseInt(document.getElementById('reward_points').value) || 10,
         minimum_invites: parseInt(document.getElementById('minimum_invites').value) || 1,
         activity_start: document.getElementById('activity_start').value || null,

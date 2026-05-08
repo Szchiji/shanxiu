@@ -189,6 +189,7 @@ class InvitationActivity(db.Model):
     activity_end = db.Column(db.DateTime, nullable=True)
     description = db.Column(db.Text, nullable=True)
     announce_in_group = db.Column(db.Boolean, default=False)  # 是否在群内公告邀请成功
+    link_keyword = db.Column(db.String(255), nullable=True)  # 触发专属链接的关键词（逗号分隔多个）
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -211,6 +212,22 @@ class InvitationRecord(db.Model):
     )
     
     group = db.relationship('BotGroup', backref='invitation_records', lazy=True)
+
+
+class PendingReferral(db.Model):
+    """待处理的邀请链接记录 - 通过机器人专属深链接邀请时临时存储"""
+    __tablename__ = 'pending_referrals'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.BigInteger, index=True)      # 点击链接的用户 TG ID
+    inviter_id = db.Column(db.BigInteger)               # 邀请人 TG ID
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'group_id', name='_pending_referral_user_group_uc'),
+    )
+
+    group = db.relationship('BotGroup', backref='pending_referrals', lazy=True)
 
 
 class ForcedChannelSubscription(db.Model):

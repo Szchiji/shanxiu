@@ -6,7 +6,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord,
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
 from app.services.points_service import clamp_award_to_daily_cap
@@ -3323,6 +3323,7 @@ def api_save_invitation_activity():
         settings.description = d.get('description')
         # Handle announce_in_group
         settings.announce_in_group = d.get('announce_in_group', False)
+        settings.link_keyword = d.get('link_keyword') or None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -5738,10 +5739,24 @@ async def handle_new_chat_member(update: Update, context):
                         print(f"Error sending welcome message: {e}")
                 
                 # Track invitation for points system
+                inviter_id = None
+                pending_ref = None
                 if update.message.from_user and update.message.from_user.id != new_member.id:
                     inviter_id = update.message.from_user.id
                     logging.info(f"🎁 [邀请活动] 检测到邀请者: {inviter_id}")
-                    
+                else:
+                    # Check for pending referral stored when the user followed a /mylink deep link
+                    pending_ref = PendingReferral.query.filter_by(
+                        group_id=group.id,
+                        user_id=new_member.id
+                    ).first()
+                    if pending_ref:
+                        inviter_id = pending_ref.inviter_id
+                        logging.info(f"🎁 [邀请活动] 从专属链接检测到邀请者: {inviter_id}")
+                    else:
+                        logging.info(f"👥 [入群事件] 未检测到邀请者或自行加入")
+
+                if inviter_id:
                     invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
                     
                     if invitation_activity:
@@ -5793,6 +5808,10 @@ async def handle_new_chat_member(update: Update, context):
                             )
                             db.session.add(points_log)
                             
+                            # Consume the pending referral in the same transaction
+                            if pending_ref:
+                                db.session.delete(pending_ref)
+                            
                             logging.info(f"✅ [邀请活动] 邀请记录成功: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 积分: {old_balance} -> {user_points.points_balance}")
                             
                             # Commit all changes before sending announcement
@@ -5820,7 +5839,9 @@ async def handle_new_chat_member(update: Update, context):
                                     logging.error(f"❌ [邀请活动] 发送邀请公告失败: {announce_error}")
                         else:
                             logging.info(f"🎁 [邀请活动] 邀请记录已存在，跳过 (被邀请者: {new_member.id})")
-                            # Commit member record even if no invitation tracking
+                            # Consume stale pending referral and commit member record
+                            if pending_ref:
+                                db.session.delete(pending_ref)
                             db.session.commit()
                     else:
                         logging.info(f"🎁 [邀请活动] 群组 {group.id} 未启用邀请活动")
@@ -8325,6 +8346,48 @@ async def cmd_invite_rank(update: Update, context):
     await update.message.reply_text(msg, parse_mode='HTML')
 
 
+async def cmd_mylink(update: Update, context):
+    """获取专属邀请链接 /mylink"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+
+    if not global_flask_app:
+        return
+
+    def _get_invitation_info():
+        with global_flask_app.app_context():
+            clone_id = context.application.bot_data.get('clone_id')
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=clone_id).first()
+            if not group:
+                return None, None
+            activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
+            if not activity:
+                return None, None
+            return group.id, activity.reward_points
+
+    group_id, reward_points = await asyncio.get_running_loop().run_in_executor(None, _get_invitation_info)
+
+    if not group_id:
+        await update.message.reply_text("❌ 该群组未开启邀请活动，无法生成专属链接")
+        return
+
+    bot_me = await context.bot.get_me()
+    bot_username = bot_me.username
+    invite_link = f"https://t.me/{bot_username}?start=inv_{user.id}_{group_id}"
+
+    msg = (
+        f"🔗 <b>您的专属邀请链接</b>\n\n"
+        f"<code>{invite_link}</code>\n\n"
+        f"📌 将此链接分享给好友，当好友通过链接加入群组后，"
+        f"您将获得 <b>{reward_points} 积分</b> 奖励！"
+    )
+    await update.message.reply_html(msg)
+
+
 async def cmd_active(update: Update, context):
     """活跃排行榜命令 /active [period]"""
     chat = update.effective_chat
@@ -8519,6 +8582,7 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 🆕 Invitation rank command
     app.add_handler(CommandHandler("invites", cmd_invite_rank))  # alias for invite_rank
+    app.add_handler(CommandHandler("mylink", cmd_mylink))  # 获取专属邀请链接
     app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
@@ -8653,6 +8717,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("clones", cmd_clones))
     app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 邀请排行榜
     app.add_handler(CommandHandler("invites", cmd_invite_rank))       # alias for invite_rank
+    app.add_handler(CommandHandler("mylink", cmd_mylink))  # 获取专属邀请链接
     app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
@@ -10379,8 +10444,71 @@ async def cmd_start(update: Update, context):
     if chat.type in ['group', 'supergroup']:
         print(f"⚠️ /start 调试: 在群组中使用 /start 命令，忽略")
         return
-    
-    # Check if this is a clone bot by looking up clone_id in bot_data
+
+    # Handle invitation deep link: /start inv_{inviter_id}_{group_db_id}
+    start_param = context.args[0] if context.args else ''
+    if start_param.startswith('inv_'):
+        parts = start_param.split('_')
+        if len(parts) == 3:
+            try:
+                inv_inviter_id = int(parts[1])
+                inv_group_db_id = int(parts[2])
+            except (ValueError, IndexError):
+                inv_inviter_id = inv_group_db_id = None
+
+            if inv_inviter_id and inv_group_db_id and inv_inviter_id != user_id:
+                def _record_pending_referral():
+                    with global_flask_app.app_context():
+                        group = BotGroup.query.get(inv_group_db_id)
+                        if not group:
+                            return None, None
+                        activity = InvitationActivity.query.filter_by(
+                            group_id=inv_group_db_id, enabled=True
+                        ).first()
+                        if not activity:
+                            return None, None
+                        # Store pending referral (ignore if already exists)
+                        existing = PendingReferral.query.filter_by(
+                            user_id=user_id, group_id=inv_group_db_id
+                        ).first()
+                        if not existing:
+                            ref = PendingReferral(
+                                user_id=user_id,
+                                inviter_id=inv_inviter_id,
+                                group_id=inv_group_db_id
+                            )
+                            db.session.add(ref)
+                            db.session.commit()
+                        return group.title, group.chat_id
+
+                group_title, group_chat_id = await asyncio.get_running_loop().run_in_executor(
+                    None, _record_pending_referral
+                )
+
+                if group_title:
+                    # Try to obtain the group invite link so we can send the user a join button
+                    join_button = None
+                    try:
+                        chat_info = await context.bot.get_chat(int(group_chat_id))
+                        join_url = chat_info.invite_link
+                        if not join_url and chat_info.username:
+                            join_url = f"https://t.me/{chat_info.username}"
+                        if join_url:
+                            join_button = InlineKeyboardMarkup(
+                                [[InlineKeyboardButton(f"🚀 加入 {group_title}", url=join_url)]]
+                            )
+                    except Exception as e:
+                        print(f"⚠️ [/start inv] 获取群组链接失败: {e}", flush=True)
+
+                    await update.message.reply_html(
+                        f"👋 欢迎！您通过专属邀请链接到达。\n\n"
+                        f"加入 <b>{group_title}</b> 后，邀请人将获得积分奖励！",
+                        reply_markup=join_button
+                    )
+                    return
+        # Continue with normal start handling if parsing failed or same user invites themselves
+
+
     clone_id = context.application.bot_data.get('clone_id')
 
     # Determine if the user is an authorized admin (global or clone-specific)
@@ -11387,6 +11515,25 @@ async def on_message(update: Update, context):
                             )
                         # 兑换成功后自动更新频道商品目录
                         await _update_exchange_catalog_async(group.id, context.application)
+                        return
+
+            # 2.7 邀请活动关键词触发 — 回复用户专属邀请链接
+            if chat.type in ['group', 'supergroup'] and user:
+                invitation_activity = InvitationActivity.query.filter_by(
+                    group_id=group.id, enabled=True
+                ).first()
+                if invitation_activity and invitation_activity.link_keyword:
+                    inv_keywords = [k.strip() for k in invitation_activity.link_keyword.split(',') if k.strip()]
+                    if txt in inv_keywords:
+                        bot_me = await context.bot.get_me()
+                        invite_link = f"https://t.me/{bot_me.username}?start=inv_{user.id}_{group.id}"
+                        inv_msg = (
+                            f"🔗 <b>您的专属邀请链接</b>\n\n"
+                            f"<code>{invite_link}</code>\n\n"
+                            f"📌 将此链接分享给好友，当好友通过链接加入群组后，"
+                            f"您将获得 <b>{invitation_activity.reward_points} 积分</b> 奖励！"
+                        )
+                        await msg.reply_html(inv_msg)
                         return
 
             # 3. 自动回复检查 (Check points-based first, then regular auto-reply)

@@ -5739,6 +5739,7 @@ async def handle_new_chat_member(update: Update, context):
                 
                 # Track invitation for points system
                 inviter_id = None
+                pending_ref = None
                 if update.message.from_user and update.message.from_user.id != new_member.id:
                     inviter_id = update.message.from_user.id
                     logging.info(f"🎁 [邀请活动] 检测到邀请者: {inviter_id}")
@@ -5750,7 +5751,6 @@ async def handle_new_chat_member(update: Update, context):
                     ).first()
                     if pending_ref:
                         inviter_id = pending_ref.inviter_id
-                        db.session.delete(pending_ref)
                         logging.info(f"🎁 [邀请活动] 从专属链接检测到邀请者: {inviter_id}")
                     else:
                         logging.info(f"👥 [入群事件] 未检测到邀请者或自行加入")
@@ -5807,6 +5807,10 @@ async def handle_new_chat_member(update: Update, context):
                             )
                             db.session.add(points_log)
                             
+                            # Consume the pending referral in the same transaction
+                            if pending_ref:
+                                db.session.delete(pending_ref)
+                            
                             logging.info(f"✅ [邀请活动] 邀请记录成功: {inviter_id} 邀请了 {new_member.id} ({new_member.first_name}), 积分: {old_balance} -> {user_points.points_balance}")
                             
                             # Commit all changes before sending announcement
@@ -5834,7 +5838,9 @@ async def handle_new_chat_member(update: Update, context):
                                     logging.error(f"❌ [邀请活动] 发送邀请公告失败: {announce_error}")
                         else:
                             logging.info(f"🎁 [邀请活动] 邀请记录已存在，跳过 (被邀请者: {new_member.id})")
-                            # Commit member record even if no invitation tracking
+                            # Consume stale pending referral and commit member record
+                            if pending_ref:
+                                db.session.delete(pending_ref)
                             db.session.commit()
                     else:
                         logging.info(f"🎁 [邀请活动] 群组 {group.id} 未启用邀请活动")
@@ -10482,8 +10488,8 @@ async def cmd_start(update: Update, context):
                     join_button = None
                     try:
                         chat_info = await context.bot.get_chat(int(group_chat_id))
-                        join_url = getattr(chat_info, 'invite_link', None)
-                        if not join_url and getattr(chat_info, 'username', None):
+                        join_url = chat_info.invite_link
+                        if not join_url and chat_info.username:
                             join_url = f"https://t.me/{chat_info.username}"
                         if join_url:
                             join_button = InlineKeyboardMarkup(

@@ -7,8 +7,8 @@
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h4 class="fw-bold mb-1"><i class="fa-solid fa-flag me-2"></i>举报管理</h4>
-            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置举报系统的频道、问题模板与审核奖励</p>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-flag me-2"></i>报告管理</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置报告系统的频道、问题模板与审核奖励</p>
         </div>
     </div>
 </div>
@@ -22,9 +22,7 @@
 </ul>
 {% endcall %}
 
-<div class="container-fluid px-0" style="max-width:760px">
-
-    <form method="POST" id="reportSettingsForm" onsubmit="serializeQuestions()">
+<form method="POST" id="reportSettingsForm" onsubmit="serializeQuestions()">
         {# Hidden field that receives the serialised questions JSON #}
         <input type="hidden" name="questions_json" id="questions_json">
 
@@ -202,8 +200,7 @@
         </div>
 
         <button type="submit" class="btn btn-primary">💾 保存所有设置</button>
-    </form>
-</div>
+</form>
 
 <script>
 /* ── Drag-to-reorder via HTML5 DnD ── */

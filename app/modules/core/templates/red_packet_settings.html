@@ -35,6 +35,55 @@
 <div class="row">
     <div class="col-md-10 mx-auto">
 
+        <!-- 红包参数设置 -->
+        <div class="settings-card card mb-4">
+            <div class="card-header bg-white fw-bold py-3">
+                <i class="fa-solid fa-sliders me-2 text-warning"></i>红包参数设置
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="red_packet_enabled"
+                                   {% if conf.red_packet_enabled %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold" for="red_packet_enabled">
+                                启用红包功能（关闭后群成员无法发红包）
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">单次最多红包数</label>
+                        <input type="number" class="form-control" id="red_packet_max_count"
+                               value="{{ conf.red_packet_max_count }}" min="1" max="200">
+                        <div class="form-text">单次发送红包的最大个数，默认 50</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">最少总积分</label>
+                        <input type="number" class="form-control" id="red_packet_min_total"
+                               value="{{ conf.red_packet_min_total }}" min="1">
+                        <div class="form-text">单次发红包的最低积分门槛，默认 1</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">最多总积分</label>
+                        <input type="number" class="form-control" id="red_packet_max_total"
+                               value="{{ conf.red_packet_max_total }}" min="0">
+                        <div class="form-text">0 表示不限制上限，默认 0</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">有效期（小时）</label>
+                        <input type="number" class="form-control" id="red_packet_expire_hours"
+                               value="{{ conf.red_packet_expire_hours }}" min="1" max="168">
+                        <div class="form-text">超时未领完自动退款，默认 24 小时</div>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button class="btn btn-warning fw-bold btn-sm" onclick="saveSettings()">
+                        <i class="fa-solid fa-save me-1"></i>保存设置
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="settings-card card mb-4">
             <div class="card-header bg-white fw-bold py-3">
                 <i class="fa-solid fa-terminal me-2 text-primary"></i>指令说明
@@ -118,4 +167,34 @@
         </div>
     </div>
 </div>
+
+<script>
+function saveSettings() {
+    const data = {
+        group_id: {{ group.id }},
+        red_packet_enabled: document.getElementById('red_packet_enabled').checked,
+        red_packet_max_count: parseInt(document.getElementById('red_packet_max_count').value) || 50,
+        red_packet_min_total: parseInt(document.getElementById('red_packet_min_total').value) || 1,
+        red_packet_max_total: parseInt(document.getElementById('red_packet_max_total').value) || 0,
+        red_packet_expire_hours: parseInt(document.getElementById('red_packet_expire_hours').value) || 24,
+    };
+    fetch('/core/api/save_red_packet_settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast('✅ 设置已保存！', 'success');
+        } else {
+            showToast('❌ 保存失败: ' + (result.msg || '未知错误'), 'danger');
+        }
+    })
+    .catch(err => {
+        console.error('操作失败:', err);
+        showToast('网络错误，请重试', 'danger');
+    });
+}
+</script>
 {% endblock %}

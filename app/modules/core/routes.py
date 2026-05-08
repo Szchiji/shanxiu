@@ -1357,6 +1357,7 @@ def page_red_packet_settings(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
+    conf = get_group_conf(group)
     
     # Get recent red packets
     packets = RedPacket.query.filter_by(group_id=gid).order_by(
@@ -1364,7 +1365,7 @@ def page_red_packet_settings(gid):
     ).limit(20).all()
     
     return render_template('red_packet_settings.html', page='red_packet_settings', 
-                         group=group, packets=packets)
+                         group=group, conf=conf, packets=packets)
 
 
 @core_bp.route('/group/<int:gid>/admin_logs')
@@ -3551,6 +3552,32 @@ def api_delete_points_auction():
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_red_packet_settings', methods=['POST'])
+def api_save_red_packet_settings():
+    """保存红包设置"""
+    if not session.get('logged_in'): return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status': 'error', 'msg': 'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        conf = get_group_conf(group)
+        conf['red_packet_enabled'] = bool(d.get('red_packet_enabled', True))
+        conf['red_packet_max_count'] = max(1, int(d.get('red_packet_max_count', 50)))
+        conf['red_packet_min_total'] = max(1, int(d.get('red_packet_min_total', 1)))
+        conf['red_packet_max_total'] = max(0, int(d.get('red_packet_max_total', 0)))
+        conf['red_packet_expire_hours'] = max(1, int(d.get('red_packet_expire_hours', 24)))
+        group.config = json.dumps(conf, ensure_ascii=False)
+        db.session.commit()
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'msg': str(e)})
 
 # --- Exchange Catalog Helpers ---
 
@@ -7866,7 +7893,34 @@ async def cmd_redpacket(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         await update.message.reply_text("❌ 此命令只能在群组中使用")
         return
-    
+
+    if not global_flask_app:
+        return
+
+    # 先读取群组配置，用于参数校验
+    def _load_group_conf():
+        with global_flask_app.app_context():
+            grp = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
+            if not grp:
+                return None, None
+            return grp.id, get_group_conf(grp)
+
+    group_db_id, grp_conf = await asyncio.get_running_loop().run_in_executor(None, _load_group_conf)
+    if group_db_id is None:
+        await update.message.reply_text("❌ 群组不存在")
+        return
+
+    # 从群组配置中读取限制
+    rp_enabled = grp_conf.get('red_packet_enabled', True)
+    max_count = int(grp_conf.get('red_packet_max_count', 50))
+    min_total = int(grp_conf.get('red_packet_min_total', 1))
+    max_total = int(grp_conf.get('red_packet_max_total', 0))
+    expire_hours = int(grp_conf.get('red_packet_expire_hours', 24))
+
+    if not rp_enabled:
+        await update.message.reply_text("❌ 该群已关闭红包功能")
+        return
+
     # 解析参数
     try:
         args = context.args
@@ -7889,19 +7943,20 @@ async def cmd_redpacket(update: Update, context):
             await update.message.reply_text("❌ 总积分不能少于红包数量")
             return
         
-        if packet_count < 1 or packet_count > 50:
-            await update.message.reply_text("❌ 红包数量需要在1-50之间")
+        if packet_count < 1 or packet_count > max_count:
+            await update.message.reply_text(f"❌ 红包数量需要在1-{max_count}之间")
             return
         
-        if total_points < 1:
-            await update.message.reply_text("❌ 总积分必须大于0")
+        if total_points < min_total:
+            await update.message.reply_text(f"❌ 总积分不能少于 {min_total}")
+            return
+
+        if max_total > 0 and total_points > max_total:
+            await update.message.reply_text(f"❌ 总积分不能超过 {max_total}")
             return
         
     except ValueError:
         await update.message.reply_text("❌ 参数格式错误，请输入数字")
-        return
-    
-    if not global_flask_app:
         return
     
     def _create_redpacket():
@@ -7933,7 +7988,7 @@ async def cmd_redpacket(update: Update, context):
                 remaining_count=packet_count,
                 remaining_points=total_points,
                 message=message,
-                expire_time=get_beijing_now() + timedelta(hours=24),
+                expire_time=get_beijing_now() + timedelta(hours=expire_hours),
                 status='active'
             )
             db.session.add(packet)
@@ -7967,7 +8022,7 @@ async def cmd_redpacket(update: Update, context):
         f"💬 {message}\n"
         f"💰 共 {total_points} 积分\n"
         f"🎁 {packet_count} 个红包\n"
-        f"⏰ 24小时内有效\n\n"
+        f"⏰ {expire_hours}小时内有效\n\n"
         f"👆 点击按钮领取",
         reply_markup=keyboard,
         parse_mode='HTML'

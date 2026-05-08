@@ -1195,7 +1195,7 @@
                         </li>
 
                         <!-- Points & Activities (accordion) -->
-                        {% set grp_points_active = page in ['points_rules', 'points_auto_reply', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}
+                        {% set grp_points_active = page in ['points_rules', 'points_auto_reply', 'points_shop', 'points_auction', 'points_log', 'points_exchange', 'group_lottery', 'group_votes', 'quiz_games', 'red_packet_settings'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if grp_points_active %}active-group{% endif %}"
                                     type="button"
@@ -1209,9 +1209,8 @@
                             <div class="collapse {% if grp_points_active %}show{% endif %}" id="sg_points">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 积分规则</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/points_exchange" class="nav-link {% if page == 'points_exchange' %}active{% endif %}"><i class="fa-solid fa-gift"></i> 积分兑换</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_shop" class="nav-link {% if page in ['points_shop', 'points_exchange', 'points_auction'] %}active{% endif %}"><i class="fa-solid fa-store"></i> 积分商城</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}"><i class="fa-solid fa-comments-dollar"></i> 积分回复</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/points_auction" class="nav-link {% if page == 'points_auction' %}active{% endif %}"><i class="fa-solid fa-gavel"></i> 积分竞拍</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}"><i class="fa-solid fa-history"></i> 积分日志</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}"><i class="fa-solid fa-trophy"></i> 群抽奖</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/group_votes" class="nav-link {% if page == 'group_votes' %}active{% endif %}"><i class="fa-solid fa-square-poll-vertical"></i> 群投票</a></li>

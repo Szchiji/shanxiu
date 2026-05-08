@@ -1040,12 +1040,30 @@ def page_points_auto_reply(gid):
 
 @core_bp.route('/group/<int:gid>/points_auction')
 def page_points_auction(gid):
-    """积分竞拍"""
+    """积分竞拍 - redirect to unified points shop, auction tab"""
+    if not session.get('logged_in'): return redirect('/core')
+    return redirect(f'/core/group/{int(gid)}/points_shop#auction')
+
+@core_bp.route('/group/<int:gid>/points_shop')
+def page_points_shop(gid):
+    """积分商城 — 积分兑换 + 积分竞拍统一入口"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
+    conf = get_group_conf(group)
+    # Exchange data
+    items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
+    records = (PointsExchangeRecord.query
+               .filter_by(group_id=gid)
+               .order_by(PointsExchangeRecord.created_at.desc())
+               .limit(100).all())
+    # Auction data
     auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
-    return render_template('points_auction.html', page='points_auction', group=group, auctions=auctions)
+    # Determine which tab to open based on the 'tab' query param (used by server-side redirects)
+    active_tab = request.args.get('tab', '')
+    return render_template('points_shop.html', page='points_shop', group=group,
+                           conf=conf, items=items, records=records,
+                           auctions=auctions, active_tab=active_tab)
 
 @core_bp.route('/group/<int:gid>/points_log')
 def page_points_log(gid):
@@ -1087,18 +1105,9 @@ def page_points_log(gid):
 
 @core_bp.route('/group/<int:gid>/points_exchange')
 def page_points_exchange(gid):
-    """积分兑换商品管理"""
+    """积分兑换 - redirect to unified points shop"""
     if not session.get('logged_in'): return redirect('/core')
-    session['current_group_id'] = gid
-    group = get_group_or_403(gid)
-    conf = get_group_conf(group)
-    items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
-    records = (PointsExchangeRecord.query
-               .filter_by(group_id=gid)
-               .order_by(PointsExchangeRecord.created_at.desc())
-               .limit(100).all())
-    return render_template('points_exchange.html', page='points_exchange', group=group,
-                           conf=conf, items=items, records=records)
+    return redirect(f'/core/group/{int(gid)}/points_shop')
 
 @core_bp.route('/group/<int:gid>/group_lottery')
 def page_group_lottery(gid):
@@ -3568,16 +3577,17 @@ def api_save_red_packet_settings():
     try:
         conf = get_group_conf(group)
         conf['red_packet_enabled'] = bool(d.get('red_packet_enabled', True))
-        conf['red_packet_max_count'] = max(1, int(d.get('red_packet_max_count', 50)))
-        conf['red_packet_min_total'] = max(1, int(d.get('red_packet_min_total', 1)))
-        conf['red_packet_max_total'] = max(0, int(d.get('red_packet_max_total', 0)))
-        conf['red_packet_expire_hours'] = max(1, int(d.get('red_packet_expire_hours', 24)))
+        conf['red_packet_max_count'] = max(1, int(d.get('red_packet_max_count', DEFAULT_SYSTEM['red_packet_max_count'])))
+        conf['red_packet_min_total'] = max(1, int(d.get('red_packet_min_total', DEFAULT_SYSTEM['red_packet_min_total'])))
+        conf['red_packet_max_total'] = max(0, int(d.get('red_packet_max_total', DEFAULT_SYSTEM['red_packet_max_total'])))
+        conf['red_packet_expire_hours'] = max(1, int(d.get('red_packet_expire_hours', DEFAULT_SYSTEM['red_packet_expire_hours'])))
         group.config = json.dumps(conf, ensure_ascii=False)
         db.session.commit()
         return jsonify({'status': 'ok'})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'msg': str(e)})
+        _logger.error("save_red_packet_settings error: %s", e)
+        return jsonify({'status': 'error', 'msg': '保存失败，请重试'})
 
 # --- Exchange Catalog Helpers ---
 

@@ -171,7 +171,7 @@
 <script>
 function saveSettings() {
     const data = {
-        group_id: {{ group.id }},
+        group_id: {{ group.id | tojson }},
         red_packet_enabled: document.getElementById('red_packet_enabled').checked,
         red_packet_max_count: parseInt(document.getElementById('red_packet_max_count').value) || 50,
         red_packet_min_total: parseInt(document.getElementById('red_packet_min_total').value) || 1,

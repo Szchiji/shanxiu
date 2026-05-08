@@ -1,0 +1,630 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    /* ---- shared card styles ---- */
+    .section-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+    }
+    .section-card .card-header-custom {
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border-color);
+        padding: 0.85rem 1.25rem;
+        font-weight: 700;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    /* ---- exchange product grid ---- */
+    .product-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 1rem;
+        padding: 1rem;
+    }
+    .product-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1rem;
+        position: relative;
+        transition: box-shadow 0.2s, transform 0.2s;
+    }
+    .product-card:hover { box-shadow: var(--hover-shadow); }
+    .product-card .status-badge {
+        position: absolute;
+        top: 0.7rem; right: 0.7rem;
+        font-size: 0.72rem;
+        padding: 0.2rem 0.55rem;
+        border-radius: 20px;
+        font-weight: 600;
+    }
+    .product-card .product-name {
+        font-weight: 700; font-size: 0.95rem;
+        margin-bottom: 0.35rem; padding-right: 3.5rem;
+        color: var(--text-primary);
+    }
+    .product-card .product-desc {
+        font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem;
+    }
+    .product-card .product-meta {
+        display: flex; align-items: center;
+        gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.75rem;
+    }
+    .meta-chip {
+        display: inline-flex; align-items: center; gap: 0.25rem;
+        background: var(--bg-card-hover); border-radius: 20px;
+        padding: 0.15rem 0.6rem; font-size: 0.78rem;
+        font-weight: 600; color: var(--text-secondary);
+    }
+    .meta-chip.chip-points      { background: rgba(234,179,8,.12);  color: #854d0e; }
+    .meta-chip.chip-stock-ok    { background: rgba(34,197,94,.12);  color: #166534; }
+    .meta-chip.chip-stock-low   { background: rgba(249,115,22,.12); color: #9a3412; }
+    .meta-chip.chip-stock-out   { background: rgba(239,68,68,.12);  color: #991b1b; }
+    .meta-chip.chip-unlimited   { background: rgba(59,130,246,.12); color: #3730a3; }
+    .product-card .product-actions { display: flex; gap: 0.5rem; }
+    .product-card .product-actions .btn {
+        flex: 1; font-size: 0.78rem; padding: 0.3rem 0.6rem; border-radius: 8px;
+    }
+
+    /* ---- auction list ---- */
+    .auction-item {
+        border-bottom: 1px solid var(--border-color);
+        padding: 1rem;
+        transition: background-color 0.2s;
+    }
+    .auction-item:last-child { border-bottom: none; }
+    .auction-item:hover { background-color: var(--bg-card-hover); }
+
+    /* ---- records table ---- */
+    .records-table th, .records-table td {
+        padding: 0.5rem 0.75rem; font-size: 0.83rem; vertical-align: middle;
+    }
+
+    /* ---- modal ---- */
+    .modal-content { border-radius: 14px; border: 1px solid var(--border-color); }
+
+    @media (max-width: 576px) { .product-grid { grid-template-columns: 1fr; } }
+</style>
+
+<div class="page-header">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-store me-2"></i>积分商城</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">管理积分兑换商品与竞拍活动</p>
+        </div>
+        <div id="tab-actions"></div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-3" id="shopTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link {% if active_tab != 'auction' %}active{% endif %}"
+                id="tab-exchange-btn" data-bs-toggle="tab" data-bs-target="#tab-exchange"
+                type="button" role="tab" onclick="setTabActions('exchange')">
+            <i class="fa-solid fa-gift me-1"></i>积分兑换
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link {% if active_tab == 'auction' %}active{% endif %}"
+                id="tab-auction-btn" data-bs-toggle="tab" data-bs-target="#tab-auction"
+                type="button" role="tab" onclick="setTabActions('auction')">
+            <i class="fa-solid fa-gavel me-1"></i>积分竞拍
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="shopTabContent">
+
+    <!-- ==================== 积分兑换 Tab ==================== -->
+    <div class="tab-pane fade {% if active_tab != 'auction' %}show active{% endif %}" id="tab-exchange" role="tabpanel">
+
+        {% call feature_description('points_exchange') %}
+        <ul>
+            <li>设置可供群成员用积分兑换的商品，如激活码、服务资格等虚拟物品。</li>
+            <li>每件商品可设置<strong>积分售价</strong>、<strong>库存数量</strong>（留空为不限）和兑换说明。</li>
+            <li>配置<strong>展示频道</strong>后，商品目录会自动推送到频道；新品上架/售罄下架时自动更新公告。</li>
+            <li>成员在群内使用 <code>/exchange</code> 命令查看商品并发起兑换申请。</li>
+        </ul>
+        {% endcall %}
+
+        <!-- Channel config -->
+        <div class="section-card">
+            <div class="card-header-custom">
+                <i class="fa-solid fa-bullhorn text-warning"></i> 频道展示配置
+            </div>
+            <div class="p-3">
+                <p class="text-muted small mb-2">
+                    配置一个频道 ID 后，商品目录将自动发布到该频道。新商品上架时会额外发送单独公告；
+                    商品售罄时自动下架并删除对应公告。
+                </p>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold small">展示频道 ID</label>
+                        <input type="text" class="form-control form-control-sm" id="exchange_channel_id"
+                               placeholder="例如：-1001234567890 或 @mychannel"
+                               value="{{ conf.exchange_channel_id or '' }}">
+                        <div class="form-text" style="font-size:0.75rem;">请确保机器人已加入该频道并拥有发送消息权限。留空则不展示。</div>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-warning btn-sm fw-bold w-100" onclick="saveChannel()">
+                            <i class="fa-solid fa-satellite-dish me-1"></i>保存并推送
+                        </button>
+                    </div>
+                    {% if conf.exchange_catalog_msg_id %}
+                    <div class="col-md-3">
+                        <span class="badge bg-success p-2" style="font-size:0.75rem;">
+                            <i class="fa-solid fa-check-circle me-1"></i>已发布 (消息 #{{ conf.exchange_catalog_msg_id }})
+                        </span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Product list -->
+        <div class="section-card">
+            <div class="card-header-custom">
+                <i class="fa-solid fa-boxes-stacked text-primary"></i> 商品列表
+                <span class="badge bg-secondary ms-auto" style="font-weight:500;">{{ items|length }} 件</span>
+            </div>
+            {% if items %}
+            <div class="product-grid">
+                {% for item in items %}
+                <div class="product-card">
+                    <span class="status-badge badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">
+                        {{ '上架' if item.is_active else '已下架' }}
+                    </span>
+                    <div class="product-name">{{ item.item_name }}</div>
+                    {% if item.item_description %}
+                    <div class="product-desc">{{ item.item_description }}</div>
+                    {% endif %}
+                    <div class="product-meta">
+                        <span class="meta-chip chip-points">
+                            <i class="fa-solid fa-coins" style="font-size:0.7rem;"></i> {{ item.points_cost }} 积分
+                        </span>
+                        {% if item.stock is none %}
+                        <span class="meta-chip chip-unlimited">
+                            <i class="fa-solid fa-infinity" style="font-size:0.7rem;"></i> 不限库存
+                        </span>
+                        {% elif item.stock > 5 %}
+                        <span class="meta-chip chip-stock-ok">
+                            <i class="fa-solid fa-box" style="font-size:0.7rem;"></i> 库存 {{ item.stock }}
+                        </span>
+                        {% elif item.stock > 0 %}
+                        <span class="meta-chip chip-stock-low">
+                            <i class="fa-solid fa-box-open" style="font-size:0.7rem;"></i> 仅剩 {{ item.stock }}
+                        </span>
+                        {% else %}
+                        <span class="meta-chip chip-stock-out">
+                            <i class="fa-solid fa-xmark" style="font-size:0.7rem;"></i> 已售罄
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% if item.redemption_info %}
+                    <div class="text-muted" style="font-size:0.75rem; margin-bottom:0.6rem;">
+                        <i class="fa-solid fa-circle-info me-1"></i>
+                        {{ item.redemption_info[:60] }}{{ '…' if item.redemption_info|length > 60 else '' }}
+                    </div>
+                    {% endif %}
+                    <div class="product-actions">
+                        <button class="btn btn-outline-primary btn-sm"
+                            data-id="{{ item.id }}"
+                            data-name="{{ item.item_name|e }}"
+                            data-description="{{ (item.item_description or '')|e }}"
+                            data-points="{{ item.points_cost }}"
+                            data-stock="{{ item.stock if item.stock is not none else '' }}"
+                            data-redemption="{{ (item.redemption_info or '')|e }}"
+                            data-active="{{ 'true' if item.is_active else 'false' }}"
+                            onclick="editItemFromBtn(this)">
+                            <i class="fa-solid fa-pen me-1"></i>编辑
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" onclick="deleteItem({{ item.id }})">
+                            <i class="fa-solid fa-trash me-1"></i>删除
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="fa-solid fa-inbox fa-3x text-muted mb-3 d-block opacity-50"></i>
+                <p class="text-muted mb-0">暂无兑换商品，点击右上角「添加商品」创建</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Redemption records -->
+        <div class="section-card">
+            <div class="card-header-custom">
+                <i class="fa-solid fa-receipt text-success"></i> 兑换记录
+                <span class="text-muted fw-normal ms-1" style="font-size:0.8rem;">最近 100 条</span>
+            </div>
+            {% if records %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 records-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>用户ID</th><th>商品</th><th>消耗积分</th><th>时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in records %}
+                        <tr>
+                            <td><code>{{ r.user_id }}</code></td>
+                            <td>{{ r.item.item_name if r.item else '<span class="text-muted">(已删除)</span>'|safe }}</td>
+                            <td><span class="text-danger fw-bold">-{{ r.points_spent }}</span></td>
+                            <td class="text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-4">
+                <p class="text-muted mb-0">暂无兑换记录</p>
+            </div>
+            {% endif %}
+        </div>
+
+    </div><!-- /exchange tab -->
+
+    <!-- ==================== 积分竞拍 Tab ==================== -->
+    <div class="tab-pane fade {% if active_tab == 'auction' %}show active{% endif %}" id="tab-auction" role="tabpanel">
+
+        {% call feature_description('points_auction') %}
+        <ul>
+            <li>创建限时竞拍活动，群成员用积分出价，结束时最高出价者获得物品。</li>
+            <li>可设置<strong>起拍价</strong>、<strong>最低加价幅度</strong>和<strong>截止时间</strong>。</li>
+            <li>成员在群内使用 <code>/bid 金额</code> 参与竞价，每次出价会刷新排行并通知前一名。</li>
+            <li>拍卖结束后，积分从获胜者账户自动扣除，其余出价者积分原路返还。</li>
+        </ul>
+        {% endcall %}
+
+        <div class="section-card">
+            <div class="card-header-custom">
+                <i class="fa-solid fa-list text-primary"></i> 竞拍列表
+                <span class="badge bg-secondary ms-auto" style="font-weight:500;">{{ auctions|length }} 个</span>
+            </div>
+            <div>
+                {% if auctions %}
+                    {% for auction in auctions %}
+                    <div class="auction-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ auction.item_name }}</h6>
+                                <p class="text-muted mb-2 small">{{ auction.item_description or '暂无描述' }}</p>
+                                <div class="d-flex gap-3 flex-wrap">
+                                    <small class="text-muted">起拍价: {{ auction.starting_price }}</small>
+                                    <small class="text-muted">当前价: {{ auction.current_bid or '未出价' }}</small>
+                                    {% if auction.auction_start %}
+                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                    {% if auction.auction_end %}
+                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    {% endif %}
+                                </div>
+                                <span class="badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }} mt-2" style="font-size:0.85rem;">
+                                    {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
+                                </span>
+                            </div>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auction|tojson }})'>
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteAuction({{ auction.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3 d-block opacity-50"></i>
+                        <p class="text-muted mb-0">暂无竞拍活动，点击右上角「创建竞拍」</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div><!-- /auction tab -->
+
+</div><!-- /tab-content -->
+
+<!-- ==================== 积分兑换 Add/Edit Modal ==================== -->
+<div class="modal fade" id="itemModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="fa-solid fa-gift me-2"></i><span id="itemModalTitle">添加商品</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="item_id">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">商品名称 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="item_name" placeholder="例如：高级会员资格">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">商品描述</label>
+                    <input type="text" class="form-control" id="item_description" placeholder="简短描述（可选）">
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <label class="form-label fw-semibold">所需积分 <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="points_cost" value="100" min="1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label fw-semibold">库存数量</label>
+                        <input type="number" class="form-control" id="stock" placeholder="留空 = 不限" min="0">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">兑换成功后显示的信息</label>
+                    <textarea class="form-control" id="redemption_info" rows="3"
+                        placeholder="例如：请私信管理员 @admin 领取奖励（可选）"></textarea>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label fw-semibold">上架（允许兑换）</label>
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveItem()">
+                    <i class="fa-solid fa-save me-1"></i>保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== 积分竞拍 Add/Edit Modal ==================== -->
+<div class="modal fade" id="auctionModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-gavel me-2"></i><span id="auctionModalTitle">创建竞拍</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="auction_id">
+                <div class="mb-3">
+                    <label class="form-label">物品名称</label>
+                    <input type="text" class="form-control" id="auction_item_name" placeholder="例如：限量头像框">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">物品描述</label>
+                    <textarea class="form-control" id="auction_item_description" rows="2" placeholder="物品详细描述"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">起拍价（积分）</label>
+                    <input type="number" class="form-control" id="starting_price" value="100" min="1">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">竞拍开始时间</label>
+                    <input type="datetime-local" class="form-control" id="auction_start">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">竞拍结束时间</label>
+                    <input type="datetime-local" class="form-control" id="auction_end">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">状态</label>
+                    <select class="form-control" id="auction_status">
+                        <option value="pending">待开始</option>
+                        <option value="active">进行中</option>
+                        <option value="ended">已结束</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveAuction()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const GROUP_ID = {{ group.id | tojson }};
+let itemModal, auctionModal;
+
+document.addEventListener('DOMContentLoaded', function () {
+    itemModal    = new bootstrap.Modal(document.getElementById('itemModal'));
+    auctionModal = new bootstrap.Modal(document.getElementById('auctionModal'));
+
+    // Restore active tab from URL hash
+    const hash = window.location.hash;
+    if (hash === '#auction') {
+        bootstrap.Tab.getOrCreateInstance(document.getElementById('tab-auction-btn')).show();
+        setTabActions('auction');
+    } else {
+        setTabActions('exchange');
+    }
+
+    // Keep hash in sync
+    document.getElementById('tab-exchange-btn').addEventListener('shown.bs.tab', function () {
+        history.replaceState(null, '', window.location.pathname);
+    });
+    document.getElementById('tab-auction-btn').addEventListener('shown.bs.tab', function () {
+        history.replaceState(null, '', window.location.pathname + '#auction');
+    });
+});
+
+function setTabActions(tab) {
+    const el = document.getElementById('tab-actions');
+    if (tab === 'exchange') {
+        el.innerHTML = '<button class="btn btn-light fw-bold btn-sm" onclick="showAddItemModal()"><i class="fa-solid fa-plus me-1"></i>添加商品</button>';
+    } else {
+        el.innerHTML = '<button class="btn btn-light fw-bold btn-sm" onclick="showAddAuctionModal()"><i class="fa-solid fa-plus me-1"></i>创建竞拍</button>';
+    }
+}
+
+/* ---- Exchange helpers ---- */
+function showAddItemModal() {
+    document.getElementById('itemModalTitle').textContent = '添加商品';
+    document.getElementById('item_id').value = '';
+    document.getElementById('item_name').value = '';
+    document.getElementById('item_description').value = '';
+    document.getElementById('points_cost').value = '100';
+    document.getElementById('stock').value = '';
+    document.getElementById('redemption_info').value = '';
+    document.getElementById('is_active').checked = true;
+    itemModal.show();
+}
+
+function editItemFromBtn(btn) {
+    const d = btn.dataset;
+    document.getElementById('itemModalTitle').textContent = '编辑商品';
+    document.getElementById('item_id').value = d.id;
+    document.getElementById('item_name').value = d.name;
+    document.getElementById('item_description').value = d.description;
+    document.getElementById('points_cost').value = d.points;
+    document.getElementById('stock').value = d.stock !== '' ? d.stock : '';
+    document.getElementById('redemption_info').value = d.redemption;
+    document.getElementById('is_active').checked = d.active === 'true';
+    itemModal.show();
+}
+
+function saveItem() {
+    const stockVal = document.getElementById('stock').value.trim();
+    const data = {
+        group_id: GROUP_ID,
+        id: document.getElementById('item_id').value || null,
+        item_name: document.getElementById('item_name').value.trim(),
+        item_description: document.getElementById('item_description').value.trim(),
+        points_cost: parseInt(document.getElementById('points_cost').value) || 100,
+        stock: stockVal !== '' ? parseInt(stockVal) : null,
+        redemption_info: document.getElementById('redemption_info').value.trim(),
+        is_active: document.getElementById('is_active').checked
+    };
+    if (!data.item_name) { alert('请填写商品名称'); return; }
+    fetch('/core/api/save_exchange_item', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            itemModal.hide();
+            const isNew = !data.id;
+            showToast(isNew ? '✅ 商品已添加！公告正在发送到频道…' : '✅ 保存成功！', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else { alert('❌ ' + (res.msg || '保存失败')); }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function deleteItem(id) {
+    if (!confirm('确定要删除这个兑换商品吗？删除后兑换记录仍保留。')) return;
+    fetch('/core/api/delete_exchange_item', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            showToast('删除成功！频道商品列表将自动更新。', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else { alert('❌ ' + (res.msg || '删除失败')); }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function saveChannel() {
+    const channelId = document.getElementById('exchange_channel_id').value.trim();
+    fetch('/core/api/save_exchange_channel', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: GROUP_ID, exchange_channel_id: channelId})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            showToast(channelId ? '✅ 已保存！商品目录正在推送到频道…' : '✅ 已清除展示频道配置。', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else { alert('❌ ' + (res.msg || '保存失败')); }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+/* ---- Auction helpers ---- */
+function showAddAuctionModal() {
+    document.getElementById('auctionModalTitle').textContent = '创建竞拍';
+    document.getElementById('auction_id').value = '';
+    document.getElementById('auction_item_name').value = '';
+    document.getElementById('auction_item_description').value = '';
+    document.getElementById('starting_price').value = '100';
+    document.getElementById('auction_start').value = '';
+    document.getElementById('auction_end').value = '';
+    document.getElementById('auction_status').value = 'pending';
+    auctionModal.show();
+}
+
+function editAuction(id, auction) {
+    document.getElementById('auctionModalTitle').textContent = '编辑竞拍';
+    document.getElementById('auction_id').value = id;
+    document.getElementById('auction_item_name').value = auction.item_name || '';
+    document.getElementById('auction_item_description').value = auction.item_description || '';
+    document.getElementById('starting_price').value = auction.starting_price || 100;
+    document.getElementById('auction_start').value = (auction.auction_start && auction.auction_start.length >= 16) ? auction.auction_start.substring(0, 16) : '';  // trim to 'YYYY-MM-DDTHH:MM'
+    document.getElementById('auction_end').value = (auction.auction_end && auction.auction_end.length >= 16) ? auction.auction_end.substring(0, 16) : '';  // trim to 'YYYY-MM-DDTHH:MM'
+    document.getElementById('auction_status').value = auction.status || 'pending';
+    auctionModal.show();
+}
+
+function saveAuction() {
+    const data = {
+        group_id: GROUP_ID,
+        id: document.getElementById('auction_id').value || null,
+        item_name: document.getElementById('auction_item_name').value,
+        item_description: document.getElementById('auction_item_description').value,
+        starting_price: parseInt(document.getElementById('starting_price').value) || 100,
+        auction_start: document.getElementById('auction_start').value || null,
+        auction_end: document.getElementById('auction_end').value || null,
+        status: document.getElementById('auction_status').value
+    };
+    fetch('/core/api/save_points_auction', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            auctionModal.hide();
+            showToast('保存成功！', 'success');
+            setTimeout(() => location.reload(), 800);
+        } else { showToast('保存失败: ' + (res.msg || '未知错误'), 'danger'); }
+    })
+    .catch(err => { console.error(err); showToast('网络错误，请重试', 'danger'); });
+}
+
+function deleteAuction(id) {
+    showConfirm('确定要删除这个竞拍吗？', function () {
+        fetch('/core/api/delete_points_auction', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id})
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'ok') {
+                showToast('删除成功！', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else { showToast('删除失败: ' + (res.msg || '未知错误'), 'danger'); }
+        })
+        .catch(err => { console.error(err); showToast('网络错误，请重试', 'danger'); });
+    }, { title: '删除竞拍', isDanger: true, confirmText: '删除' });
+}
+</script>
+{% endblock %}

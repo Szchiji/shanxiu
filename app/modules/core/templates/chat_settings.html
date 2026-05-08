@@ -4,9 +4,16 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<div class="d-flex align-items-center mb-4">
-    <a href="/core" class="btn btn-light me-3"><i class="fa-solid fa-arrow-left"></i> 返回</a>
-    <h4 class="m-0 fw-bold">{{ chat.title }} <span class="badge bg-primary fs-6 align-middle ms-2">配置管理</span></h4>
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-sliders me-2"></i>{{ chat.title }} <span class="badge bg-primary align-middle ms-2" style="font-size:0.7em;">配置管理</span></h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置群组打卡指令、消息文案与功能开关</p>
+        </div>
+        <div>
+            <a href="/core" class="btn btn-light fw-bold"><i class="fa-solid fa-arrow-left me-2"></i>返回</a>
+        </div>
+    </div>
 </div>
 
 <div class="row">

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Manager</title>
+    <title>散修群管机器人</title>
     <script>(function(){var t=localStorage.getItem('bh_theme')||'light';document.documentElement.setAttribute('data-bs-theme',t);})();</script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" rel="stylesheet">
@@ -958,7 +958,7 @@
             </button>
             {% endif %}
             <i class="fa-solid fa-robot me-2"></i>
-            <span>BotHub</span>
+            <span>散修群管机器人</span>
         </a>
         <div class="navbar-nav ms-auto d-flex flex-row align-items-center gap-2 pe-3">
             <button class="theme-toggle-btn" onclick="toggleTheme()" title="切换深色/浅色模式" id="themeToggleBtn">
@@ -987,20 +987,85 @@
                 <div class="sidebar-sticky">
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
+                            {% if current_group.type == 'channel' %}
+                            <i class="fa-solid fa-satellite-dish" style="font-size: 8px; color: #06b6d4;"></i> {{ current_group.title }}
+                            {% else %}
                             <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title }}
+                            {% endif %}
                         {% else %}
                             <i class="fa-solid fa-circle text-warning" style="font-size: 8px;"></i> 未选择群组
                         {% endif %}
                     </div>
                     <ul class="nav flex-column">
                         {% if current_group is defined and current_group %}
+                        {% set is_channel = current_group.type == 'channel' %}
+
                         <!-- Dashboard -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/dashboard" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
                                 <i class="fa-solid fa-chart-line"></i> 数据概览
                             </a>
                         </li>
-                        
+
+                        {% if is_channel %}
+                        {# ── Channel-only navigation ── #}
+
+                        <!-- Channel Automation (accordion) -->
+                        {% set ch_auto_active = page in ['auto_replies', 'scheduled_messages'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if ch_auto_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_automation"
+                                    aria-expanded="{{ 'true' if ch_auto_active else 'false' }}">
+                                <i class="fa-solid fa-satellite-dish group-icon"></i>
+                                频道自动化
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if ch_auto_active %}show{% endif %}" id="sg_automation">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
+                                </ul>
+                            </div>
+                        </li>
+
+                        <!-- Channel Analytics (accordion) -->
+                        {% set ch_analytics_active = page in ['message_statistics'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if ch_analytics_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_analytics"
+                                    aria-expanded="{{ 'true' if ch_analytics_active else 'false' }}">
+                                <i class="fa-solid fa-chart-bar group-icon"></i>
+                                统计 &amp; 监控
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if ch_analytics_active %}show{% endif %}" id="sg_analytics">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
+                                </ul>
+                            </div>
+                        </li>
+
+                        <!-- Report Management -->
+                        <li class="nav-item">
+                            <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-flag"></i> 报告管理
+                            </a>
+                        </li>
+
+                        <!-- Other Settings -->
+                        <li class="nav-item">
+                            <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
+                                <i class="fa-solid fa-cog"></i> 其他设置
+                            </a>
+                        </li>
+
+                        {% else %}
+                        {# ── Group-only navigation ── #}
+
                         <!-- User Management (accordion) -->
                         {% set grp_users_active = page in ['users', 'group_members', 'fields', 'settings'] %}
                         <li class="nav-item">
@@ -1169,6 +1234,8 @@
                                 <i class="fa-solid fa-cog"></i> 其他设置
                             </a>
                         </li>
+
+                        {% endif %}{# end is_channel / group branch #}
                         {% endif %}
                         
                         <!-- Bot Clones - Global feature, only visible on main instance and to main admins -->

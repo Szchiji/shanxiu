@@ -29,11 +29,11 @@
         font-weight: 500;
     }
     
-    .action-kick { background: #fee2e2; color: #991b1b; }
-    .action-ban { background: #fecaca; color: #7f1d1d; }
-    .action-mute { background: #fed7aa; color: #9a3412; }
-    .action-settings { background: #dbeafe; color: #1e40af; }
-    .action-other { background: #e5e7eb; color: #374151; }
+    .action-kick { background: rgba(239, 68, 68, 0.12); color: #dc2626; }
+    .action-ban { background: rgba(239, 68, 68, 0.18); color: #b91c1c; }
+    .action-mute { background: rgba(245, 158, 11, 0.12); color: #d97706; }
+    .action-settings { background: rgba(59, 130, 246, 0.12); color: #2563eb; }
+    .action-other { background: var(--bg-card-hover); color: var(--text-secondary); }
     
     .log-time {
         color: var(--text-muted);
@@ -42,7 +42,7 @@
     
     .log-details {
         font-size: 0.9rem;
-        color: var(--text-color);
+        color: var(--text-secondary);
     }
     
     .pagination {
@@ -59,11 +59,11 @@
         border: 1px solid var(--border-color);
         border-radius: 8px;
         text-decoration: none;
-        color: var(--text-color);
+        color: var(--text-secondary);
     }
     
     .pagination .active {
-        background: var(--primary-gradient);
+        background: var(--accent);
         color: white;
         border-color: transparent;
     }
@@ -78,8 +78,12 @@
 </style>
 
 <div class="page-header">
-    <h4 class="mb-0">🔍 管理员操作日志</h4>
-    <p class="mb-0 mt-1 opacity-90">查看所有管理员操作记录</p>
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-scroll me-2"></i>管理员操作日志</h4>
+            <p class="mb-0 opacity-75">查看所有管理员操作记录</p>
+        </div>
+    </div>
 </div>
 
 <!-- Search / Filter Form -->

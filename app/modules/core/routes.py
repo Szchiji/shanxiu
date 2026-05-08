@@ -5848,6 +5848,7 @@ async def handle_new_chat_member(update: Update, context):
                         # Commit member record if no invitation activity
                         db.session.commit()
                 else:
+                    logging.info(f"👥 [入群事件] 未检测到邀请者或自行加入")
                     # Commit member record if no inviter detected
                     db.session.commit()
                         
@@ -10505,7 +10506,7 @@ async def cmd_start(update: Update, context):
                         reply_markup=join_button
                     )
                     return
-        # If parsing failed or same user, fall through to normal start handling
+        # Continue with normal start handling if parsing failed or same user invites themselves
 
 
     clone_id = context.application.bot_data.get('clone_id')
@@ -11522,8 +11523,8 @@ async def on_message(update: Update, context):
                     group_id=group.id, enabled=True
                 ).first()
                 if invitation_activity and invitation_activity.link_keyword:
-                    _inv_keywords = [k.strip() for k in invitation_activity.link_keyword.split(',') if k.strip()]
-                    if txt in _inv_keywords:
+                    inv_keywords = [k.strip() for k in invitation_activity.link_keyword.split(',') if k.strip()]
+                    if txt in inv_keywords:
                         bot_me = await context.bot.get_me()
                         invite_link = f"https://t.me/{bot_me.username}?start=inv_{user.id}_{group.id}"
                         inv_msg = (

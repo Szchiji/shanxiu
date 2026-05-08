@@ -1,12 +1,14 @@
 {% extends "base.html" %}
-{% from "components.html" import feature_description %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-flag me-2"></i>举报管理</h4>
-            <p class="mb-0 opacity-75">配置举报系统的频道、问题模板与审核奖励</p>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置举报系统的频道、问题模板与审核奖励</p>
         </div>
     </div>
 </div>
@@ -21,14 +23,6 @@
 {% endcall %}
 
 <div class="container-fluid px-0" style="max-width:760px">
-
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        {% for message in messages %}
-          <div class="alert alert-success">{{ message }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
 
     <form method="POST" id="reportSettingsForm" onsubmit="serializeQuestions()">
         {# Hidden field that receives the serialised questions JSON #}
@@ -287,4 +281,16 @@ function serializeQuestions() {
     document.getElementById('questions_json').value = JSON.stringify(questions);
 }
 </script>
+
+{% with messages = get_flashed_messages() %}
+{% if messages %}
+<script>
+window.addEventListener('DOMContentLoaded', function() {
+    {% for message in messages %}
+    showToast({{ message | tojson }}, 'success');
+    {% endfor %}
+});
+</script>
+{% endif %}
+{% endwith %}
 {% endblock %}

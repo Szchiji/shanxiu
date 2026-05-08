@@ -1,5 +1,8 @@
 {% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
 <style>
     .plugin-card {
         background: var(--bg-card);
@@ -31,18 +34,23 @@
         height: 1.25em;
         cursor: pointer;
     }
-    .toast-container {
-        position: fixed;
-        bottom: 1.5rem;
-        right: 1.5rem;
-        z-index: 9999;
-    }
 </style>
 
 <div class="page-header">
-    <h4 class="mb-0">🔌 插件管理</h4>
-    <small>为群组 <b>{{ group.title }}</b> 开启或关闭功能模块</small>
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-plug me-2"></i>插件管理</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">为群组 <b>{{ group.title }}</b> 开启或关闭功能模块</p>
+        </div>
+    </div>
 </div>
+
+{% call feature_description('plugins') %}
+<ul>
+    <li>每个插件对应一个独立功能模块，开启后该模块的所有规则和操作将对当前群组生效。</li>
+    <li>关闭插件不会删除已配置的数据，重新开启后原有设置仍然有效。</li>
+</ul>
+{% endcall %}
 
 <div id="plugin-list">
 {% for plugin in plugins %}
@@ -65,15 +73,6 @@
 {% endfor %}
 </div>
 
-<!-- Toast notifications -->
-<div class="toast-container">
-    <div id="save-toast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
-        <div class="d-flex">
-            <div class="toast-body" id="toast-msg">已保存</div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-        </div>
-    </div>
-</div>
 
 <script>
 document.querySelectorAll('.plugin-toggle').forEach(function(toggle) {
@@ -89,17 +88,12 @@ document.querySelectorAll('.plugin-toggle').forEach(function(toggle) {
                 enabled: enabled
             })
         }).then(function(r) { return r.json(); }).then(function(data) {
-            var toastEl = document.getElementById('save-toast');
-            var toastMsg = document.getElementById('toast-msg');
             if (data.success) {
-                toastEl.className = 'toast align-items-center text-white border-0 bg-success';
-                toastMsg.textContent = '已' + (enabled ? '开启' : '关闭') + ' ' + pluginName;
+                showToast('已' + (enabled ? '开启' : '关闭') + ' ' + pluginName, 'success');
             } else {
                 toggle.checked = !enabled; // revert
-                toastEl.className = 'toast align-items-center text-white border-0 bg-danger';
-                toastMsg.textContent = '操作失败: ' + (data.error || '未知错误');
+                showToast('操作失败: ' + (data.error || '未知错误'), 'error');
             }
-            new bootstrap.Toast(toastEl, {delay: 2500}).show();
         }).catch(function(err) {
             toggle.checked = !enabled;
             console.error('Toggle plugin error:', err);

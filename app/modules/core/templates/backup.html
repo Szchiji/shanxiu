@@ -4,13 +4,13 @@
     .backup-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
+        border-radius: 10px;
         padding: 1.5rem;
         margin-bottom: 1.5rem;
     }
     
     .backup-section h5 {
-        color: var(--primary);
+        color: var(--accent);
         margin-bottom: 1rem;
         font-size: 1.1rem;
     }
@@ -23,25 +23,23 @@
     }
     
     .btn-export {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--accent);
         color: white;
         border: none;
     }
     
     .btn-export:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        box-shadow: var(--hover-shadow);
     }
     
     .btn-import {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: #ef4444;
         color: white;
         border: none;
     }
     
     .btn-import:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(245, 87, 108, 0.4);
+        box-shadow: var(--hover-shadow);
     }
     
     .info-text {
@@ -60,19 +58,19 @@
     }
     
     .file-upload:hover {
-        border-color: var(--primary);
-        background: rgba(102, 126, 234, 0.05);
+        border-color: var(--accent);
+        background: rgba(59, 130, 246, 0.05);
     }
     
     .file-upload.dragover {
-        border-color: var(--primary);
-        background: rgba(102, 126, 234, 0.1);
+        border-color: var(--accent);
+        background: rgba(59, 130, 246, 0.1);
     }
 </style>
 
 <div class="page-header">
-    <h4 class="mb-0">💾 配置备份与恢复</h4>
-    <p class="mb-0 mt-1 opacity-90">导出和导入群组配置</p>
+    <h4 class="fw-bold mb-1"><i class="fa-solid fa-database me-2"></i>配置备份与恢复</h4>
+    <p class="mb-0 opacity-75">导出和导入群组配置</p>
 </div>
 
 <div class="backup-section">
@@ -91,7 +89,7 @@
     <p>从 JSON 文件导入配置。注意：导入会覆盖当前的部分配置。</p>
     
     <div class="file-upload" id="fileUpload">
-        <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--primary);"></i>
+        <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--accent);"></i>
         <p class="mt-3 mb-0">点击选择文件或拖拽文件到此处</p>
         <input type="file" id="fileInput" accept=".json" style="display: none;">
     </div>

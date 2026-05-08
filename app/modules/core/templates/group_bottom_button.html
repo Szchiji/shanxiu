@@ -6,19 +6,19 @@
 
 <style>
     .buttons-card {
-        border-radius: 15px;
+        border-radius: 10px;
         border: none;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+        box-shadow: var(--card-shadow);
         transition: all 0.3s ease;
         margin-bottom: 1.5rem;
     }
     
     .button-row-container {
-        background: #f8f9fa;
+        background: var(--bg-secondary);
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 10px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid var(--border-color);
     }
     
     .button-row-header {
@@ -44,8 +44,9 @@
     .button-badge {
         display: inline-flex;
         align-items: center;
-        background: #343a40;
-        color: white;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
         padding: 6px 12px;
         border-radius: 6px;
         font-size: 0.875rem;
@@ -54,7 +55,7 @@
     }
     
     .button-badge:hover {
-        background: #495057;
+        background: var(--bg-card-hover);
     }
     
     .button-badge .btn-close {
@@ -85,7 +86,7 @@
     .add-row-button:hover {
         border-color: #0d6efd;
         color: #0d6efd;
-        background: #f8f9fa;
+        background: var(--bg-secondary);
     }
 </style>
 

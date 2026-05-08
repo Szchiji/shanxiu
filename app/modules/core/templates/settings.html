@@ -92,14 +92,13 @@
     
     @media (min-width: 768px) {
         .config-card {
-            border-radius: 14px;
+            border-radius: 10px;
         }
     }
     
     .config-card:hover {
-        border-color: rgba(124, 58, 237, 0.5);
-        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.2);
-        transform: translateY(-2px);
+        border-color: rgba(59, 130, 246, 0.35);
+        box-shadow: var(--hover-shadow);
     }
     
     .config-section {
@@ -162,11 +161,6 @@
         }
     }
     
-    .form-switch .form-check-input:checked {
-        background-color: #7c3aed;
-        border-color: #7c3aed;
-    }
-    
     .template-selector {
         border-radius: 8px;
         border: 1px solid var(--border-color);
@@ -204,9 +198,8 @@
     }
     
     .btn-toolbar-action:hover {
-        background: var(--primary-gradient);
+        background: var(--accent);
         color: white;
-        transform: scale(1.05);
         border-color: transparent;
     }
     
@@ -226,10 +219,14 @@
     }
     
     .badge-variable:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        box-shadow: var(--hover-shadow);
     }
     
+    .cmd-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+    }
+
     .card-header {
         background: var(--bg-card) !important;
         color: var(--text-primary);
@@ -246,11 +243,11 @@
     
     /* Custom buttons row-grouped styles */
     .button-row-container {
-        background: #f8f9fa;
+        background: var(--bg-secondary);
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 10px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid var(--border-color);
     }
     
     .button-row-header {
@@ -276,8 +273,9 @@
     .button-badge {
         display: inline-flex;
         align-items: center;
-        background: #343a40;
-        color: white;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
         padding: 6px 12px;
         border-radius: 6px;
         font-size: 0.875rem;
@@ -286,7 +284,7 @@
     }
     
     .button-badge:hover {
-        background: #495057;
+        background: var(--bg-card-hover);
     }
     
     .button-badge .btn-close {
@@ -317,7 +315,7 @@
     .add-row-button:hover {
         border-color: #0d6efd;
         color: #0d6efd;
-        background: #f8f9fa;
+        background: var(--bg-secondary);
     }
 </style>
 
@@ -347,7 +345,7 @@
     <div class="col-lg-4 mb-4">
         <div class="config-card card h-100">
             <div class="card-header bg-white fw-bold py-3 border-0">
-                <i class="fa-solid fa-gear me-2" style="color: #4facfe;"></i>交互参数
+                <i class="fa-solid fa-gear me-2 text-primary"></i>交互参数
             </div>
             <div class="card-body">
                 
@@ -477,7 +475,7 @@
         <!-- 文案编辑器 -->
         <div class="config-card card mb-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-pen-to-square me-2" style="color: #4facfe;"></i>文案与模板</span>
+                <span class="fw-bold"><i class="fa-solid fa-pen-to-square me-2 text-primary"></i>文案与模板</span>
                 <select class="template-selector form-select w-auto" id="msgSelector" onchange="loadMsg()">
                     <option value="template">👤 列表单行模板</option>
                     <option value="msg_query_header">📝 普通查询抬头</option>
@@ -519,7 +517,7 @@
                     <span class="badge-variable badge bg-secondary text-white border" onmousedown="insert('{查报告链接}', event)" title="查看历史报告的 Bot 深链接">📋查报告</span>
                 </div>
                 
-                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: white; font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
+                <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: var(--bg-card); font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
                 
                 <div class="p-3 border-top bg-light text-end">
                     <button class="btn btn-secondary" onclick="saveTmp()">
@@ -532,7 +530,7 @@
         <!-- 自定义按钮 -->
         <div class="config-card card">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-square-plus me-2" style="color: #4facfe;"></i>自定义按钮 (列表底部)</span>
+                <span class="fw-bold"><i class="fa-solid fa-square-plus me-2 text-primary"></i>自定义按钮 (列表底部)</span>
             </div>
             <div class="card-body">
                 <div id="btnContainer"></div>
@@ -546,7 +544,7 @@
         <!-- 群管理机器人命令 -->
         <div class="config-card card">
             <div class="card-header bg-white py-3 border-0">
-                <span class="fw-bold"><i class="fa-solid fa-robot me-2" style="color: #667eea;"></i>群管理机器人命令</span>
+                <span class="fw-bold"><i class="fa-solid fa-robot me-2 text-primary"></i>群管理机器人命令</span>
             </div>
             <div class="card-body">
                 <div class="alert alert-info mb-3">
@@ -556,7 +554,7 @@
                 
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #ef4444;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-user-slash me-2"></i>/kick</h6>
                                 <p class="small mb-1"><strong>功能：</strong>踢出群成员（可重新加入）</p>
@@ -566,7 +564,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #fa709a15 0%, #fee14015 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #f59e0b;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-ban me-2"></i>/ban</h6>
                                 <p class="small mb-1"><strong>功能：</strong>永久封禁群成员</p>
@@ -576,7 +574,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #4facfe15 0%, #00f2fe15 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #22c55e;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-check-circle me-2"></i>/unban</h6>
                                 <p class="small mb-1"><strong>功能：</strong>解除用户封禁</p>
@@ -586,7 +584,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #3b82f6;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-comment-slash me-2"></i>/mute [分钟]</h6>
                                 <p class="small mb-1"><strong>功能：</strong>禁言用户指定时间（默认60分钟）</p>
@@ -596,7 +594,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #a8edea15 0%, #fed6e315 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #06b6d4;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-volume-up me-2"></i>/unmute</h6>
                                 <p class="small mb-1"><strong>功能：</strong>解除用户禁言</p>
@@ -606,7 +604,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #ffecd215 0%, #fcb69f15 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #f97316;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-thumbtack me-2"></i>/pin</h6>
                                 <p class="small mb-1"><strong>功能：</strong>置顶消息</p>
@@ -616,7 +614,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #ff9a9e15 0%, #fecfef15 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #ec4899;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-times me-2"></i>/unpin</h6>
                                 <p class="small mb-1"><strong>功能：</strong>取消置顶（不回复消息则取消所有置顶）</p>
@@ -626,7 +624,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #ffeaa715 0%, #ffcf7115 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #eab308;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-exclamation-triangle me-2"></i>/warn [原因]</h6>
                                 <p class="small mb-1"><strong>功能：</strong>警告用户</p>
@@ -636,7 +634,7 @@
                     </div>
                     
                     <div class="col-md-6">
-                        <div class="card border-0" style="background: linear-gradient(135deg, #43e97b15 0%, #38f9d715 100%);">
+                        <div class="card cmd-card" style="border-left: 3px solid #10b981;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-id-card me-2"></i>/userinfo</h6>
                                 <p class="small mb-1"><strong>功能：</strong>查看用户详细信息（支持转发消息）</p>

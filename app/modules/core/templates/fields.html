@@ -19,9 +19,9 @@
     }
     
     .field-item {
-        background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
-        border: 2px solid #e0e0e0;
-        border-radius: 12px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
         padding: 1rem;
         margin-bottom: 1rem;
         transition: all 0.3s ease;
@@ -30,7 +30,7 @@
     
     @media (min-width: 768px) {
         .field-item {
-            border-radius: 15px;
+            border-radius: 10px;
             padding: 1.5rem;
         }
     }
@@ -47,15 +47,14 @@
     }
     
     .field-item:hover {
-        border-color: #f093fb;
-        box-shadow: 0 8px 20px rgba(240, 147, 251, 0.2);
-        transform: translateX(5px);
+        border-color: rgba(59, 130, 246, 0.3);
+        box-shadow: var(--hover-shadow);
     }
     
     .add-field-btn {
-        border: 2px dashed #f093fb;
+        border: 2px dashed var(--accent);
         background: transparent;
-        color: #f093fb;
+        color: var(--accent);
         padding: 1rem;
         border-radius: 12px;
         transition: all 0.3s ease;
@@ -65,15 +64,14 @@
     @media (min-width: 768px) {
         .add-field-btn {
             padding: 1.5rem;
-            border-radius: 15px;
+            border-radius: 10px;
         }
     }
     
     .add-field-btn:hover {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        background: var(--accent);
         color: white;
         border-color: transparent;
-        transform: scale(1.02);
     }
     
     .delete-field-btn {

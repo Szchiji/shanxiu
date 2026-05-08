@@ -189,6 +189,7 @@ class InvitationActivity(db.Model):
     activity_end = db.Column(db.DateTime, nullable=True)
     description = db.Column(db.Text, nullable=True)
     announce_in_group = db.Column(db.Boolean, default=False)  # 是否在群内公告邀请成功
+    link_keyword = db.Column(db.String(255), nullable=True)  # 触发专属链接的关键词（逗号分隔多个）
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     

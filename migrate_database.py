@@ -131,6 +131,8 @@ def run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_pending_referrals_user_id ON pending_referrals(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_pending_referrals_group_id ON pending_referrals(group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS _pending_referral_user_group_uc ON pending_referrals(user_id, group_id)",
+        # invitation_activity: Add link_keyword for group keyword-triggered invite link generation
+        "ALTER TABLE invitation_activity ADD COLUMN IF NOT EXISTS link_keyword VARCHAR(255) NULL",
     ]
 
     with app.app_context():

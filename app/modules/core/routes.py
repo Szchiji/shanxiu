@@ -3323,6 +3323,7 @@ def api_save_invitation_activity():
         settings.description = d.get('description')
         # Handle announce_in_group
         settings.announce_in_group = d.get('announce_in_group', False)
+        settings.link_keyword = d.get('link_keyword') or None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -11513,6 +11514,25 @@ async def on_message(update: Update, context):
                             )
                         # 兑换成功后自动更新频道商品目录
                         await _update_exchange_catalog_async(group.id, context.application)
+                        return
+
+            # 2.7 邀请活动关键词触发 — 回复用户专属邀请链接
+            if chat.type in ['group', 'supergroup'] and user:
+                invitation_activity = InvitationActivity.query.filter_by(
+                    group_id=group.id, enabled=True
+                ).first()
+                if invitation_activity and invitation_activity.link_keyword:
+                    _inv_keywords = [k.strip() for k in invitation_activity.link_keyword.split(',') if k.strip()]
+                    if txt in _inv_keywords:
+                        bot_me = await context.bot.get_me()
+                        invite_link = f"https://t.me/{bot_me.username}?start=inv_{user.id}_{group.id}"
+                        inv_msg = (
+                            f"🔗 <b>您的专属邀请链接</b>\n\n"
+                            f"<code>{invite_link}</code>\n\n"
+                            f"📌 将此链接分享给好友，当好友通过链接加入群组后，"
+                            f"您将获得 <b>{invitation_activity.reward_points} 积分</b> 奖励！"
+                        )
+                        await msg.reply_html(inv_msg)
                         return
 
             # 3. 自动回复检查 (Check points-based first, then regular auto-reply)

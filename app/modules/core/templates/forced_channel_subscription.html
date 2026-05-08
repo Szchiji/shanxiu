@@ -31,7 +31,7 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-rss me-2"></i>强制订阅频道</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">要求用户订阅指定频道后才能在群内发言</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+        <button id="saveBtn" class="btn btn-light fw-bold" onclick="saveSettings()">
             <i class="fa-solid fa-save me-2"></i>保存设置
         </button>
     </div>
@@ -113,7 +113,7 @@ function saveSettings() {
         unsubscribe_action: document.getElementById('unsubscribe_action').value,
         verification_message: document.getElementById('verification_message').value
     };
-    
+
     fetch('/core/api/save_forced_channel_subscription', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -122,14 +122,16 @@ function saveSettings() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            showToast('保存成功！', 'success');
+            showInlineSave('saveBtn', '已保存', 'success');
         } else {
-            alert('❌ ' + (result.msg || '保存失败'));
+            showInlineSave('saveBtn', '保存失败', 'danger');
+            showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
         }
     })
     .catch(err => {
-        console.error(err);
-        showToast('网络错误', 'error');
+        console.error('操作失败:', err);
+        showInlineSave('saveBtn', '保存失败', 'danger');
+        showToast('网络错误，请重试', 'danger');
     });
 }
 </script>

@@ -25,7 +25,7 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-clock me-2"></i>定时开关群</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">设置群组定时开启或关闭，自动管理群聊时间</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+        <button id="saveBtn" class="btn btn-light fw-bold" onclick="saveSettings()">
             <i class="fa-solid fa-save me-2"></i>保存设置
         </button>
     </div>
@@ -114,13 +114,14 @@
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
             if (result.status === 'ok') {
-                showToast('设置已保存', 'success');
-                setTimeout(() => location.reload(), 1000);
+                showInlineSave('saveBtn', '已保存', 'success');
             } else {
-                showToast('保存失败: ' + (result.msg || '未知错误'));
+                showInlineSave('saveBtn', '保存失败', 'danger');
+                showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
             }
         }).catch(e => {
-            showToast('网络错误，请重试', 'error');
+            showInlineSave('saveBtn', '保存失败', 'danger');
+            showToast('网络错误，请重试', 'danger');
             console.error('操作失败:', e);
         });
     }

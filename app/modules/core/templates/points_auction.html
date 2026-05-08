@@ -201,39 +201,40 @@ function saveAuction() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
+            auctionModal.hide();
             showToast('保存成功！', 'success');
-                setTimeout(() => location.reload(), 1000);
+            setTimeout(() => location.reload(), 800);
         } else {
-            alert('❌ ' + (result.msg || '保存失败'));
+            showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
         }
     })
     .catch(err => {
-        console.error(err);
-        showToast('网络错误', 'error');
+        console.error('操作失败:', err);
+        showToast('网络错误，请重试', 'danger');
     });
 }
 
 function deleteAuction(id) {
-    if (!confirm('确定要删除这个竞拍吗？')) return;
-    
-    fetch('/core/api/delete_points_auction', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: id})
-    })
-    .then(res => res.json())
-    .then(result => {
-        if (result.status === 'ok') {
-            showToast('删除成功！', 'success');
-                setTimeout(() => location.reload(), 1000);
-        } else {
-            alert('❌ ' + (result.msg || '删除失败'));
-        }
-    })
-    .catch(err => {
-        console.error(err);
-        showToast('网络错误', 'error');
-    });
+    showConfirm('确定要删除这个竞拍吗？', function () {
+        fetch('/core/api/delete_points_auction', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id: id})
+        })
+        .then(res => res.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                showToast('删除成功！', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showToast('删除失败: ' + (result.msg || '未知错误'), 'danger');
+            }
+        })
+        .catch(err => {
+            console.error('操作失败:', err);
+            showToast('网络错误，请重试', 'danger');
+        });
+    }, { title: '删除竞拍', isDanger: true, confirmText: '删除' });
 }
 </script>
 {% endblock %}

@@ -1,6 +1,65 @@
 {% extends "base.html" %}
-{% from "components.html" import feature_description %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .votes-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        margin-bottom: 1.5rem;
+    }
+
+    .vote-item {
+        border-bottom: 1px solid var(--border-color);
+        padding: 1.25rem;
+        transition: background-color 0.2s;
+    }
+
+    .vote-item:last-child {
+        border-bottom: none;
+    }
+
+    .vote-item:hover {
+        background-color: var(--bg-card-hover);
+    }
+
+    .card-header {
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
+    }
+
+    .modal-body input,
+    .modal-body select,
+    .modal-body textarea {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+    }
+
+    .modal-body input:focus,
+    .modal-body select:focus,
+    .modal-body textarea:focus {
+        background: var(--bg-secondary);
+        border-color: #7c3aed;
+        color: var(--text-primary);
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25);
+    }
+
+    .modal-body label {
+        color: var(--text-secondary);
+    }
+
+    #optionsContainer .option-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+        align-items: center;
+    }
+</style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -17,39 +76,297 @@
 {% call feature_description('group_votes') %}
 <ul>
     <li>在群内发起投票，成员通过 Telegram 原生 Poll 参与，实时查看结果。</li>
-    <li>支持<strong>单选</strong>和<strong>多选</strong>两种投票类型。</li>
-    <li>可设置<strong>匿名投票</strong>（成员只看结果，不知道谁选了什么）。</li>
-    <li>使用命令 <code>/vote 标题|选项1|选项2|...</code> 创建投票。</li>
+    <li>支持<strong>单选</strong>和<strong>多选</strong>两种投票类型；多选时可限制每人最多选几项。</li>
+    <li>可设置<strong>匿名投票</strong>（成员只看结果，不知道谁选了什么）和<strong>允许改投</strong>。</li>
+    <li>可指定投票的开始/结束时间，系统到时自动开放或关闭。</li>
 </ul>
 {% endcall %}
 
 <div class="row">
-    <div class="col-md-10 mx-auto">
-        <div class="alert alert-info">
-            <i class="fa-solid fa-lightbulb me-2"></i>
-            <strong>使用方法：</strong>在群内使用命令 /vote 标题|选项1|选项2|选项3 创建投票
-        </div>
-
-        {% if votes %}
-            {% for v in votes %}
-            <div class="card mb-3">
-                <div class="card-body">
-                    <h5>{{ v.title }}</h5>
-                    <p class="text-muted">{{ v.description }}</p>
-                    <div class="d-flex gap-2">
-                        <span class="badge bg-{{ 'success' if v.status == 'active' else 'secondary' }}">
-                            {{ {'pending': '待开始', 'active': '进行中', 'ended': '已结束'}[v.status] }}
-                        </span>
-                        <span class="badge bg-info">{{ v.vote_type == 'single' and '单选' or '多选' }}</span>
+    <div class="col-12">
+        <div class="votes-card card">
+            <div class="card-header fw-bold py-3">
+                <i class="fa-solid fa-list me-2 text-primary"></i>投票列表
+            </div>
+            <div class="card-body p-0">
+                {% if votes %}
+                    {% for v in votes %}
+                    <div class="vote-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">{{ v.title }}</h6>
+                                {% if v.description %}
+                                <p class="text-muted mb-2 small">{{ v.description }}</p>
+                                {% endif %}
+                                <div class="d-flex gap-2 flex-wrap mt-1">
+                                    <span class="badge {{ 'bg-warning' if v.status == 'pending' else ('bg-success' if v.status == 'active' else 'bg-secondary') }}">
+                                        {{ '待开始' if v.status == 'pending' else ('进行中' if v.status == 'active' else '已结束') }}
+                                    </span>
+                                    <span class="badge bg-info">{{ '单选' if v.vote_type == 'single' else '多选' }}</span>
+                                    {% if v.is_anonymous %}<span class="badge bg-dark">匿名</span>{% endif %}
+                                    {% if v.start_time %}<small class="text-muted">开始: {{ v.start_time.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}
+                                    {% if v.end_time %}<small class="text-muted">结束: {{ v.end_time.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}
+                                </div>
+                            </div>
+                            <div class="d-flex gap-1 ms-3">
+                                <button class="btn btn-sm btn-primary" onclick="editVote({{ v.id }})">
+                                    <i class="fa-solid fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteVote({{ v.id }})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">暂无投票，点击右上角按钮创建</p>
+                    </div>
+                {% endif %}
             </div>
-            {% endfor %}
-        {% else %}
-            <div class="alert alert-secondary">
-                <i class="fa-solid fa-info-circle me-2"></i>暂无投票记录
-            </div>
-        {% endif %}
+        </div>
     </div>
 </div>
+
+<!-- Add/Edit Modal -->
+<div class="modal fade" id="voteModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-square-poll-vertical me-2"></i><span id="modalTitle">创建投票</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="vote_id">
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">投票标题 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="title" placeholder="例如：本周话题投票">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">描述（可选）</label>
+                    <textarea class="form-control" id="description" rows="2" placeholder="投票的补充说明"></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">选项 <span class="text-danger">*</span></label>
+                    <div id="optionsContainer"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="addOptionRow()">
+                        <i class="fa-solid fa-plus me-1"></i>添加选项
+                    </button>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">投票类型</label>
+                        <select class="form-select" id="vote_type" onchange="toggleMultipleFields()">
+                            <option value="single">单选</option>
+                            <option value="multiple">多选</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3" id="max_choices_wrap" style="display:none;">
+                        <label class="form-label fw-bold">最多选择数</label>
+                        <input type="number" class="form-control" id="max_choices" value="2" min="2">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="is_anonymous">
+                            <label class="form-check-label fw-bold">匿名投票</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="allow_revote" checked>
+                            <label class="form-check-label fw-bold">允许改投</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">开始时间（可选）</label>
+                        <input type="datetime-local" class="form-control" id="start_time">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">结束时间（可选）</label>
+                        <input type="datetime-local" class="form-control" id="end_time">
+                    </div>
+                </div>
+
+                <div class="mb-0">
+                    <label class="form-label fw-bold">状态</label>
+                    <select class="form-select" id="status">
+                        <option value="pending">待开始</option>
+                        <option value="active">进行中</option>
+                        <option value="ended">已结束</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveVote()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const votesData = {{ votes_json | safe }};
+let voteModal;
+
+document.addEventListener('DOMContentLoaded', function () {
+    voteModal = new bootstrap.Modal(document.getElementById('voteModal'));
+});
+
+function toggleMultipleFields() {
+    const isMultiple = document.getElementById('vote_type').value === 'multiple';
+    document.getElementById('max_choices_wrap').style.display = isMultiple ? 'block' : 'none';
+}
+
+function addOptionRow(value) {
+    const container = document.getElementById('optionsContainer');
+    const idx = container.children.length;
+    const row = document.createElement('div');
+    row.className = 'option-row';
+    row.innerHTML = `
+        <input type="text" class="form-control option-input" placeholder="选项 ${idx + 1}" value="${value || ''}">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeOptionRow(this)">
+            <i class="fa-solid fa-times"></i>
+        </button>`;
+    container.appendChild(row);
+}
+
+function removeOptionRow(btn) {
+    const container = document.getElementById('optionsContainer');
+    if (container.children.length <= 2) {
+        showToast('至少需要 2 个选项', 'warning');
+        return;
+    }
+    btn.closest('.option-row').remove();
+}
+
+function getOptions() {
+    return Array.from(document.querySelectorAll('.option-input'))
+        .map(i => i.value.trim())
+        .filter(v => v);
+}
+
+function renderOptions(opts) {
+    const container = document.getElementById('optionsContainer');
+    container.innerHTML = '';
+    (opts && opts.length ? opts : ['', '']).forEach(v => addOptionRow(v));
+}
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = '创建投票';
+    document.getElementById('vote_id').value = '';
+    document.getElementById('title').value = '';
+    document.getElementById('description').value = '';
+    document.getElementById('vote_type').value = 'single';
+    document.getElementById('max_choices').value = '2';
+    document.getElementById('is_anonymous').checked = false;
+    document.getElementById('allow_revote').checked = true;
+    document.getElementById('start_time').value = '';
+    document.getElementById('end_time').value = '';
+    document.getElementById('status').value = 'pending';
+    toggleMultipleFields();
+    renderOptions([]);
+    voteModal.show();
+}
+
+function editVote(id) {
+    const v = votesData.find(x => x.id === id);
+    if (!v) return;
+    document.getElementById('modalTitle').textContent = '编辑投票';
+    document.getElementById('vote_id').value = id;
+    document.getElementById('title').value = v.title || '';
+    document.getElementById('description').value = v.description || '';
+    document.getElementById('vote_type').value = v.vote_type || 'single';
+    document.getElementById('max_choices').value = v.max_choices || 2;
+    document.getElementById('is_anonymous').checked = !!v.is_anonymous;
+    document.getElementById('allow_revote').checked = v.allow_revote !== false;
+    document.getElementById('start_time').value = v.start_time ? v.start_time.substring(0, 16) : '';
+    document.getElementById('end_time').value = v.end_time ? v.end_time.substring(0, 16) : '';
+    document.getElementById('status').value = v.status || 'pending';
+    toggleMultipleFields();
+    renderOptions(v.options || []);
+    voteModal.show();
+}
+
+function saveVote() {
+    const opts = getOptions();
+    if (!document.getElementById('title').value.trim()) {
+        showToast('请输入投票标题', 'warning');
+        return;
+    }
+    if (opts.length < 2) {
+        showToast('至少需要 2 个选项', 'warning');
+        return;
+    }
+
+    const data = {
+        group_id: {{ group.id }},
+        id: parseInt(document.getElementById('vote_id').value) || null,
+        title: document.getElementById('title').value.trim(),
+        description: document.getElementById('description').value.trim(),
+        options: opts,
+        vote_type: document.getElementById('vote_type').value,
+        max_choices: parseInt(document.getElementById('max_choices').value) || 2,
+        is_anonymous: document.getElementById('is_anonymous').checked,
+        allow_revote: document.getElementById('allow_revote').checked,
+        start_time: document.getElementById('start_time').value || null,
+        end_time: document.getElementById('end_time').value || null,
+        status: document.getElementById('status').value
+    };
+
+    fetch('/core/api/save_group_vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            voteModal.hide();
+            showToast('保存成功！', 'success');
+            setTimeout(() => location.reload(), 800);
+        } else {
+            showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
+        }
+    })
+    .catch(e => {
+        console.error('操作失败:', e);
+        showToast('网络错误，请重试', 'danger');
+    });
+}
+
+function deleteVote(id) {
+    showConfirm('确定要删除这个投票吗？此操作不可恢复。', function () {
+        fetch('/core/api/delete_group_vote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id })
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                showToast('删除成功！', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showToast('删除失败: ' + (result.msg || '未知错误'), 'danger');
+            }
+        })
+        .catch(e => {
+            console.error('操作失败:', e);
+            showToast('网络错误，请重试', 'danger');
+        });
+    }, { title: '删除投票', isDanger: true, confirmText: '删除' });
+}
+</script>
 {% endblock %}

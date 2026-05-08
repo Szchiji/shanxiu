@@ -126,6 +126,11 @@ def run_migrations():
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
         # user_reports: Track whether the channel message has been deleted
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_msg_deleted BOOLEAN DEFAULT FALSE",
+        # pending_referrals: Track users who arrive via /mylink deep-links before they join the group
+        "CREATE TABLE IF NOT EXISTS pending_referrals (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT NOT NULL, inviter_id BIGINT NOT NULL, group_id INTEGER REFERENCES bot_groups(id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_pending_referrals_user_id ON pending_referrals(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_pending_referrals_group_id ON pending_referrals(group_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS _pending_referral_user_group_uc ON pending_referrals(user_id, group_id)",
     ]
 
     with app.app_context():

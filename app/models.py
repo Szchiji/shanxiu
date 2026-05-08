@@ -213,6 +213,22 @@ class InvitationRecord(db.Model):
     group = db.relationship('BotGroup', backref='invitation_records', lazy=True)
 
 
+class PendingReferral(db.Model):
+    """待处理的邀请链接记录 - 通过机器人专属深链接邀请时临时存储"""
+    __tablename__ = 'pending_referrals'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.BigInteger, index=True)      # 点击链接的用户 TG ID
+    inviter_id = db.Column(db.BigInteger)               # 邀请人 TG ID
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'group_id', name='_pending_referral_user_group_uc'),
+    )
+
+    group = db.relationship('BotGroup', backref='pending_referrals', lazy=True)
+
+
 class ForcedChannelSubscription(db.Model):
     """强制订阅频道"""
     __tablename__ = 'forced_channel_subscription'

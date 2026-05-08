@@ -908,7 +908,17 @@ def page_entry_exit_settings(gid):
         settings = GroupEntryExitSettings(group_id=gid)
         db.session.add(settings)
         db.session.commit()
-    return render_template('entry_exit_settings.html', page='entry_exit_settings', group=group, settings=settings)
+    # Pre-process verification_options into a newline-separated string for the template textarea
+    verification_options_text = ''
+    if settings.verification_options:
+        try:
+            opts = json.loads(settings.verification_options)
+            if isinstance(opts, list):
+                verification_options_text = '\n'.join(opts)
+        except (ValueError, TypeError):
+            pass
+    return render_template('entry_exit_settings.html', page='entry_exit_settings', group=group,
+                           settings=settings, verification_options_text=verification_options_text)
 
 @core_bp.route('/group/<int:gid>/spam_protection')
 def page_spam_protection(gid):
@@ -1298,8 +1308,8 @@ def page_group_votes(gid):
     group = get_group_or_403(gid)
     votes = GroupVote.query.filter_by(group_id=gid).order_by(GroupVote.created_at.desc()).all()
     
-    # Convert to JSON for JavaScript
-    votes_json = json.dumps([{
+    # Build a plain Python list so the template can use the safe `tojson` filter
+    votes_data = [{
         'id': v.id,
         'title': v.title,
         'description': v.description,
@@ -1311,10 +1321,10 @@ def page_group_votes(gid):
         'start_time': v.start_time.isoformat() if v.start_time else None,
         'end_time': v.end_time.isoformat() if v.end_time else None,
         'status': v.status
-    } for v in votes], ensure_ascii=False)
+    } for v in votes]
     
     return render_template('group_votes.html', page='group_votes', group=group, 
-                         votes=votes, votes_json=votes_json)
+                         votes=votes, votes_data=votes_data)
 
 @core_bp.route('/group/<int:gid>/quiz_games')
 def page_quiz_games(gid):

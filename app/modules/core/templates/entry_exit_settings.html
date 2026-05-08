@@ -31,7 +31,7 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-user-shield me-2"></i>进退群设置</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">配置新成员进群验证和退群通知消息</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="saveSettings()">
+        <button id="saveBtn" class="btn btn-light fw-bold" onclick="saveSettings()">
             <i class="fa-solid fa-save me-2"></i>保存设置
         </button>
     </div>
@@ -61,6 +61,17 @@
                 </div>
                 
                 <div class="mb-3">
+                    <label class="form-label">验证方式</label>
+                    <select class="form-select" id="verification_type" onchange="toggleVerificationType()">
+                        <option value="question" {{ 'selected' if not settings or settings.verification_type == 'question' }}>问答题（自定义问题+答案）</option>
+                        <option value="captcha" {{ 'selected' if settings and settings.verification_type == 'captcha' }}>数字验证码（随机数字）</option>
+                        <option value="emoji" {{ 'selected' if settings and settings.verification_type == 'emoji' }}>表情验证（随机表情按钮）</option>
+                        <option value="multiple_choice" {{ 'selected' if settings and settings.verification_type == 'multiple_choice' }}>选择题（多选项问题）</option>
+                    </select>
+                </div>
+
+                <div id="question_answer_fields">
+                <div class="mb-3">
                     <label class="form-label">验证问题</label>
                     <input type="text" class="form-control" id="verification_question" 
                            value="{{ settings.verification_question if settings and settings.verification_question else '' }}" 
@@ -72,6 +83,28 @@
                     <input type="text" class="form-control" id="verification_answer" 
                            value="{{ settings.verification_answer if settings and settings.verification_answer else '' }}" 
                            placeholder="正确答案">
+                </div>
+                </div>
+
+                <div id="multiple_choice_fields" style="display:none;">
+                <div class="mb-3">
+                    <label class="form-label">选择题题目</label>
+                    <input type="text" class="form-control" id="mc_question"
+                           value="{{ settings.verification_question if settings and settings.verification_question else '' }}"
+                           placeholder="例如：以下哪个是正确的？">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">选项（每行一个）</label>
+                    <textarea class="form-control" id="verification_options" rows="4"
+                              placeholder="选项A&#10;选项B&#10;选项C&#10;选项D">{{ verification_options_text }}</textarea>
+                    <div class="form-text">每行一个选项，不少于 2 个</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">正确答案（与上方选项行号对应，从 1 开始）</label>
+                    <input type="number" class="form-control" id="mc_correct_index" min="1"
+                           value="{{ settings.verification_answer if settings and settings.verification_answer else '1' }}"
+                           placeholder="例如：2 表示第2行选项为正确答案">
+                </div>
                 </div>
                 
                 <div class="mb-0">
@@ -148,13 +181,50 @@
 
 <script>
     const groupId = {{ group.id }};
-    
+
+    function toggleVerificationType() {
+        const type = document.getElementById('verification_type').value;
+        const qaFields = document.getElementById('question_answer_fields');
+        const mcFields = document.getElementById('multiple_choice_fields');
+        if (type === 'multiple_choice') {
+            qaFields.style.display = 'none';
+            mcFields.style.display = 'block';
+        } else if (type === 'question') {
+            qaFields.style.display = 'block';
+            mcFields.style.display = 'none';
+        } else {
+            qaFields.style.display = 'none';
+            mcFields.style.display = 'none';
+        }
+    }
+
+    // Run on page load to restore correct visibility
+    toggleVerificationType();
+
     function saveSettings() {
+        const vtype = document.getElementById('verification_type').value;
+        let vQuestion = '';
+        let vAnswer = '';
+        let vOptions = null;
+
+        if (vtype === 'question') {
+            vQuestion = document.getElementById('verification_question').value;
+            vAnswer = document.getElementById('verification_answer').value;
+        } else if (vtype === 'multiple_choice') {
+            vQuestion = document.getElementById('mc_question').value;
+            vAnswer = document.getElementById('mc_correct_index').value;
+            const optLines = document.getElementById('verification_options').value
+                .split('\n').map(l => l.trim()).filter(l => l);
+            vOptions = optLines;
+        }
+
         const data = {
             group_id: groupId,
             entry_verification_enabled: document.getElementById('entry_verification_enabled').checked,
-            verification_question: document.getElementById('verification_question').value,
-            verification_answer: document.getElementById('verification_answer').value,
+            verification_type: vtype,
+            verification_question: vQuestion,
+            verification_answer: vAnswer,
+            verification_options: vOptions,
             verification_timeout: parseInt(document.getElementById('verification_timeout').value),
             welcome_enabled: document.getElementById('welcome_enabled').checked,
             welcome_message: document.getElementById('welcome_message').value,
@@ -163,20 +233,21 @@
             exit_ban_enabled: document.getElementById('exit_ban_enabled').checked,
             exit_ban_duration: parseInt(document.getElementById('exit_ban_duration').value)
         };
-        
+
         fetch('/core/api/save_entry_exit_settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
         }).then(res => res.json()).then(result => {
             if (result.status === 'ok') {
-                showToast('设置已保存', 'success');
-                setTimeout(() => location.reload(), 1000);
+                showInlineSave('saveBtn', '已保存', 'success');
             } else {
-                showToast('保存失败: ' + (result.msg || '未知错误'));
+                showInlineSave('saveBtn', '保存失败', 'danger');
+                showToast('保存失败: ' + (result.msg || '未知错误'), 'danger');
             }
         }).catch(e => {
-            showToast('网络错误，请重试', 'error');
+            showInlineSave('saveBtn', '保存失败', 'danger');
+            showToast('网络错误，请重试', 'danger');
             console.error('操作失败:', e);
         });
     }

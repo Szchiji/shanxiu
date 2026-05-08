@@ -96,7 +96,7 @@
                 <div class="mb-3">
                     <label class="form-label">选项（每行一个）</label>
                     <textarea class="form-control" id="verification_options" rows="4"
-                              placeholder="选项A&#10;选项B&#10;选项C&#10;选项D">{{ settings.verification_options | tojson | safe | replace('[', '') | replace(']', '') | replace('"', '') | replace(',', '\n') if settings and settings.verification_options and settings.verification_options != '[]' else '' }}</textarea>
+                              placeholder="选项A&#10;选项B&#10;选项C&#10;选项D">{{ verification_options_text }}</textarea>
                     <div class="form-text">每行一个选项，不少于 2 个</div>
                 </div>
                 <div class="mb-3">

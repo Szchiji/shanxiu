@@ -217,7 +217,7 @@
 </div>
 
 <script>
-const votesData = {{ votes_json | safe }};
+const votesData = {{ votes_data | tojson }};
 let voteModal;
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -244,7 +244,7 @@ function addOptionRow(value) {
 
 function removeOptionRow(btn) {
     const container = document.getElementById('optionsContainer');
-    if (container.children.length <= 2) {
+    if (container.children.length < 2) {
         showToast('至少需要 2 个选项', 'warning');
         return;
     }

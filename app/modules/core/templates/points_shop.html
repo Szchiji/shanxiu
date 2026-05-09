@@ -319,7 +319,7 @@
                                 </span>
                             </div>
                             <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auction|tojson }})'>
+                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auctions_json[loop.index0]|tojson }})'>
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteAuction({{ auction.id }})">

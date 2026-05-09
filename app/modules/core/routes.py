@@ -1059,11 +1059,23 @@ def page_points_shop(gid):
                .limit(100).all())
     # Auction data
     auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
+    auctions_json = [
+        {
+            'item_name': a.item_name,
+            'item_description': a.item_description or '',
+            'starting_price': a.starting_price,
+            'auction_start': a.auction_start.strftime('%Y-%m-%dT%H:%M') if a.auction_start else '',
+            'auction_end': a.auction_end.strftime('%Y-%m-%dT%H:%M') if a.auction_end else '',
+            'status': a.status,
+        }
+        for a in auctions
+    ]
     # Determine which tab to open based on the 'tab' query param (used by server-side redirects)
     active_tab = request.args.get('tab', '')
     return render_template('points_shop.html', page='points_shop', group=group,
                            conf=conf, items=items, records=records,
-                           auctions=auctions, active_tab=active_tab)
+                           auctions=auctions, auctions_json=auctions_json,
+                           active_tab=active_tab)
 
 @core_bp.route('/group/<int:gid>/points_log')
 def page_points_log(gid):

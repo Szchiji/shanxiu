@@ -11652,6 +11652,7 @@ async def on_message(update: Update, context):
                 if active_lotteries:
                     logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.id} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
                     now = get_beijing_now()
+                    qualifications_to_notify = []  # lotteries where user just reached min_messages
                     for lottery in active_lotteries:
                         # Only track if lottery is still within its time window
                         if lottery.start_time and lottery.end_time:
@@ -11675,6 +11676,12 @@ async def on_message(update: Update, context):
                                 msg_count.message_count += 1
                                 msg_count.updated_at = now
                                 logging.debug(f"🎲 [消息计数] 用户 {user.id} 抽奖 '{lottery.lottery_name}' 消息计数: {msg_count.message_count}")
+
+                                # Check if user just reached the minimum messages threshold
+                                if (lottery.lottery_type == 'message_count' and
+                                        lottery.min_messages and
+                                        msg_count.message_count == lottery.min_messages):
+                                    qualifications_to_notify.append(lottery)
                     
                     # Batch commit all lottery tracking updates
                     try:
@@ -11682,6 +11689,31 @@ async def on_message(update: Update, context):
                     except Exception as e:
                         logging.error(f"❌ [消息计数] 提交抽奖追踪数据失败: {e}")
                         db.session.rollback()
+                        qualifications_to_notify = []
+
+                    # Send qualification notifications after successful commit
+                    for q_lottery in qualifications_to_notify:
+                        try:
+                            qualified_count = LotteryMessageCount.query.filter_by(
+                                lottery_id=q_lottery.id
+                            ).filter(
+                                LotteryMessageCount.message_count >= q_lottery.min_messages
+                            ).count()
+                            lines = [f"✅ {user.mention_html()} 已成功参与抽奖「{q_lottery.lottery_name}」！"]
+                            lines.append(f"📊 已有 <b>{qualified_count}</b> 人满足参与条件（发言 ≥ {q_lottery.min_messages} 条）")
+                            if q_lottery.prize_description:
+                                lines.append(f"🎁 奖品：{q_lottery.prize_description}")
+                            if q_lottery.end_time:
+                                lines.append(f"📅 活动结束时间：{q_lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+                            lines.append("继续发言可提高中奖概率！")
+                            await context.bot.send_message(
+                                chat_id=chat.id,
+                                text="\n".join(lines),
+                                parse_mode='HTML'
+                            )
+                            logging.info(f"🎲 [消息计数] 已通知群组 {chat.id}：用户 {user.id} 参与抽奖 '{q_lottery.lottery_name}' 成功，共 {qualified_count} 人达标")
+                        except Exception as notify_err:
+                            logging.error(f"❌ [消息计数] 发送参与成功通知失败 (抽奖 '{q_lottery.lottery_name}'): {notify_err}")
             
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()

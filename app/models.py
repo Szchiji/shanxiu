@@ -966,4 +966,10 @@ DEFAULT_SYSTEM = {
     # 积分兑换频道商城
     "exchange_channel_id": "",       # 展示商品列表的频道ID
     "exchange_catalog_msg_id": None, # 已发布的商品目录消息ID（用于编辑更新）
+    # 红包设置
+    "red_packet_enabled": True,      # 是否允许群成员发红包
+    "red_packet_max_count": 50,      # 单次红包最多个数
+    "red_packet_min_total": 1,       # 单次红包最少总积分
+    "red_packet_max_total": 0,       # 单次红包最多总积分（0=不限）
+    "red_packet_expire_hours": 24,   # 红包有效期（小时）
 }

@@ -3719,7 +3719,7 @@ def api_create_admin_red_packet():
             db.session.rollback()
         return jsonify({'status': 'error', 'msg': '消息发送超时，红包已取消'})
     except Exception as send_err:
-        logging.error(f"❌ [create_admin_red_packet] send error: {send_err}")
+        _logger.error("create_admin_red_packet send error: %s", send_err)
         try:
             p = RedPacket.query.get(packet_id)
             if p:

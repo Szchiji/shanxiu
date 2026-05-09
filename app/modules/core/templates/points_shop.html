@@ -134,22 +134,22 @@
             <li>设置可供群成员用积分兑换的商品，如激活码、服务资格等虚拟物品。</li>
             <li>每件商品可设置<strong>积分售价</strong>、<strong>库存数量</strong>（留空为不限）和兑换说明。</li>
             <li>配置<strong>展示频道</strong>后，商品目录会自动推送到频道；新品上架/售罄下架时自动更新公告。</li>
-            <li>成员在群内使用 <code>/exchange</code> 命令查看商品并发起兑换申请。</li>
+            <li>设置<strong>命令词</strong>后，群成员发送该词即可查看兑换商城（默认：兑换）。</li>
         </ul>
         {% endcall %}
 
-        <!-- Channel config -->
+        <!-- Channel + Command config -->
         <div class="section-card">
             <div class="card-header-custom">
-                <i class="fa-solid fa-bullhorn text-warning"></i> 频道展示配置
+                <i class="fa-solid fa-bullhorn text-warning"></i> 频道展示 &amp; 命令词配置
             </div>
             <div class="p-3">
                 <p class="text-muted small mb-2">
-                    配置一个频道 ID 后，商品目录将自动发布到该频道。新商品上架时会额外发送单独公告；
+                    配置展示频道 ID 后，商品目录将自动发布到该频道。新商品上架时会额外发送单独公告；
                     商品售罄时自动下架并删除对应公告。
                 </p>
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-6">
+                    <div class="col-md-5">
                         <label class="form-label fw-semibold small">展示频道 ID</label>
                         <input type="text" class="form-control form-control-sm" id="exchange_channel_id"
                                placeholder="例如：-1001234567890 或 @mychannel"
@@ -157,14 +157,21 @@
                         <div class="form-text" style="font-size:0.75rem;">请确保机器人已加入该频道并拥有发送消息权限。留空则不展示。</div>
                     </div>
                     <div class="col-md-3">
+                        <label class="form-label fw-semibold small">群内命令词</label>
+                        <input type="text" class="form-control form-control-sm" id="exchange_command_word"
+                               placeholder="默认：兑换"
+                               value="{{ conf.exchange_command_word or '兑换' }}">
+                        <div class="form-text" style="font-size:0.75rem;">群成员发送此词查看兑换商城。</div>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
                         <button class="btn btn-warning btn-sm fw-bold w-100" onclick="saveChannel()">
-                            <i class="fa-solid fa-satellite-dish me-1"></i>保存并推送
+                            <i class="fa-solid fa-satellite-dish me-1"></i>保存
                         </button>
                     </div>
                     {% if conf.exchange_catalog_msg_id %}
-                    <div class="col-md-3">
+                    <div class="col-md-2 d-flex align-items-end">
                         <span class="badge bg-success p-2" style="font-size:0.75rem;">
-                            <i class="fa-solid fa-check-circle me-1"></i>已发布 (消息 #{{ conf.exchange_catalog_msg_id }})
+                            <i class="fa-solid fa-check-circle me-1"></i>已发布 #{{ conf.exchange_catalog_msg_id }}
                         </span>
                     </div>
                     {% endif %}
@@ -285,11 +292,45 @@
         {% call feature_description('points_auction') %}
         <ul>
             <li>创建限时竞拍活动，群成员用积分出价，结束时最高出价者获得物品。</li>
-            <li>可设置<strong>起拍价</strong>、<strong>最低加价幅度</strong>和<strong>截止时间</strong>。</li>
-            <li>成员在群内使用 <code>/bid 金额</code> 参与竞价，每次出价会刷新排行并通知前一名。</li>
+            <li>可设置<strong>起拍价</strong>和<strong>截止时间</strong>。</li>
+            <li>成员在群内使用 <code>/bid &lt;ID&gt; &lt;金额&gt;</code> 参与竞价，每次出价会通知频道。</li>
+            <li>设置<strong>命令词</strong>后，群成员发送该词即可查看当前竞拍列表（默认：竞拍）。</li>
             <li>拍卖结束后，积分从获胜者账户自动扣除，其余出价者积分原路返还。</li>
         </ul>
         {% endcall %}
+
+        <!-- Auction channel + command word config -->
+        <div class="section-card">
+            <div class="card-header-custom">
+                <i class="fa-solid fa-bullhorn text-primary"></i> 推送频道 &amp; 命令词配置
+            </div>
+            <div class="p-3">
+                <p class="text-muted small mb-2">
+                    配置推送频道后，每次有人出价及竞拍结束时，系统会自动将通知推送到该频道。
+                </p>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label fw-semibold small">推送频道 ID</label>
+                        <input type="text" class="form-control form-control-sm" id="auction_channel_id"
+                               placeholder="例如：-1001234567890 或 @mychannel"
+                               value="{{ conf.auction_channel_id or '' }}">
+                        <div class="form-text" style="font-size:0.75rem;">请确保机器人已加入该频道并拥有发送消息权限。留空则不推送。</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-semibold small">群内命令词</label>
+                        <input type="text" class="form-control form-control-sm" id="auction_command_word"
+                               placeholder="默认：竞拍"
+                               value="{{ conf.auction_command_word or '竞拍' }}">
+                        <div class="form-text" style="font-size:0.75rem;">群成员发送此词查看当前竞拍列表。</div>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-primary btn-sm fw-bold w-100" onclick="saveAuctionChannel()">
+                            <i class="fa-solid fa-save me-1"></i>保存
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="section-card">
             <div class="card-header-custom">
@@ -545,15 +586,33 @@ function deleteItem(id) {
 
 function saveChannel() {
     const channelId = document.getElementById('exchange_channel_id').value.trim();
+    const commandWord = document.getElementById('exchange_command_word').value.trim();
     fetch('/core/api/save_exchange_channel', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({group_id: GROUP_ID, exchange_channel_id: channelId})
+        body: JSON.stringify({group_id: GROUP_ID, exchange_channel_id: channelId, exchange_command_word: commandWord})
     })
     .then(r => r.json())
     .then(res => {
         if (res.status === 'ok') {
-            showToast(channelId ? '✅ 已保存！商品目录正在推送到频道…' : '✅ 已清除展示频道配置。', 'success');
+            showToast(channelId ? '✅ 已保存！商品目录正在推送到频道…' : '✅ 已保存。', 'success');
             setTimeout(() => location.reload(), 1500);
+        } else { alert('❌ ' + (res.msg || '保存失败')); }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function saveAuctionChannel() {
+    const channelId = document.getElementById('auction_channel_id').value.trim();
+    const commandWord = document.getElementById('auction_command_word').value.trim();
+    fetch('/core/api/save_auction_channel', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: GROUP_ID, auction_channel_id: channelId, auction_command_word: commandWord})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            showToast('✅ 竞拍配置已保存！', 'success');
+            setTimeout(() => location.reload(), 1000);
         } else { alert('❌ ' + (res.msg || '保存失败')); }
     })
     .catch(err => { console.error(err); showToast('网络错误', 'error'); });

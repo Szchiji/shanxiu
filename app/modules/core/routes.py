@@ -4011,6 +4011,14 @@ def api_save_group_lottery():
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
 
+    # Validate required fields before DB access
+    lottery_name = (d.get('lottery_name') or '').strip()
+    if not lottery_name:
+        return jsonify({'status':'error','msg':'抽奖名称不能为空'})
+    lottery_type = d.get('lottery_type', 'message_count')
+    if lottery_type not in ('message_count', 'message_rank', 'random'):
+        return jsonify({'status':'error','msg':'无效的抽奖类型'})
+
     group = BotGroup.query.get(d['group_id'])
     if not group: return jsonify({'status':'error','msg':'Group not found'})
     err = _api_check_group_access(group)
@@ -4025,11 +4033,11 @@ def api_save_group_lottery():
             lottery = GroupLottery(group_id=d['group_id'])
             db.session.add(lottery)
         
-        lottery.lottery_name = d.get('lottery_name', '')
-        lottery.lottery_type = d.get('lottery_type', 'message_count')
-        lottery.prize_description = d.get('prize_description')
-        lottery.min_messages = d.get('min_messages', 10)
-        lottery.top_n_winners = d.get('top_n_winners', 3)
+        lottery.lottery_name = lottery_name
+        lottery.lottery_type = lottery_type
+        lottery.prize_description = d.get('prize_description') or None
+        lottery.min_messages = safe_int(d.get('min_messages'), 10) or 10
+        lottery.top_n_winners = safe_int(d.get('top_n_winners'), 3) or 3
         if d.get('start_time'):
             try:
                 start_time = d['start_time']
@@ -4038,6 +4046,8 @@ def api_save_group_lottery():
                 lottery.start_time = datetime.fromisoformat(start_time)
             except (ValueError, TypeError):
                 pass
+        else:
+            lottery.start_time = None
         if d.get('end_time'):
             try:
                 end_time = d['end_time']
@@ -4046,12 +4056,17 @@ def api_save_group_lottery():
                 lottery.end_time = datetime.fromisoformat(end_time)
             except (ValueError, TypeError):
                 pass
+        else:
+            lottery.end_time = None
         lottery.status = d.get('status', 'pending')
+        if not lottery.winner_ids:
+            lottery.winner_ids = '[]'
         
         db.session.commit()
-        return jsonify({'status':'ok'})
+        return jsonify({'status':'ok', 'id': lottery.id})
     except Exception as e:
         db.session.rollback()
+        logging.error(f"❌ [api_save_group_lottery] error: {e}")
         return jsonify({'status':'error','msg':str(e)})
 
 @core_bp.route('/api/delete_group_lottery', methods=['POST'])
@@ -4848,6 +4863,173 @@ def api_delete_group_vote():
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/publish_group_vote', methods=['POST'])
+def api_publish_group_vote():
+    """发布群投票到 Telegram 群组"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    vote = GroupVote.query.get(d['id'])
+    if not vote: return jsonify({'status':'error','msg':'Vote not found'})
+    group = BotGroup.query.get(vote.group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    if not global_bot_loop:
+        return jsonify({'status':'error','msg':'Bot not initialized'})
+
+    # Resolve the correct PTB app for this group's bot
+    group_clone_id = group.clone_id
+    if group_clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(group_clone_id)
+        if not clone_info:
+            return jsonify({'status':'error','msg':'Clone bot not running'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app:
+            return jsonify({'status':'error','msg':'Bot not initialized'})
+        ptb_app = global_ptb_app
+
+    try:
+        options = json.loads(vote.options or '[]')
+    except Exception:
+        options = []
+    if len(options) < 2:
+        return jsonify({'status':'error','msg':'投票至少需要 2 个选项'})
+
+    # Snapshot data needed inside the async coroutine (avoid lazy-loaded ORM access)
+    vote_snapshot = {
+        'id': vote.id,
+        'title': vote.title,
+        'options': options,
+        'allow_revote': vote.allow_revote,
+        'end_time': vote.end_time,
+    }
+    chat_id = group.chat_id
+    vote_id_db = vote.id
+
+    async def _send_vote():
+        buttons = []
+        for idx, option in enumerate(vote_snapshot['options']):
+            buttons.append([InlineKeyboardButton(
+                f"{option}",
+                callback_data=f"vote_{vote_snapshot['id']}_{idx}"
+            )])
+        buttons.append([InlineKeyboardButton("📊 查看结果", callback_data=f"vote_result_{vote_snapshot['id']}")])
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        end_info = ""
+        if vote_snapshot['end_time']:
+            end_info = f"\n⏰ 截止：{vote_snapshot['end_time'].strftime('%Y-%m-%d %H:%M')}"
+        revote_info = "✅ 允许改投" if vote_snapshot['allow_revote'] else "🔒 不允许改投"
+
+        return await ptb_app.bot.send_message(
+            chat_id=chat_id,
+            text=f"📊 <b>投票：{vote_snapshot['title']}</b>\n\n👆 点击下方按钮投票{end_info}\n{revote_info}",
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+
+    future = asyncio.run_coroutine_threadsafe(_send_vote(), global_bot_loop)
+    try:
+        sent_msg = future.result(timeout=20)
+    except TimeoutError:
+        return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
+    except Exception as send_err:
+        logging.error(f"❌ [api_publish_group_vote] send error: {send_err}")
+        return jsonify({'status':'error','msg':f'发送失败: {send_err}'})
+
+    # Update vote status to active and store the message_id
+    try:
+        vote = GroupVote.query.get(vote_id_db)
+        if vote:
+            vote.status = 'active'
+            vote.message_id = sent_msg.message_id
+            db.session.commit()
+    except Exception as db_err:
+        logging.error(f"❌ [api_publish_group_vote] DB update error: {db_err}")
+
+    return jsonify({'status':'ok','msg':'投票已发布到群组'})
+
+
+@core_bp.route('/api/publish_group_lottery', methods=['POST'])
+def api_publish_group_lottery():
+    """发布群抽奖公告到 Telegram 群组"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    lottery = GroupLottery.query.get(d['id'])
+    if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
+    group = BotGroup.query.get(lottery.group_id)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    if not global_bot_loop:
+        return jsonify({'status':'error','msg':'Bot not initialized'})
+
+    group_clone_id = group.clone_id
+    if group_clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(group_clone_id)
+        if not clone_info:
+            return jsonify({'status':'error','msg':'Clone bot not running'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app:
+            return jsonify({'status':'error','msg':'Bot not initialized'})
+        ptb_app = global_ptb_app
+
+    _type_label = {'message_count': '💬 发言数量抽奖', 'message_rank': '🏆 发言排行抽奖', 'random': '🎲 随机抽奖'}.get(lottery.lottery_type, lottery.lottery_type)
+    lines = [f"🎉 <b>抽奖活动：{lottery.lottery_name}</b>"]
+    lines.append(f"类型：{_type_label}")
+    if lottery.prize_description:
+        lines.append(f"奖品：{lottery.prize_description}")
+    if lottery.lottery_type == 'message_count':
+        lines.append(f"参与条件：活动期间发言 ≥ {lottery.min_messages} 条（发言越多，中奖概率越高）")
+    elif lottery.lottery_type == 'message_rank':
+        lines.append(f"获奖人数：发言最多的前 {lottery.top_n_winners} 名")
+    else:
+        lines.append(f"获奖人数：随机抽取 {lottery.top_n_winners} 名幸运者")
+    if lottery.start_time:
+        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M')}")
+    if lottery.end_time:
+        lines.append(f"结束时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+    lines.append("\n积极发言，参与抽奖！")
+    announcement = "\n".join(lines)
+    chat_id = group.chat_id
+    lottery_id_db = lottery.id
+
+    async def _send_lottery_announcement():
+        return await ptb_app.bot.send_message(
+            chat_id=chat_id,
+            text=announcement,
+            parse_mode='HTML'
+        )
+
+    future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(), global_bot_loop)
+    try:
+        future.result(timeout=20)
+    except TimeoutError:
+        return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
+    except Exception as send_err:
+        logging.error(f"❌ [api_publish_group_lottery] send error: {send_err}")
+        return jsonify({'status':'error','msg':f'发送失败: {send_err}'})
+
+    # Mark lottery as active if still pending
+    try:
+        lottery = GroupLottery.query.get(lottery_id_db)
+        if lottery and lottery.status == 'pending':
+            lottery.status = 'active'
+            db.session.commit()
+    except Exception as db_err:
+        logging.error(f"❌ [api_publish_group_lottery] DB update error: {db_err}")
+
+    return jsonify({'status':'ok','msg':'抽奖公告已发送到群组'})
 
 
 @core_bp.route('/api/save_quiz_game', methods=['POST'])
@@ -7131,6 +7313,17 @@ async def run_lottery_draws(context):
                                 winners = [u.tg_id for u in top_users]
                                 if winners:
                                     logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
+
+                        elif lottery.lottery_type == 'random':
+                            # 🆕 Pure random draw from all registered group members
+                            top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
+                            all_users = GroupUser.query.filter_by(group_id=group.id).all()
+                            logging.info(f"🎲 [抽奖任务] 随机抽奖: 共 {len(all_users)} 名群成员，抽取 {top_n} 名")
+                            if all_users:
+                                sample_size = min(top_n, len(all_users))
+                                chosen = random.sample(all_users, sample_size)
+                                winners = [u.tg_id for u in chosen]
+                                logging.info(f"🎲 [抽奖任务] 随机抽中获奖者: {winners}")
                         
                         # Update lottery with winners
                         lottery.winner_ids = json.dumps(winners)
@@ -8673,6 +8866,7 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
     app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
     app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)  # 🆕 Check red packet expiration every 5 minutes
+    app.job_queue.run_repeating(check_and_send_votes, interval=60, first=90)  # 🆕 Auto-send pending votes every minute
     
     await app.initialize()
     await app.start()
@@ -9686,6 +9880,15 @@ async def cmd_lottery_draw(update: Update, context):
                             min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                         ).all()
                         winners = [u.tg_id for u in top_users]
+
+                elif lottery.lottery_type == 'random':
+                    # Pure random draw from all registered group members
+                    top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
+                    all_users = GroupUser.query.filter_by(group_id=group.id).all()
+                    if all_users:
+                        sample_size = min(top_n, len(all_users))
+                        chosen = random.sample(all_users, sample_size)
+                        winners = [u.tg_id for u in chosen]
                 
                 # Update lottery
                 lottery.winner_ids = json.dumps(winners)
@@ -10004,6 +10207,120 @@ async def check_redpacket_expiration(context):
     except Exception as e:
         print(f"Error in check_redpacket_expiration: {e}")
         traceback.print_exc()
+
+
+async def check_and_send_votes(context):
+    """Background job: auto-send pending votes to group when start_time arrives; auto-close expired votes."""
+    if not global_flask_app:
+        return
+
+    try:
+        def _get_pending_and_expired_vote_ids():
+            with global_flask_app.app_context():
+                db.session.expire_all()
+                now = get_beijing_now()
+                # Pending votes whose start_time has arrived (no message_id yet = not yet sent)
+                pending = GroupVote.query.filter(
+                    GroupVote.status == 'pending',
+                    GroupVote.start_time != None,
+                    GroupVote.start_time <= now,
+                    GroupVote.message_id == None
+                ).all()
+                pending_ids = [v.id for v in pending]
+
+                # Active votes whose end_time has passed
+                expired = GroupVote.query.filter(
+                    GroupVote.status == 'active',
+                    GroupVote.end_time != None,
+                    GroupVote.end_time <= now
+                ).all()
+                expired_ids = [v.id for v in expired]
+                return pending_ids, expired_ids
+
+        pending_ids, expired_ids = await asyncio.get_running_loop().run_in_executor(
+            None, _get_pending_and_expired_vote_ids
+        )
+
+        # Auto-close expired votes
+        if expired_ids:
+            def _close_votes():
+                with global_flask_app.app_context():
+                    GroupVote.query.filter(GroupVote.id.in_(expired_ids)).update(
+                        {'status': 'ended'}, synchronize_session=False
+                    )
+                    db.session.commit()
+                    logging.info(f"✅ [投票任务] 已关闭 {len(expired_ids)} 个过期投票")
+            await asyncio.get_running_loop().run_in_executor(None, _close_votes)
+
+        # Auto-send pending votes
+        for vote_id in pending_ids:
+            try:
+                def _get_vote_data(vid):
+                    with global_flask_app.app_context():
+                        vote = GroupVote.query.get(vid)
+                        if not vote:
+                            return None
+                        group = BotGroup.query.get(vote.group_id)
+                        if not group:
+                            return None
+                        try:
+                            options = json.loads(vote.options or '[]')
+                        except Exception:
+                            options = []
+                        return {
+                            'id': vote.id,
+                            'title': vote.title,
+                            'options': options,
+                            'allow_revote': vote.allow_revote,
+                            'end_time': vote.end_time,
+                            'chat_id': group.chat_id,
+                            'clone_id': group.clone_id,
+                        }
+
+                vote_data = await asyncio.get_running_loop().run_in_executor(None, _get_vote_data, vote_id)
+                if not vote_data or len(vote_data['options']) < 2:
+                    continue
+
+                bot = _get_bot_for_clone(vote_data['clone_id'], context.bot)
+                if bot is None:
+                    logging.warning(f"⏭️ [投票任务] 跳过: 克隆机器人未运行 (投票ID: {vote_id})")
+                    continue
+
+                buttons = []
+                for idx, option in enumerate(vote_data['options']):
+                    buttons.append([InlineKeyboardButton(option, callback_data=f"vote_{vote_data['id']}_{idx}")])
+                buttons.append([InlineKeyboardButton("📊 查看结果", callback_data=f"vote_result_{vote_data['id']}")])
+                keyboard = InlineKeyboardMarkup(buttons)
+
+                end_info = ""
+                if vote_data['end_time']:
+                    end_info = f"\n⏰ 截止：{vote_data['end_time'].strftime('%Y-%m-%d %H:%M')}"
+                revote_info = "✅ 允许改投" if vote_data['allow_revote'] else "🔒 不允许改投"
+
+                sent_msg = await bot.send_message(
+                    chat_id=vote_data['chat_id'],
+                    text=f"📊 <b>投票：{vote_data['title']}</b>\n\n👆 点击下方按钮投票{end_info}\n{revote_info}",
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
+
+                def _mark_vote_active(vid, mid):
+                    with global_flask_app.app_context():
+                        v = GroupVote.query.get(vid)
+                        if v:
+                            v.status = 'active'
+                            v.message_id = mid
+                            db.session.commit()
+
+                await asyncio.get_running_loop().run_in_executor(None, _mark_vote_active, vote_id, sent_msg.message_id)
+                logging.info(f"📢 [投票任务] 已发送投票 '{vote_data['title']}' (ID: {vote_id}) 到群组 {vote_data['chat_id']}")
+
+            except Exception as e:
+                logging.error(f"❌ [投票任务] 处理投票 {vote_id} 失败: {e}")
+
+    except Exception as e:
+        logging.error(f"❌ [投票任务] check_and_send_votes 执行失败: {e}")
+        logging.error(traceback.format_exc())
 
 
 async def quiz_answer_callback(update: Update, context):

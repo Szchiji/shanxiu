@@ -79,6 +79,7 @@
     <li>支持<strong>单选</strong>和<strong>多选</strong>两种投票类型；多选时可限制每人最多选几项。</li>
     <li>可设置<strong>匿名投票</strong>（成员只看结果，不知道谁选了什么）和<strong>允许改投</strong>。</li>
     <li>可指定投票的开始/结束时间，系统到时自动开放或关闭。</li>
+    <li>创建好投票后，点击列表中的 <i class="fa-solid fa-paper-plane"></i> 按钮可立即将投票消息发布到 Telegram 群组；设置了开始时间的投票也会在时间到达时自动发布。</li>
 </ul>
 {% endcall %}
 
@@ -109,6 +110,9 @@
                                 </div>
                             </div>
                             <div class="d-flex gap-1 ms-3">
+                                <button class="btn btn-sm btn-success" onclick="publishVote({{ v.id }})" {% if v.status == 'ended' %}disabled title="已结束"{% endif %}>
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                </button>
                                 <button class="btn btn-sm btn-primary" onclick="editVote({{ v.id }})">
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
@@ -367,6 +371,29 @@ function deleteVote(id) {
             showToast('网络错误，请重试', 'danger');
         });
     }, { title: '删除投票', isDanger: true, confirmText: '删除' });
+}
+
+function publishVote(id) {
+    showConfirm('确定要将此投票发布到 Telegram 群组中吗？发布后状态将自动变为「进行中」。', function () {
+        fetch('/core/api/publish_group_vote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: id })
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                showToast('投票已成功发布到群组！', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showToast('发布失败: ' + (result.msg || '未知错误'), 'danger');
+            }
+        })
+        .catch(e => {
+            console.error('操作失败:', e);
+            showToast('网络错误，请重试', 'danger');
+        });
+    }, { title: '发布投票到群', confirmText: '发布' });
 }
 </script>
 {% endblock %}

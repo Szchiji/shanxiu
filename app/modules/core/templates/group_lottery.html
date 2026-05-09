@@ -76,10 +76,11 @@
 
 {% call feature_description('group_lottery') %}
 <ul>
-    <li>在群内创建限时抽奖活动，成员通过回复消息或指令参与。</li>
+    <li>在群内创建限时抽奖活动，成员通过发言或随机方式参与。</li>
+    <li>支持 <strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（从所有群成员中随机抽取）三种方式。</li>
     <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
-    <li>可设置最大参与人数，达到后自动关闭报名。</li>
-    <li>开奖后系统自动公布中奖名单并发送恭喜消息，可配置奖励积分自动发放。</li>
+    <li>创建好抽奖后，点击列表中的 <i class="fa-solid fa-bullhorn"></i> 按钮可立即将公告发送到 Telegram 群组。</li>
+    <li>开奖后系统自动公布中奖名单并发送恭喜消息。</li>
 </ul>
 {% endcall %}
 
@@ -98,11 +99,13 @@
                                 <h6 class="mb-1">{{ lottery.lottery_name }}</h6>
                                 <p class="text-muted mb-2 small">{{ lottery.prize_description or '暂无奖品描述' }}</p>
                                 <div class="d-flex gap-3 flex-wrap">
-                                    <small class="text-muted">类型: {{ '发言数量' if lottery.lottery_type == 'message_count' else '发言排行' }}</small>
+                                    <small class="text-muted">类型: {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else '随机抽奖') }}</small>
                                     {% if lottery.lottery_type == 'message_count' %}
                                     <small class="text-muted">最少发言: {{ lottery.min_messages }}</small>
-                                    {% else %}
+                                    {% elif lottery.lottery_type == 'message_rank' %}
                                     <small class="text-muted">获奖人数: 前{{ lottery.top_n_winners }}名</small>
+                                    {% else %}
+                                    <small class="text-muted">获奖人数: {{ lottery.top_n_winners }}名</small>
                                     {% endif %}
                                     {% if lottery.start_time %}
                                     <small class="text-muted">开始: {{ lottery.start_time.strftime('%Y-%m-%d %H:%M') }}</small>
@@ -116,6 +119,9 @@
                                 </span>
                             </div>
                             <div>
+                                <button class="btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status == 'ended' %}disabled title="已结束"{% endif %}>
+                                    <i class="fa-solid fa-bullhorn"></i>
+                                </button>
                                 <button class="btn btn-sm btn-primary" onclick="editLottery({{ lottery.id }})">
                                     <i class="fa-solid fa-edit"></i>
                                 </button>
@@ -154,8 +160,9 @@
                 <div class="mb-3">
                     <label class="form-label">抽奖类型</label>
                     <select class="form-control" id="lottery_type" onchange="toggleLotteryFields()">
-                        <option value="message_count">发言数量抽奖</option>
-                        <option value="message_rank">发言排行抽奖</option>
+                        <option value="message_count">💬 发言数量抽奖</option>
+                        <option value="message_rank">🏆 发言排行抽奖</option>
+                        <option value="random">🎲 随机抽奖</option>
                     </select>
                 </div>
                 <div class="mb-3" id="min_messages_field">
@@ -163,7 +170,7 @@
                     <input type="number" class="form-control" id="min_messages" value="10" min="1">
                 </div>
                 <div class="mb-3" id="top_n_winners_field" style="display:none;">
-                    <label class="form-label">获奖人数（前N名）</label>
+                    <label class="form-label">获奖人数（人）</label>
                     <input type="number" class="form-control" id="top_n_winners" value="3" min="1">
                 </div>
                 <div class="mb-3">
@@ -209,6 +216,7 @@ function toggleLotteryFields() {
         document.getElementById('min_messages_field').style.display = 'block';
         document.getElementById('top_n_winners_field').style.display = 'none';
     } else {
+        // message_rank and random both use top_n_winners
         document.getElementById('min_messages_field').style.display = 'none';
         document.getElementById('top_n_winners_field').style.display = 'block';
     }
@@ -248,10 +256,17 @@ function editLottery(id) {
 }
 
 function saveLottery() {
+    const lotteryName = document.getElementById('lottery_name').value.trim();
+    if (!lotteryName) {
+        showToast('请输入抽奖名称', 'warning');
+        document.getElementById('lottery_name').focus();
+        return;
+    }
+
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('lottery_id').value || null,
-        lottery_name: document.getElementById('lottery_name').value,
+        lottery_name: lotteryName,
         lottery_type: document.getElementById('lottery_type').value,
         min_messages: parseInt(document.getElementById('min_messages').value) || 10,
         top_n_winners: parseInt(document.getElementById('top_n_winners').value) || 3,
@@ -303,6 +318,29 @@ function deleteLottery(id) {
             showToast('网络错误，请重试', 'danger');
         });
     }, { title: '删除抽奖', isDanger: true, confirmText: '删除' });
+}
+
+function publishLottery(id) {
+    showConfirm('确定要将抽奖公告发送到 Telegram 群组吗？未开始的抽奖状态将自动变为「进行中」。', function () {
+        fetch('/core/api/publish_group_lottery', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id: id})
+        })
+        .then(res => res.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                showToast('抽奖公告已成功发送到群组！', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showToast('发送失败: ' + (result.msg || '未知错误'), 'danger');
+            }
+        })
+        .catch(err => {
+            console.error('操作失败:', err);
+            showToast('网络错误，请重试', 'danger');
+        });
+    }, { title: '发布抽奖公告到群', confirmText: '发布' });
 }
 </script>
 {% endblock %}

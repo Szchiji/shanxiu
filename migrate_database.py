@@ -133,6 +133,8 @@ def run_migrations():
         "CREATE UNIQUE INDEX IF NOT EXISTS _pending_referral_user_group_uc ON pending_referrals(user_id, group_id)",
         # invitation_activity: Add link_keyword for group keyword-triggered invite link generation
         "ALTER TABLE invitation_activity ADD COLUMN IF NOT EXISTS link_keyword VARCHAR(255) NULL",
+        # other_settings: Add auto_delete_channel_discussion_msg to delete linked channel discussion posts
+        "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS auto_delete_channel_discussion_msg BOOLEAN DEFAULT FALSE",
     ]
 
     with app.app_context():

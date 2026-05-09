@@ -476,6 +476,7 @@ class OtherSettings(db.Model):
     auto_delete_promote_msg = db.Column(db.Boolean, default=False)  # 自动删除互推消息
     auto_delete_pin_msg = db.Column(db.Boolean, default=False)  # 自动删除置顶提示消息
     cancel_channel_pin = db.Column(db.Boolean, default=False)  # 取消频道消息置顶
+    auto_delete_channel_discussion_msg = db.Column(db.Boolean, default=False)  # 自动删除频道关联留言
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     

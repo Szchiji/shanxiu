@@ -3307,6 +3307,7 @@ def api_save_other_settings():
         settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
         settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
         settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
+        settings.auto_delete_channel_discussion_msg = d.get('auto_delete_channel_discussion_msg', False)
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -9962,6 +9963,15 @@ async def handle_channel_pin(update: Update, context):
             settings = OtherSettings.query.filter_by(group_id=group.id).first()
             if not settings:
                 return
+
+            # Auto-delete linked channel discussion messages (is_automatic_forward) if enabled
+            if settings.auto_delete_channel_discussion_msg and msg.is_automatic_forward:
+                try:
+                    await msg.delete()
+                    return
+                except Exception as e:
+                    print(f"Error deleting channel discussion message {msg.message_id} in {chat.id}: {e}")
+                    return
 
             # Auto-delete promote (channel) messages if enabled
             if settings.auto_delete_promote_msg:

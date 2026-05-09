@@ -3601,6 +3601,146 @@ def api_save_red_packet_settings():
         _logger.error("save_red_packet_settings error: %s", e)
         return jsonify({'status': 'error', 'msg': '保存失败，请重试'})
 
+
+@core_bp.route('/api/create_admin_red_packet', methods=['POST'])
+def api_create_admin_red_packet():
+    """后台管理员创建红包并发送到群组"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d:
+        return jsonify({'status': 'error', 'msg': 'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err:
+        return err
+
+    if not global_bot_loop:
+        return jsonify({'status': 'error', 'msg': '机器人未初始化'})
+
+    # Resolve the correct PTB app (main bot vs clone bot)
+    group_clone_id = group.clone_id
+    if group_clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(group_clone_id)
+        if not clone_info:
+            return jsonify({'status': 'error', 'msg': '克隆机器人未运行'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app:
+            return jsonify({'status': 'error', 'msg': '机器人未初始化'})
+        ptb_app = global_ptb_app
+
+    # Validate params
+    try:
+        total_points = int(d.get('total_points', 0))
+        packet_count = int(d.get('packet_count', 0))
+        expire_hours = max(1, int(d.get('expire_hours', 24)))
+        packet_type = d.get('packet_type', 'random')
+        message = d.get('message', '').strip() or '恭喜发财 🧧'
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'msg': '参数格式错误'})
+
+    conf = get_group_conf(group)
+    max_count = int(conf.get('red_packet_max_count', 50))
+    min_total = int(conf.get('red_packet_min_total', 1))
+    max_total = int(conf.get('red_packet_max_total', 0))
+
+    if total_points < 1:
+        return jsonify({'status': 'error', 'msg': '总积分必须 ≥ 1'})
+    if packet_count < 1 or packet_count > max_count:
+        return jsonify({'status': 'error', 'msg': f'红包数量需在 1–{max_count} 之间'})
+    if total_points < packet_count:
+        return jsonify({'status': 'error', 'msg': '总积分不能少于红包数量'})
+    if total_points < min_total:
+        return jsonify({'status': 'error', 'msg': f'总积分不能少于 {min_total}'})
+    if max_total > 0 and total_points > max_total:
+        return jsonify({'status': 'error', 'msg': f'总积分不能超过 {max_total}'})
+    if packet_type not in ('random', 'equal'):
+        packet_type = 'random'
+
+    # Create the RedPacket record (admin-funded, creator_id=0)
+    try:
+        packet = RedPacket(
+            group_id=group.id,
+            creator_id=0,  # 0 = admin backend
+            packet_type=packet_type,
+            total_points=total_points,
+            packet_count=packet_count,
+            remaining_count=packet_count,
+            remaining_points=total_points,
+            message=message,
+            expire_time=get_beijing_now() + timedelta(hours=expire_hours),
+            status='active'
+        )
+        db.session.add(packet)
+        db.session.commit()
+        packet_id = packet.id
+    except Exception as e:
+        db.session.rollback()
+        _logger.error("create_admin_red_packet DB error: %s", e)
+        return jsonify({'status': 'error', 'msg': '创建红包失败，请重试'})
+
+    # Build and send the Telegram message
+    chat_id = group.chat_id
+    type_label = '拼手气' if packet_type == 'random' else '普通（平均）'
+
+    async def _send_red_packet():
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🧧 领取红包", callback_data=f"redpacket_claim_{packet_id}")
+        ]])
+        return await ptb_app.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"🧧 <b>红包来啦！</b>\n\n"
+                f"💬 {message}\n"
+                f"💰 共 {total_points} 积分\n"
+                f"🎁 {packet_count} 个{type_label}红包\n"
+                f"⏰ {expire_hours} 小时内有效\n\n"
+                f"👆 点击按钮领取"
+            ),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+
+    future = asyncio.run_coroutine_threadsafe(_send_red_packet(), global_bot_loop)
+    try:
+        sent = future.result(timeout=20)
+    except TimeoutError:
+        # Red packet was created but message failed to send — mark as expired
+        try:
+            p = RedPacket.query.get(packet_id)
+            if p:
+                p.status = 'expired'
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return jsonify({'status': 'error', 'msg': '消息发送超时，红包已取消'})
+    except Exception as send_err:
+        logging.error(f"❌ [create_admin_red_packet] send error: {send_err}")
+        try:
+            p = RedPacket.query.get(packet_id)
+            if p:
+                p.status = 'expired'
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return jsonify({'status': 'error', 'msg': '消息发送失败，红包已取消，请检查机器人权限'})
+
+    # Save message_id for potential future reference
+    try:
+        p = RedPacket.query.get(packet_id)
+        if p:
+            p.message_id = sent.message_id
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return jsonify({'status': 'ok', 'msg': '红包已发送到群组！'})
+
+
 # --- Exchange Catalog Helpers ---
 
 def _build_exchange_catalog_sync(group_id):

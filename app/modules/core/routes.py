@@ -4941,7 +4941,7 @@ def api_publish_group_vote():
         return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
     except Exception as send_err:
         logging.error(f"❌ [api_publish_group_vote] send error: {send_err}")
-        return jsonify({'status':'error','msg':f'发送失败: {send_err}'})
+        return jsonify({'status':'error','msg':'消息发送失败，请检查机器人权限或稍后重试'})
 
     # Update vote status to active and store the message_id
     try:
@@ -5018,7 +5018,7 @@ def api_publish_group_lottery():
         return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
     except Exception as send_err:
         logging.error(f"❌ [api_publish_group_lottery] send error: {send_err}")
-        return jsonify({'status':'error','msg':f'发送失败: {send_err}'})
+        return jsonify({'status':'error','msg':'消息发送失败，请检查机器人权限或稍后重试'})
 
     # Mark lottery as active if still pending
     try:

@@ -9852,7 +9852,7 @@ async def cmd_bid(update: Update, context):
                 
                 db.session.commit()
                 
-                return "success", auction.item_name, bid_amount, user_points.points_balance, group.id
+                return "success", auction.item_name, bid_amount, user_points.points_balance, get_group_conf(group).get('auction_channel_id', '').strip() or None
             
             except Exception as e:
                 db.session.rollback()
@@ -9864,7 +9864,7 @@ async def cmd_bid(update: Update, context):
     if result[0] == "error":
         await update.message.reply_text(f"❌ {result[1]}")
     else:
-        _, item_name, bid_amount, remaining_balance, group_id = result
+        _, item_name, bid_amount, remaining_balance, auction_channel_id = result
         user_display = _format_tg_user_display(user)
         reply_text = (
             f"✅ 出价成功！\n\n"
@@ -9875,15 +9875,6 @@ async def cmd_bid(update: Update, context):
         await update.message.reply_text(reply_text)
 
         # Push bid notification to auction channel if configured
-        def _get_auction_channel():
-            with global_flask_app.app_context():
-                grp = BotGroup.query.get(group_id)
-                if not grp:
-                    return None
-                conf = get_group_conf(grp)
-                return conf.get('auction_channel_id', '').strip() or None
-
-        auction_channel_id = await asyncio.get_running_loop().run_in_executor(None, _get_auction_channel)
         if auction_channel_id:
             try:
                 channel_text = (
@@ -9979,6 +9970,7 @@ async def handle_channel_pin(update: Update, context):
                     return
                 except Exception as e:
                     print(f"Error deleting promote message: {e}")
+                    return
 
             if not settings.cancel_channel_pin:
                 return
@@ -12084,7 +12076,7 @@ async def on_message(update: Update, context):
             # 2.6 积分兑换命令处理
             if chat.type in ['group', 'supergroup']:
                 _exchange_cmd = conf.get('exchange_command_word', '兑换').strip()
-                _exchange_list_cmds = list({_exchange_cmd, '兑换', '兑换列表', '积分兑换'})
+                _exchange_list_cmds = {_exchange_cmd, '兑换', '兑换列表', '积分兑换'}
                 if txt in _exchange_list_cmds:
                     # Show available exchange items with inline buttons (reuse catalog builder)
                     catalog_text, catalog_buttons = _build_exchange_catalog_sync(group.id)

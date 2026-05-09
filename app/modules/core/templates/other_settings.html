@@ -75,6 +75,15 @@
                 </div>
                 
                 <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="auto_delete_channel_discussion_msg" 
+                           {{ 'checked' if settings and settings.auto_delete_channel_discussion_msg }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-comments me-2 text-secondary"></i>自动删除频道关联留言
+                    </label>
+                    <div class="form-text mt-2">自动删除关联频道同步到群组的留言消息（频道帖子自动转发）</div>
+                </div>
+                
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
                     <input class="form-check-input" type="checkbox" id="auto_delete_pin_msg" 
                            {{ 'checked' if settings and settings.auto_delete_pin_msg }}>
                     <label class="form-check-label fw-bold">
@@ -108,6 +117,7 @@
             auto_delete_join_msg: document.getElementById('auto_delete_join_msg').checked,
             auto_delete_leave_msg: document.getElementById('auto_delete_leave_msg').checked,
             auto_delete_promote_msg: document.getElementById('auto_delete_promote_msg').checked,
+            auto_delete_channel_discussion_msg: document.getElementById('auto_delete_channel_discussion_msg').checked,
             auto_delete_pin_msg: document.getElementById('auto_delete_pin_msg').checked,
             cancel_channel_pin: document.getElementById('cancel_channel_pin').checked
         };

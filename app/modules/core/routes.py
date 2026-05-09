@@ -1059,11 +1059,23 @@ def page_points_shop(gid):
                .limit(100).all())
     # Auction data
     auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
+    auctions_json = [
+        {
+            'item_name': a.item_name,
+            'item_description': a.item_description or '',
+            'starting_price': a.starting_price,
+            'auction_start': a.auction_start.strftime('%Y-%m-%dT%H:%M') if a.auction_start else '',
+            'auction_end': a.auction_end.strftime('%Y-%m-%dT%H:%M') if a.auction_end else '',
+            'status': a.status,
+        }
+        for a in auctions
+    ]
     # Determine which tab to open based on the 'tab' query param (used by server-side redirects)
     active_tab = request.args.get('tab', '')
     return render_template('points_shop.html', page='points_shop', group=group,
                            conf=conf, items=items, records=records,
-                           auctions=auctions, active_tab=active_tab)
+                           auctions=auctions, auctions_json=auctions_json,
+                           active_tab=active_tab)
 
 @core_bp.route('/group/<int:gid>/points_log')
 def page_points_log(gid):
@@ -3588,6 +3600,146 @@ def api_save_red_packet_settings():
         db.session.rollback()
         _logger.error("save_red_packet_settings error: %s", e)
         return jsonify({'status': 'error', 'msg': '保存失败，请重试'})
+
+
+@core_bp.route('/api/create_admin_red_packet', methods=['POST'])
+def api_create_admin_red_packet():
+    """后台管理员创建红包并发送到群组"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d:
+        return jsonify({'status': 'error', 'msg': 'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group:
+        return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err:
+        return err
+
+    if not global_bot_loop:
+        return jsonify({'status': 'error', 'msg': '机器人未初始化'})
+
+    # Resolve the correct PTB app (main bot vs clone bot)
+    group_clone_id = group.clone_id
+    if group_clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(group_clone_id)
+        if not clone_info:
+            return jsonify({'status': 'error', 'msg': '克隆机器人未运行'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app:
+            return jsonify({'status': 'error', 'msg': '机器人未初始化'})
+        ptb_app = global_ptb_app
+
+    # Validate params
+    try:
+        total_points = int(d.get('total_points', 0))
+        packet_count = int(d.get('packet_count', 0))
+        expire_hours = max(1, int(d.get('expire_hours', 24)))
+        packet_type = d.get('packet_type', 'random')
+        message = d.get('message', '').strip() or '恭喜发财 🧧'
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'msg': '参数格式错误'})
+
+    conf = get_group_conf(group)
+    max_count = int(conf.get('red_packet_max_count', 50))
+    min_total = int(conf.get('red_packet_min_total', 1))
+    max_total = int(conf.get('red_packet_max_total', 0))
+
+    if total_points < 1:
+        return jsonify({'status': 'error', 'msg': '总积分必须 ≥ 1'})
+    if packet_count < 1 or packet_count > max_count:
+        return jsonify({'status': 'error', 'msg': f'红包数量需在 1–{max_count} 之间'})
+    if total_points < packet_count:
+        return jsonify({'status': 'error', 'msg': '总积分不能少于红包数量'})
+    if total_points < min_total:
+        return jsonify({'status': 'error', 'msg': f'总积分不能少于 {min_total}'})
+    if max_total > 0 and total_points > max_total:
+        return jsonify({'status': 'error', 'msg': f'总积分不能超过 {max_total}'})
+    if packet_type not in ('random', 'equal'):
+        packet_type = 'random'
+
+    # Create the RedPacket record (admin-funded, creator_id=0)
+    try:
+        packet = RedPacket(
+            group_id=group.id,
+            creator_id=0,  # 0 = admin backend
+            packet_type=packet_type,
+            total_points=total_points,
+            packet_count=packet_count,
+            remaining_count=packet_count,
+            remaining_points=total_points,
+            message=message,
+            expire_time=get_beijing_now() + timedelta(hours=expire_hours),
+            status='active'
+        )
+        db.session.add(packet)
+        db.session.commit()
+        packet_id = packet.id
+    except Exception as e:
+        db.session.rollback()
+        _logger.error("create_admin_red_packet DB error: %s", e)
+        return jsonify({'status': 'error', 'msg': '创建红包失败，请重试'})
+
+    # Build and send the Telegram message
+    chat_id = group.chat_id
+    type_label = '拼手气' if packet_type == 'random' else '普通（平均）'
+
+    async def _send_red_packet():
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🧧 领取红包", callback_data=f"redpacket_claim_{packet_id}")
+        ]])
+        return await ptb_app.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"🧧 <b>红包来啦！</b>\n\n"
+                f"💬 {message}\n"
+                f"💰 共 {total_points} 积分\n"
+                f"🎁 {packet_count} 个{type_label}红包\n"
+                f"⏰ {expire_hours} 小时内有效\n\n"
+                f"👆 点击按钮领取"
+            ),
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+
+    future = asyncio.run_coroutine_threadsafe(_send_red_packet(), global_bot_loop)
+    try:
+        sent = future.result(timeout=20)
+    except TimeoutError:
+        # Red packet was created but message failed to send — mark as expired
+        try:
+            p = RedPacket.query.get(packet_id)
+            if p:
+                p.status = 'expired'
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return jsonify({'status': 'error', 'msg': '消息发送超时，红包已取消'})
+    except Exception as send_err:
+        _logger.error("create_admin_red_packet send error: %s", send_err)
+        try:
+            p = RedPacket.query.get(packet_id)
+            if p:
+                p.status = 'expired'
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return jsonify({'status': 'error', 'msg': '消息发送失败，红包已取消，请检查机器人权限'})
+
+    # Save message_id for potential future reference
+    try:
+        p = RedPacket.query.get(packet_id)
+        if p:
+            p.message_id = sent.message_id
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return jsonify({'status': 'ok', 'msg': '红包已发送到群组！'})
+
 
 # --- Exchange Catalog Helpers ---
 
@@ -11640,6 +11792,7 @@ async def on_message(update: Update, context):
                 if active_lotteries:
                     logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.id} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
                     now = get_beijing_now()
+                    qualifications_to_notify = []  # lotteries where user just reached min_messages
                     for lottery in active_lotteries:
                         # Only track if lottery is still within its time window
                         if lottery.start_time and lottery.end_time:
@@ -11663,6 +11816,12 @@ async def on_message(update: Update, context):
                                 msg_count.message_count += 1
                                 msg_count.updated_at = now
                                 logging.debug(f"🎲 [消息计数] 用户 {user.id} 抽奖 '{lottery.lottery_name}' 消息计数: {msg_count.message_count}")
+
+                                # Check if user just reached the minimum messages threshold
+                                if (lottery.lottery_type == 'message_count' and
+                                        lottery.min_messages and
+                                        msg_count.message_count == lottery.min_messages):
+                                    qualifications_to_notify.append(lottery)
                     
                     # Batch commit all lottery tracking updates
                     try:
@@ -11670,6 +11829,31 @@ async def on_message(update: Update, context):
                     except Exception as e:
                         logging.error(f"❌ [消息计数] 提交抽奖追踪数据失败: {e}")
                         db.session.rollback()
+                        qualifications_to_notify = []
+
+                    # Send qualification notifications after successful commit
+                    for q_lottery in qualifications_to_notify:
+                        try:
+                            qualified_count = LotteryMessageCount.query.filter_by(
+                                lottery_id=q_lottery.id
+                            ).filter(
+                                LotteryMessageCount.message_count >= q_lottery.min_messages
+                            ).count()
+                            lines = [f"✅ {user.mention_html()} 已成功参与抽奖「{q_lottery.lottery_name}」！"]
+                            lines.append(f"📊 已有 <b>{qualified_count}</b> 人满足参与条件（发言 ≥ {q_lottery.min_messages} 条）")
+                            if q_lottery.prize_description:
+                                lines.append(f"🎁 奖品：{q_lottery.prize_description}")
+                            if q_lottery.end_time:
+                                lines.append(f"📅 活动结束时间：{q_lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+                            lines.append("继续发言可提高中奖概率！")
+                            await context.bot.send_message(
+                                chat_id=chat.id,
+                                text="\n".join(lines),
+                                parse_mode='HTML'
+                            )
+                            logging.info(f"🎲 [消息计数] 已通知群组 {chat.id}：用户 {user.id} 参与抽奖 '{q_lottery.lottery_name}' 成功，共 {qualified_count} 人达标")
+                        except Exception as notify_err:
+                            logging.error(f"❌ [消息计数] 发送参与成功通知失败 (抽奖 '{q_lottery.lottery_name}'): {notify_err}")
             
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()

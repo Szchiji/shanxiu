@@ -966,6 +966,10 @@ DEFAULT_SYSTEM = {
     # 积分兑换频道商城
     "exchange_channel_id": "",       # 展示商品列表的频道ID
     "exchange_catalog_msg_id": None, # 已发布的商品目录消息ID（用于编辑更新）
+    "exchange_command_word": "兑换",  # 群内触发兑换商城的命令词
+    # 积分竞拍频道
+    "auction_channel_id": "",        # 竞拍通知推送频道ID
+    "auction_command_word": "竞拍",   # 群内触发查看竞拍的命令词
     # 红包设置
     "red_packet_enabled": True,      # 是否允许群成员发红包
     "red_packet_max_count": 50,      # 单次红包最多个数

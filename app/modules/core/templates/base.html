@@ -1049,6 +1049,26 @@
                             </div>
                         </li>
 
+                        <!-- Channel Sync Messages (accordion) -->
+                        {% set ch_sync_active = page in ['sync_group_messages', 'sync_message_logs'] %}
+                        <li class="nav-item">
+                            <button class="sidebar-group-toggle {% if ch_sync_active %}active-group{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#sg_ch_sync"
+                                    aria-expanded="{{ 'true' if ch_sync_active else 'false' }}">
+                                <i class="fa-solid fa-sync group-icon"></i>
+                                同步消息
+                                <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
+                            </button>
+                            <div class="collapse {% if ch_sync_active %}show{% endif %}" id="sg_ch_sync">
+                                <ul class="nav flex-column sidebar-submenu">
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
+                                </ul>
+                            </div>
+                        </li>
+
                         <!-- Report Management -->
                         <li class="nav-item">
                             <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">

@@ -4147,10 +4147,36 @@ def api_save_exchange_channel():
         if new_channel != conf.get('exchange_channel_id', ''):
             conf['exchange_catalog_msg_id'] = None
         conf['exchange_channel_id'] = new_channel
+        if 'exchange_command_word' in d:
+            conf['exchange_command_word'] = (d['exchange_command_word'] or '兑换').strip()
         group.config = json.dumps(conf, ensure_ascii=False)
         db.session.commit()
         if new_channel:
             schedule_exchange_catalog_update(d['group_id'])
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/save_auction_channel', methods=['POST'])
+def api_save_auction_channel():
+    """保存积分竞拍频道推送配置"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    try:
+        group = BotGroup.query.get(d['group_id'])
+        if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
+        conf = get_group_conf(group)
+        conf['auction_channel_id'] = d.get('auction_channel_id', '').strip()
+        if 'auction_command_word' in d:
+            conf['auction_command_word'] = (d['auction_command_word'] or '竞拍').strip()
+        group.config = json.dumps(conf, ensure_ascii=False)
+        db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
@@ -9826,7 +9852,7 @@ async def cmd_bid(update: Update, context):
                 
                 db.session.commit()
                 
-                return "success", auction.item_name, bid_amount, user_points.points_balance
+                return "success", auction.item_name, bid_amount, user_points.points_balance, get_group_conf(group).get('auction_channel_id', '').strip() or None
             
             except Exception as e:
                 db.session.rollback()
@@ -9838,13 +9864,32 @@ async def cmd_bid(update: Update, context):
     if result[0] == "error":
         await update.message.reply_text(f"❌ {result[1]}")
     else:
-        _, item_name, bid_amount, remaining_balance = result
-        await update.message.reply_text(
+        _, item_name, bid_amount, remaining_balance, auction_channel_id = result
+        user_display = _format_tg_user_display(user)
+        reply_text = (
             f"✅ 出价成功！\n\n"
             f"📦 物品: {item_name}\n"
             f"💰 出价: {bid_amount} 积分\n"
             f"💎 剩余积分: {remaining_balance}"
         )
+        await update.message.reply_text(reply_text)
+
+        # Push bid notification to auction channel if configured
+        if auction_channel_id:
+            try:
+                channel_text = (
+                    f"🔔 <b>竞拍新出价</b>\n\n"
+                    f"📦 物品: {item_name}\n"
+                    f"💰 最新出价: <b>{bid_amount} 积分</b>\n"
+                    f"👤 出价者: {user_display}"
+                )
+                await context.bot.send_message(
+                    chat_id=auction_channel_id,
+                    text=channel_text,
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                print(f"Error sending bid notification to auction channel: {e}")
 
 async def cmd_auction(update: Update, context):
     """查看当前活跃的竞拍 /auction"""
@@ -9894,7 +9939,7 @@ async def cmd_auction(update: Update, context):
     await update.message.reply_text("\n".join(message_lines))
 
 async def handle_channel_pin(update: Update, context):
-    """处理频道消息自动置顶 - 取消置顶"""
+    """处理频道消息：取消自动置顶 / 自动删除互推消息"""
     if not global_flask_app or not update.message:
         return
     
@@ -9915,7 +9960,19 @@ async def handle_channel_pin(update: Update, context):
                 return
             
             settings = OtherSettings.query.filter_by(group_id=group.id).first()
-            if not settings or not settings.cancel_channel_pin:
+            if not settings:
+                return
+
+            # Auto-delete promote (channel) messages if enabled
+            if settings.auto_delete_promote_msg:
+                try:
+                    await msg.delete()
+                    return
+                except Exception as e:
+                    print(f"Error deleting promote message: {e}")
+                    return
+
+            if not settings.cancel_channel_pin:
                 return
             
             # Wait a moment for Telegram to auto-pin the message
@@ -10254,6 +10311,8 @@ async def check_auction_expiration(context):
                     item_description = auction.item_description
                     current_bidder_id = auction.current_bidder_id
                     current_bid = auction.current_bid
+                    conf = get_group_conf(group)
+                    auction_channel_id = conf.get('auction_channel_id', '').strip() or None
                 
                 # Notify winner (outside app_context so we can await)
                 bot = _get_bot_for_clone(group_clone_id, context.bot)
@@ -10281,6 +10340,17 @@ async def check_auction_expiration(context):
                     text=message,
                     parse_mode='HTML'
                 )
+
+                # Also push result to auction channel if configured
+                if auction_channel_id:
+                    try:
+                        await bot.send_message(
+                            chat_id=auction_channel_id,
+                            text=message,
+                            parse_mode='HTML'
+                        )
+                    except Exception as ch_err:
+                        print(f"Error sending auction result to channel {auction_channel_id}: {ch_err}")
                     
             except Exception as e:
                 print(f"Error notifying auction end {auction_id}: {e}")
@@ -12005,7 +12075,8 @@ async def on_message(update: Update, context):
 
             # 2.6 积分兑换命令处理
             if chat.type in ['group', 'supergroup']:
-                _exchange_list_cmds = ['兑换', '兑换列表', '积分兑换']
+                _exchange_cmd = conf.get('exchange_command_word', '兑换').strip()
+                _exchange_list_cmds = {_exchange_cmd, '兑换', '兑换列表', '积分兑换'}
                 if txt in _exchange_list_cmds:
                     # Show available exchange items with inline buttons (reuse catalog builder)
                     catalog_text, catalog_buttons = _build_exchange_catalog_sync(group.id)
@@ -12093,7 +12164,33 @@ async def on_message(update: Update, context):
                         await _update_exchange_catalog_async(group.id, context.application)
                         return
 
-            # 2.7 邀请活动关键词触发 — 回复用户专属邀请链接
+            # 2.65 积分竞拍命令词处理
+            if chat.type in ['group', 'supergroup']:
+                _auction_cmd = conf.get('auction_command_word', '竞拍').strip()
+                if _auction_cmd and txt == _auction_cmd:
+                    auctions = PointsAuction.query.filter_by(
+                        group_id=group.id, status='active'
+                    ).order_by(PointsAuction.auction_end).all()
+                    if not auctions:
+                        await msg.reply_html("📭 当前没有进行中的竞拍")
+                    else:
+                        lines = ["🏆 <b>当前竞拍列表</b>\n", "━━━━━━━━━━━━━━━━"]
+                        for a in auctions:
+                            lines.append(f"\n📦 ID: {a.id}")
+                            lines.append(f"   物品: {a.item_name}")
+                            if a.item_description:
+                                lines.append(f"   描述: {a.item_description}")
+                            lines.append(f"   起拍价: {a.starting_price} 积分")
+                            lines.append(f"   当前价: {a.current_bid} 积分")
+                            if a.current_bidder_id:
+                                lines.append(f"   领先者: 用户 {a.current_bidder_id}")
+                            if a.auction_end:
+                                lines.append(f"   结束时间: {a.auction_end.strftime('%Y-%m-%d %H:%M')}")
+                            lines.append(f"\n   💡 出价: /bid {a.id} &lt;金额&gt;")
+                        await msg.reply_html("\n".join(lines))
+                    return
+
+
             if chat.type in ['group', 'supergroup'] and user:
                 invitation_activity = InvitationActivity.query.filter_by(
                     group_id=group.id, enabled=True

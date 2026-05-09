@@ -458,13 +458,13 @@
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">定时发送消息到群组，支持重复发送和自动删除上一条</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-success btn-sm" onclick="exportData()" title="导出配置">
+            <button class="btn btn-primary btn-sm" onclick="exportData()" title="导出配置">
                 <i class="fa-solid fa-download me-1"></i>导出
             </button>
-            <button class="btn btn-info btn-sm" onclick="showImportModal()" title="导入配置">
+            <button class="btn btn-primary btn-sm" onclick="showImportModal()" title="导入配置">
                 <i class="fa-solid fa-upload me-1"></i>导入
             </button>
-            <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
+            <button class="btn btn-primary fw-bold btn-add-new" onclick="openAddModal()">
                 <i class="fa-solid fa-plus me-1 me-md-2"></i>新增消息
             </button>
         </div>
@@ -499,10 +499,10 @@
 <!-- Batch Action Bar -->
 <div class="batch-bar" id="batchBar">
     <span class="selected-count" id="selectedCount">已选 0 条</span>
-    <button class="btn btn-success btn-sm" onclick="batchAction('enable')">
+    <button class="btn btn-primary btn-sm" onclick="batchAction('enable')">
         <i class="fa-solid fa-play me-1"></i>批量启用
     </button>
-    <button class="btn btn-warning btn-sm" onclick="batchAction('pause')">
+    <button class="btn btn-primary btn-sm" onclick="batchAction('pause')">
         <i class="fa-solid fa-pause me-1"></i>批量暂停
     </button>
     <button class="btn btn-danger btn-sm" onclick="batchAction('delete')">

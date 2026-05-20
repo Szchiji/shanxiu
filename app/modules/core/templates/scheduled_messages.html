@@ -580,8 +580,18 @@
                     </td>
                     <td>{{ item.last_sent_at.strftime('%m-%d %H:%M') if item.last_sent_at else '-' }}</td>
                     <td>
-                        {% if item.next_send_at and item.is_active and item.repeat_interval > 0 %}
-                        {{ item.next_send_at.strftime('%m-%d %H:%M') }}
+                        {% if item.is_active and item.repeat_interval > 0 %}
+                            {% if item.next_send_at %}
+                                {{ item.next_send_at.strftime('%m-%d %H:%M') }}
+                            {% elif item.last_sent_at is none %}
+                                {% if item.start_time %}
+                                    {{ item.start_time.strftime('%m-%d %H:%M') }}
+                                {% else %}
+                                    立即
+                                {% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
                         {% else %}
                         -
                         {% endif %}

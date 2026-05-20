@@ -2767,10 +2767,16 @@ def api_send_scheduled_message_now(message_id):
             print(f"Error sending scheduled message now: {send_err}", flush=True)
             return jsonify({'status':'error','msg':f'消息发送失败：{send_err}'})
 
-        # 更新发送时间，防止定时任务重复发送
+        # 更新发送时间和下次发送时间，防止定时任务重复发送
         if sent_message:
-            item.last_sent_at = get_beijing_now()
+            now = get_beijing_now()
+            item.last_sent_at = now
             item.last_message_id = sent_message.message_id
+            # 手动发送后重新计算下次发送时间，使调度器以本次发送时刻为基准
+            if item.repeat_interval > 0:
+                item.next_send_at = now + timedelta(minutes=item.repeat_interval)
+            else:
+                item.next_send_at = None
             db.session.commit()
 
         return jsonify({'status':'ok'})
@@ -6017,7 +6023,14 @@ async def check_scheduled_messages(context):
                     if scheduled_msg and scheduled_msg.is_active:
                         if scheduled_msg.repeat_interval == 0:
                             scheduled_msg.last_sent_at = None  # allow retry
-                            db.session.commit()
+                        else:
+                            # Advance next_send_at so the scheduler waits for the
+                            # next scheduled slot instead of retrying every tick.
+                            interval_td = timedelta(minutes=scheduled_msg.repeat_interval)
+                            base = scheduled_msg.last_sent_at or get_beijing_now()
+                            new_next = base + interval_td
+                            scheduled_msg.next_send_at = new_next
+                        db.session.commit()
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers

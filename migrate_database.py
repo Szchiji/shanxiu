@@ -53,6 +53,7 @@ def run_migrations():
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
         "ALTER TABLE scheduled_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
         "ALTER TABLE scheduled_messages ADD COLUMN last_sent_at TIMESTAMP",
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS next_send_at TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         # Start messages table columns

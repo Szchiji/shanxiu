@@ -89,6 +89,7 @@ class ScheduledMessage(db.Model):
     message_thread_id = db.Column(db.Integer, nullable=True)  # 话题ID (用于论坛话题群)
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
+    next_send_at = db.Column(db.DateTime, nullable=True)  # 下次发送时间
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     

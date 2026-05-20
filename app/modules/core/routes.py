@@ -5773,10 +5773,13 @@ async def check_scheduled_messages(context):
                         # 从未发送过
                         should_send = True
                     elif msg.repeat_interval > 0:
-                        # 检查重复间隔
-                        elapsed_minutes = (now - msg.last_sent_at).total_seconds() / 60
-                        if elapsed_minutes >= msg.repeat_interval:
-                            should_send = True
+                        if msg.next_send_at is not None:
+                            # 使用 next_send_at 精确判断，防止崩溃重启后集中爆发
+                            should_send = now >= msg.next_send_at
+                        else:
+                            # 兼容旧记录：按 elapsed 判断
+                            elapsed_minutes = (now - msg.last_sent_at).total_seconds() / 60
+                            should_send = elapsed_minutes >= msg.repeat_interval
                     
                     if should_send:
                         messages_to_send.append({
@@ -5793,6 +5796,7 @@ async def check_scheduled_messages(context):
                             'auto_pin': msg.auto_pin,
                             'repeat_interval': msg.repeat_interval,
                             'last_sent_at': msg.last_sent_at,  # used for atomic claim
+                            'next_send_at': msg.next_send_at,  # used to compute next schedule
                         })
                 
                 # 批量禁用已过期的定时消息，避免列表中继续显示启用状态
@@ -5956,18 +5960,34 @@ async def check_scheduled_messages(context):
             # For one-shot messages (repeat_interval=0), also deactivate so the UI
             # reflects the correct state and the scheduler skips them on future runs.
             if sent_message:
-                def _update_sent(msg_id, sent_msg_id, is_one_shot):
+                # Compute next_send_at: advance from the previously scheduled time so
+                # the original cadence is preserved across crash-recovery restarts.
+                new_next_send_at = None
+                if msg_data['repeat_interval'] > 0:
+                    interval_td = timedelta(minutes=msg_data['repeat_interval'])
+                    old_next_send_at = msg_data.get('next_send_at')
+                    if old_next_send_at is not None:
+                        # Advance from the old scheduled time until it's in the future
+                        new_next_send_at = old_next_send_at
+                        while new_next_send_at <= send_time:
+                            new_next_send_at += interval_td
+                    else:
+                        # First time or legacy record: schedule from actual send time
+                        new_next_send_at = send_time + interval_td
+
+                def _update_sent(msg_id, sent_msg_id, is_one_shot, next_send_at_val):
                     with global_flask_app.app_context():
                         scheduled_msg = ScheduledMessage.query.get(msg_id)
                         if scheduled_msg and scheduled_msg.is_active:
                             scheduled_msg.last_message_id = sent_msg_id
+                            scheduled_msg.next_send_at = next_send_at_val
                             if is_one_shot:
                                 scheduled_msg.is_active = False
                             db.session.commit()
                 
                 await asyncio.get_running_loop().run_in_executor(
                     None, _update_sent, msg_data['id'], sent_message.message_id,
-                    msg_data['repeat_interval'] == 0
+                    msg_data['repeat_interval'] == 0, new_next_send_at
                 )
 
                 # 自动置顶

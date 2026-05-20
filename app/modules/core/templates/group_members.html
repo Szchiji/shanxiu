@@ -95,7 +95,7 @@
             </div>
             <div class="col-md-3 mb-2">
                 {% if stats.last_sync %}
-                <small class="text-muted">上次同步: {{ stats.last_sync.synced_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                <small class="text-muted">上次同步: {{ stats.last_sync.synced_at.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                 {% else %}
                 <small class="text-muted">尚未同步</small>
                 {% endif %}
@@ -180,7 +180,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <small class="text-muted">{{ member.joined_at.strftime('%m-%d %H:%M') if member.joined_at else '-' }}</small>
+                            <small class="text-muted">{{ member.joined_at.strftime('%m-%d %H:%M:%S') if member.joined_at else '-' }}</small>
                         </td>
                         <td>
                             <button class="btn btn-sm btn-primary" onclick="showAdjustPointsModal({{ member.user_id }}, '{{ member.first_name }}')">

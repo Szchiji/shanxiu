@@ -281,7 +281,7 @@
                     <td><code>{{ r.user_id }}</code></td>
                     <td>{{ r.item.item_name if r.item else '<span class="text-muted">(已删除)</span>'|safe }}</td>
                     <td><span class="text-danger fw-bold">-{{ r.points_spent }}</span></td>
-                    <td class="text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

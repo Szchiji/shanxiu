@@ -73,7 +73,7 @@
                                     <span class="fw-semibold text-secondary">克隆ID: {{ clone.id }}</span> | 
                                     Token: ●●●●●●●●●●●●●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }} | 
                                     {% if clone.owner_user_id %}拥有者ID: {{ clone.owner_user_id }} | {% endif %}
-                                    {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}{% else %}永久有效{% endif %}
+                                    {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}永久有效{% endif %}
                                     {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
                                     {% if railway_domain %}<br>Webhook URL: <code>https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}</code>{% endif %}
                                 </small>

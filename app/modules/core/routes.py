@@ -5109,7 +5109,7 @@ def api_publish_group_vote():
 
         end_info = ""
         if vote_snapshot['end_time']:
-            end_info = f"\n⏰ 截止：{vote_snapshot['end_time'].strftime('%Y-%m-%d %H:%M')}"
+            end_info = f"\n⏰ 截止：{vote_snapshot['end_time'].strftime('%Y-%m-%d %H:%M:%S')}"
         revote_info = "✅ 允许改投" if vote_snapshot['allow_revote'] else "🔒 不允许改投"
 
         return await ptb_app.bot.send_message(
@@ -5181,9 +5181,9 @@ def api_publish_group_lottery():
     else:
         lines.append(f"获奖人数：随机抽取 {lottery.top_n_winners} 名幸运者")
     if lottery.start_time:
-        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     if lottery.end_time:
-        lines.append(f"结束时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"结束时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("\n积极发言，参与抽奖！")
     announcement = "\n".join(lines)
     chat_id = group.chat_id
@@ -9693,12 +9693,12 @@ async def cmd_userinfo(update: Update, context):
             pass
         
         if group_user.expiration_date:
-            info_lines.append(f"⏰ 到期时间: {group_user.expiration_date.strftime('%Y-%m-%d %H:%M')}")
+            info_lines.append(f"⏰ 到期时间: {group_user.expiration_date.strftime('%Y-%m-%d %H:%M:%S')}")
         
         info_lines.append(f"🚫 封禁状态: {'已封禁' if group_user.is_banned else '正常'}")
         
         if group_user.checkin_time:
-            info_lines.append(f"✅ 最后签到: {group_user.checkin_time.strftime('%Y-%m-%d %H:%M')}")
+            info_lines.append(f"✅ 最后签到: {group_user.checkin_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         info_lines.append(f"🟢 在线状态: {'在线' if group_user.online else '离线'}")
     
@@ -9967,7 +9967,7 @@ async def cmd_auction(update: Update, context):
         if auction.current_bidder_id:
             message_lines.append(f"   领先者: 用户 {auction.current_bidder_id}")
         if auction.auction_end:
-            message_lines.append(f"   结束时间: {auction.auction_end.strftime('%Y-%m-%d %H:%M')}")
+            message_lines.append(f"   结束时间: {auction.auction_end.strftime('%Y-%m-%d %H:%M:%S')}")
         message_lines.append(f"\n   💡 出价: /bid {auction.id} <金额>")
     
     await update.message.reply_text("\n".join(message_lines))
@@ -10216,7 +10216,7 @@ async def cmd_lottery_history(update: Update, context):
         if lottery.prize_description:
             message_lines.append(f"   奖品: {lottery.prize_description}")
         if lottery.end_time:
-            message_lines.append(f"   结束时间: {lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+            message_lines.append(f"   结束时间: {lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Parse winners
         try:
@@ -10304,7 +10304,7 @@ async def cmd_lottery(update: Update, context):
             message_lines.append(f"   奖品: {lottery['prize']}")
         
         if lottery['end_time']:
-            message_lines.append(f"   结束时间: {lottery['end_time'].strftime('%Y-%m-%d %H:%M')}")
+            message_lines.append(f"   结束时间: {lottery['end_time'].strftime('%Y-%m-%d %H:%M:%S')}")
         
         message_lines.append(f"   当前参与人数: {lottery['participant_count']}人")
     
@@ -10559,7 +10559,7 @@ async def check_and_send_votes(context):
 
                 end_info = ""
                 if vote_data['end_time']:
-                    end_info = f"\n⏰ 截止：{vote_data['end_time'].strftime('%Y-%m-%d %H:%M')}"
+                    end_info = f"\n⏰ 截止：{vote_data['end_time'].strftime('%Y-%m-%d %H:%M:%S')}"
                 revote_info = "✅ 允许改投" if vote_data['allow_revote'] else "🔒 不允许改投"
 
                 sent_msg = await bot.send_message(
@@ -11519,7 +11519,7 @@ async def cmd_clones(update: Update, context):
                 'clone_name': c.clone_name,
                 'owner_user_id': c.owner_user_id,
                 'is_active': c.is_active,
-                'expiration_date': c.expiration_date.strftime('%Y-%m-%d %H:%M') if c.expiration_date else '无期限',
+                'expiration_date': c.expiration_date.strftime('%Y-%m-%d %H:%M:%S') if c.expiration_date else '无期限',
                 'description': c.description or '无描述'
             } for c in clones]
     
@@ -11695,7 +11695,7 @@ async def on_message(update: Update, context):
                             info_lines.append(f"\n{idx}. {info['group_name']}")
                             info_lines.append(f"   状态: {'🚫 已封禁' if info['banned'] else '✅ 正常'}")
                             if info['expiration']:
-                                info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M')}")
+                                info_lines.append(f"   到期: {info['expiration'].strftime('%Y-%m-%d %H:%M:%S')}")
                             info_lines.append(f"   积分: {info['points']}")
                         
                         if len(user_groups) > 5:
@@ -11957,7 +11957,7 @@ async def on_message(update: Update, context):
                             if q_lottery.prize_description:
                                 lines.append(f"🎁 奖品：{q_lottery.prize_description}")
                             if q_lottery.end_time:
-                                lines.append(f"📅 活动结束时间：{q_lottery.end_time.strftime('%Y-%m-%d %H:%M')}")
+                                lines.append(f"📅 活动结束时间：{q_lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
                             lines.append("继续发言可提高中奖概率！")
                             await context.bot.send_message(
                                 chat_id=chat.id,
@@ -12228,7 +12228,7 @@ async def on_message(update: Update, context):
                             if a.current_bidder_id:
                                 lines.append(f"   领先者: 用户 {a.current_bidder_id}")
                             if a.auction_end:
-                                lines.append(f"   结束时间: {a.auction_end.strftime('%Y-%m-%d %H:%M')}")
+                                lines.append(f"   结束时间: {a.auction_end.strftime('%Y-%m-%d %H:%M:%S')}")
                             lines.append(f"\n   💡 出价: /bid {a.id} &lt;金额&gt;")
                         await msg.reply_html("\n".join(lines))
                     return

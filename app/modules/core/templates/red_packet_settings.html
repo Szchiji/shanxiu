@@ -192,7 +192,7 @@
                                             {{ {'active': '进行中', 'expired': '已过期', 'claimed': '已领完'}[p.status] }}
                                         </span>
                                     </td>
-                                    <td>{{ p.created_at.strftime('%m-%d %H:%M') }}</td>
+                                    <td>{{ p.created_at.strftime('%m-%d %H:%M:%S') }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>

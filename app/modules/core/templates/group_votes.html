@@ -105,8 +105,8 @@
                                     </span>
                                     <span class="badge bg-info">{{ '单选' if v.vote_type == 'single' else '多选' }}</span>
                                     {% if v.is_anonymous %}<span class="badge bg-dark">匿名</span>{% endif %}
-                                    {% if v.start_time %}<small class="text-muted">开始: {{ v.start_time.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}
-                                    {% if v.end_time %}<small class="text-muted">结束: {{ v.end_time.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}
+                                    {% if v.start_time %}<small class="text-muted">开始: {{ v.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>{% endif %}
+                                    {% if v.end_time %}<small class="text-muted">结束: {{ v.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>{% endif %}
                                 </div>
                             </div>
                             <div class="d-flex gap-1 ms-3">

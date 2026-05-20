@@ -227,7 +227,7 @@
                                 <span class="text-muted">邀请了</span>
                                 <span class="fw-bold">{{ record.invited_name or record.invited_id }}</span>
                             </div>
-                            <small class="text-muted">{{ record.created_at.strftime('%m-%d %H:%M') }}</small>
+                            <small class="text-muted">{{ record.created_at.strftime('%m-%d %H:%M:%S') }}</small>
                         </div>
                     </div>
                     {% endfor %}

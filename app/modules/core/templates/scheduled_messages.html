@@ -568,8 +568,8 @@
                         <span class="text-muted">-</span>
                         {% endif %}
                     </td>
-                    <td>{{ item.start_time.strftime('%m-%d %H:%M') if item.start_time else '-' }}</td>
-                    <td>{{ item.stop_time.strftime('%m-%d %H:%M') if item.stop_time else '-' }}</td>
+                    <td>{{ item.start_time.strftime('%m-%d %H:%M:%S') if item.start_time else '-' }}</td>
+                    <td>{{ item.stop_time.strftime('%m-%d %H:%M:%S') if item.stop_time else '-' }}</td>
                     <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
@@ -578,14 +578,14 @@
                         <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
                     </td>
-                    <td>{{ item.last_sent_at.strftime('%m-%d %H:%M') if item.last_sent_at else '-' }}</td>
+                    <td>{{ item.last_sent_at.strftime('%m-%d %H:%M:%S') if item.last_sent_at else '-' }}</td>
                     <td>
                         {% if item.is_active and item.repeat_interval > 0 %}
                             {% if item.next_send_at %}
-                                {{ item.next_send_at.strftime('%m-%d %H:%M') }}
+                                {{ item.next_send_at.strftime('%m-%d %H:%M:%S') }}
                             {% elif item.last_sent_at is none %}
                                 {% if item.start_time %}
-                                    {{ item.start_time.strftime('%m-%d %H:%M') }}
+                                    {{ item.start_time.strftime('%m-%d %H:%M:%S') }}
                                 {% else %}
                                     立即
                                 {% endif %}

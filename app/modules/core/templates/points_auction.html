@@ -71,10 +71,10 @@
                                     <small class="text-muted">起拍价: {{ auction.starting_price }}</small>
                                     <small class="text-muted">当前价: {{ auction.current_bid or '未出价' }}</small>
                                     {% if auction.auction_start %}
-                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     {% endif %}
                                     {% if auction.auction_end %}
-                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     {% endif %}
                                 </div>
                                 <span class="badge status-badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }} mt-2">

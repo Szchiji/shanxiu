@@ -402,10 +402,10 @@ async def cmd_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         if group_user.expiration_date:
-            lines.append(f"⏰ 到期时间: {group_user.expiration_date.strftime('%Y-%m-%d %H:%M')}")
+            lines.append(f"⏰ 到期时间: {group_user.expiration_date.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"🚫 封禁状态: {'已封禁' if group_user.is_banned else '正常'}")
         if group_user.checkin_time:
-            lines.append(f"✅ 最后签到: {group_user.checkin_time.strftime('%Y-%m-%d %H:%M')}")
+            lines.append(f"✅ 最后签到: {group_user.checkin_time.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"🟢 在线状态: {'在线' if group_user.online else '离线'}")
 
     if user_pts:
@@ -711,7 +711,7 @@ async def cmd_clones(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'owner_user_id': c.owner_user_id,
                 'is_active': c.is_active,
                 'expiration_date': (
-                    c.expiration_date.strftime('%Y-%m-%d %H:%M')
+                    c.expiration_date.strftime('%Y-%m-%d %H:%M:%S')
                     if c.expiration_date else '无期限'
                 ),
                 'description': c.description or '无描述',

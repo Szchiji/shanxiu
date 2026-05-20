@@ -108,10 +108,10 @@
                                     <small class="text-muted">获奖人数: {{ lottery.top_n_winners }}名</small>
                                     {% endif %}
                                     {% if lottery.start_time %}
-                                    <small class="text-muted">开始: {{ lottery.start_time.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    <small class="text-muted">开始: {{ lottery.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     {% endif %}
                                     {% if lottery.end_time %}
-                                    <small class="text-muted">结束: {{ lottery.end_time.strftime('%Y-%m-%d %H:%M') }}</small>
+                                    <small class="text-muted">结束: {{ lottery.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     {% endif %}
                                 </div>
                                 <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }} mt-2">

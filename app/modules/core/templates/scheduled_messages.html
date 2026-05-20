@@ -529,6 +529,7 @@
                     <th>备注</th>
                     <th>状态</th>
                     <th>上次发送</th>
+                    <th>下次发送</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
@@ -578,6 +579,13 @@
                         {% endif %}
                     </td>
                     <td>{{ item.last_sent_at.strftime('%m-%d %H:%M') if item.last_sent_at else '-' }}</td>
+                    <td>
+                        {% if item.next_send_at and item.is_active and item.repeat_interval > 0 %}
+                        {{ item.next_send_at.strftime('%m-%d %H:%M') }}
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
                     <td class="text-end pe-3 pe-md-4">
                         <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                             <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
@@ -592,7 +600,7 @@
                 </tr>
                 {% else %}
                 <tr id="emptyRow">
-                    <td colspan="10" class="text-center py-4 py-md-5 text-muted">
+                    <td colspan="11" class="text-center py-4 py-md-5 text-muted">
                         <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
                         暂无定时消息，点击上方按钮添加
                     </td>

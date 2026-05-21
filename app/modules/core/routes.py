@@ -2785,6 +2785,132 @@ def api_send_scheduled_message_now(message_id):
         print(f"Error in send_scheduled_message_now: {e}", flush=True)
         return jsonify({'status':'error','msg':'操作失败，请稍后重试'})
 
+@core_bp.route('/api/send_preview_to_admin', methods=['POST'])
+def api_send_preview_to_admin():
+    """将消息内容以实际格式发送给当前登录管理员的私聊，用于预览效果"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d:
+        return jsonify({'status': 'error', 'msg': 'Missing request body'})
+
+    admin_tg_id = session.get('login_user_id')
+    if not admin_tg_id:
+        return jsonify({'status': 'error', 'msg': '无法获取管理员 Telegram ID，请重新登录'})
+
+    group_id = d.get('group_id')
+    clone_id = session.get('clone_id')
+
+    # If a group_id is provided, resolve clone_id from the group
+    if group_id:
+        group = BotGroup.query.get(group_id)
+        if group:
+            clone_id = group.clone_id
+
+    # Select the correct bot
+    if clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(clone_id)
+        if not clone_info:
+            return jsonify({'status': 'error', 'msg': '克隆机器人未运行，无法发送预览'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app or not global_bot_loop:
+            return jsonify({'status': 'error', 'msg': '机器人未启动，无法发送预览'})
+        ptb_app = global_ptb_app
+
+    if not global_bot_loop:
+        return jsonify({'status': 'error', 'msg': '机器人未启动，无法发送预览'})
+
+    msg_snapshot = {
+        'media_type': d.get('media_type', 'text'),
+        'media_url': (d.get('media_url') or '').strip() or None,
+        'content': (d.get('content') or '').strip() or None,
+        'links': d.get('links', '[]'),
+    }
+    chat_id = admin_tg_id
+
+    async def _send_preview():
+        buttons = []
+        try:
+            links = json.loads(msg_snapshot['links'] or '[]')
+            buttons = build_inline_keyboard_from_links(links)
+        except Exception:
+            pass
+        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+        content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
+
+        media_url = msg_snapshot['media_url']
+        tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+        if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+            copy_kwargs = dict(
+                chat_id=chat_id,
+                from_chat_id=tg_from_chat,
+                message_id=tg_msg_id,
+                reply_markup=reply_markup,
+            )
+            if content:
+                copy_kwargs['caption'] = content
+                copy_kwargs['parse_mode'] = 'HTML'
+            try:
+                await ptb_app.bot.copy_message(**copy_kwargs)
+            except Exception:
+                try:
+                    await ptb_app.bot.forward_message(
+                        chat_id=chat_id,
+                        from_chat_id=tg_from_chat,
+                        message_id=tg_msg_id,
+                    )
+                except Exception:
+                    fallback_text = f"{content}\n{media_url}" if content else media_url
+                    await ptb_app.bot.send_message(
+                        chat_id=chat_id,
+                        text=fallback_text,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    )
+        elif msg_snapshot['media_type'] == 'image' and media_url:
+            await ptb_app.bot.send_photo(
+                chat_id=chat_id,
+                photo=media_url,
+                caption=content if content else None,
+                parse_mode='HTML' if content else None,
+                reply_markup=reply_markup,
+            )
+        elif msg_snapshot['media_type'] == 'video' and media_url:
+            await ptb_app.bot.send_video(
+                chat_id=chat_id,
+                video=media_url,
+                caption=content if content else None,
+                parse_mode='HTML' if content else None,
+                reply_markup=reply_markup,
+            )
+        elif content:
+            await ptb_app.bot.send_message(
+                chat_id=chat_id,
+                text=content,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        else:
+            raise ValueError('消息内容为空，无法发送预览')
+
+    future = asyncio.run_coroutine_threadsafe(_send_preview(), global_bot_loop)
+    try:
+        future.result(timeout=30)
+    except TimeoutError:
+        return jsonify({'status': 'error', 'msg': '发送超时，请稍后重试'})
+    except Exception as send_err:
+        err_msg = str(send_err)
+        print(f"Preview send error: {send_err}", flush=True)
+        if 'bot was blocked' in err_msg or 'chat not found' in err_msg or 'PEER_ID_INVALID' in err_msg:
+            return jsonify({'status': 'error', 'msg': '发送失败：请先在 Telegram 中向机器人发送一条消息以开启私聊'})
+        return jsonify({'status': 'error', 'msg': '发送预览失败，请检查机器人状态后重试'})
+
+    return jsonify({'status': 'ok', 'msg': '✅ 预览消息已发送到您的私聊'})
+
+
 @core_bp.route('/api/toggle_scheduled_message', methods=['POST'])
 def api_toggle_scheduled_message():
     """切换定时消息状态"""
@@ -8118,40 +8244,40 @@ async def cmd_vote(update: Update, context):
     user = update.effective_user
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能创建投票")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能创建投票"), 20)
         return
     
     # Parse vote content
     if not context.args:
-        await update.message.reply_text(
+        _sched_del(context, await update.message.reply_text(
             "📊 <b>创建投票</b>\n\n"
             "格式：/vote 标题|选项1|选项2|选项3...\n\n"
             "示例：/vote 今天吃什么|火锅|烧烤|快餐|自助餐",
             parse_mode='HTML'
-        )
+        ), 20)
         return
     
     content = ' '.join(context.args)
     parts = content.split('|')
     
     if len(parts) < 3:
-        await update.message.reply_text("❌ 至少需要标题和两个选项")
+        _sched_del(context, await update.message.reply_text("❌ 至少需要标题和两个选项"), 20)
         return
     
     title = parts[0].strip()
     options = [opt.strip() for opt in parts[1:] if opt.strip()]
     
     if len(options) < 2:
-        await update.message.reply_text("❌ 至少需要两个选项")
+        _sched_del(context, await update.message.reply_text("❌ 至少需要两个选项"), 20)
         return
     
     if len(options) > 10:
-        await update.message.reply_text("❌ 选项最多10个")
+        _sched_del(context, await update.message.reply_text("❌ 选项最多10个"), 20)
         return
     
     if not global_flask_app:
@@ -8184,7 +8310,7 @@ async def cmd_vote(update: Update, context):
     vote_id, error = await asyncio.get_running_loop().run_in_executor(None, _create_vote)
     
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
     
     # Create inline keyboard with vote options
@@ -8229,7 +8355,7 @@ async def cmd_quiz(update: Update, context):
     user = update.effective_user
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     if not global_flask_app:
@@ -8260,7 +8386,7 @@ async def cmd_quiz(update: Update, context):
     quiz_data = await asyncio.get_running_loop().run_in_executor(None, _get_random_quiz)
     
     if not quiz_data:
-        await update.message.reply_text("❌ 暂无可用的问答题目")
+        _sched_del(context, await update.message.reply_text("❌ 暂无可用的问答题目"), 20)
         return
     
     # Create quiz session and send question
@@ -8306,7 +8432,7 @@ async def cmd_redpacket(update: Update, context):
     user = update.effective_user
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
 
     if not global_flask_app:
@@ -8322,7 +8448,7 @@ async def cmd_redpacket(update: Update, context):
 
     group_db_id, grp_conf = await asyncio.get_running_loop().run_in_executor(None, _load_group_conf)
     if group_db_id is None:
-        await update.message.reply_text("❌ 群组不存在")
+        _sched_del(context, await update.message.reply_text("❌ 群组不存在"), 20)
         return
 
     # 从群组配置中读取限制
@@ -8333,21 +8459,21 @@ async def cmd_redpacket(update: Update, context):
     expire_hours = int(grp_conf.get('red_packet_expire_hours', 24))
 
     if not rp_enabled:
-        await update.message.reply_text("❌ 该群已关闭红包功能")
+        _sched_del(context, await update.message.reply_text("❌ 该群已关闭红包功能"), 20)
         return
 
     # 解析参数
     try:
         args = context.args
         if len(args) < 2:
-            await update.message.reply_text(
+            _sched_del(context, await update.message.reply_text(
                 "🧧 <b>发红包</b>\n\n"
                 "格式：/redpacket 总积分 红包数量 [祝福语]\n\n"
                 "示例：\n"
                 "/redpacket 100 10 新年快乐\n"
                 "/redpacket 200 5",
                 parse_mode='HTML'
-            )
+            ), 20)
             return
         
         total_points = int(args[0])
@@ -8355,23 +8481,23 @@ async def cmd_redpacket(update: Update, context):
         message = ' '.join(args[2:]) if len(args) > 2 else "恭喜发财 🧧"
         
         if total_points < packet_count:
-            await update.message.reply_text("❌ 总积分不能少于红包数量")
+            _sched_del(context, await update.message.reply_text("❌ 总积分不能少于红包数量"), 20)
             return
         
         if packet_count < 1 or packet_count > max_count:
-            await update.message.reply_text(f"❌ 红包数量需要在1-{max_count}之间")
+            _sched_del(context, await update.message.reply_text(f"❌ 红包数量需要在1-{max_count}之间"), 20)
             return
         
         if total_points < min_total:
-            await update.message.reply_text(f"❌ 总积分不能少于 {min_total}")
+            _sched_del(context, await update.message.reply_text(f"❌ 总积分不能少于 {min_total}"), 20)
             return
 
         if max_total > 0 and total_points > max_total:
-            await update.message.reply_text(f"❌ 总积分不能超过 {max_total}")
+            _sched_del(context, await update.message.reply_text(f"❌ 总积分不能超过 {max_total}"), 20)
             return
         
     except ValueError:
-        await update.message.reply_text("❌ 参数格式错误，请输入数字")
+        _sched_del(context, await update.message.reply_text("❌ 参数格式错误，请输入数字"), 20)
         return
     
     def _create_redpacket():
@@ -8424,7 +8550,7 @@ async def cmd_redpacket(update: Update, context):
     packet_id, error = await asyncio.get_running_loop().run_in_executor(None, _create_redpacket)
     
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
     
     # 发送红包消息
@@ -8450,7 +8576,7 @@ async def cmd_points(update: Update, context):
     user = update.effective_user
 
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
 
     if not global_flask_app:
@@ -8510,7 +8636,7 @@ async def cmd_points(update: Update, context):
     data, error = await asyncio.get_running_loop().run_in_executor(None, _get_balance)
 
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
 
     display_name = user.first_name or f"User_{user.id}"
@@ -8520,7 +8646,7 @@ async def cmd_points(update: Update, context):
         lines.append(f"🏅 当前等级：{data['level_text']}")
     lines.append(f"📈 今日获得：{data['earned_today']} 积分")
     lines.append(f"🏆 排名：第 {data['rank']} 名")
-    await update.message.reply_html("\n".join(lines))
+    _sched_del(context, await update.message.reply_html("\n".join(lines)), 90)
 
 
 async def cmd_transfer(update: Update, context):
@@ -8529,44 +8655,44 @@ async def cmd_transfer(update: Update, context):
     user = update.effective_user
 
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
 
     # Must be used as a reply to the recipient's message
     if not update.message.reply_to_message:
-        await update.message.reply_html(
+        _sched_del(context, await update.message.reply_html(
             "💸 <b>积分转让</b>\n\n"
             "用法：回复目标用户的消息，然后发送：\n"
             "<code>/transfer 数量 [备注]</code>\n\n"
             "示例：\n"
             "<code>/transfer 50</code>\n"
             "<code>/transfer 100 感谢帮忙</code>"
-        )
+        ), 20)
         return
 
     recipient = update.message.reply_to_message.from_user
     if recipient is None or recipient.is_bot:
-        await update.message.reply_text("❌ 无法向机器人转让积分")
+        _sched_del(context, await update.message.reply_text("❌ 无法向机器人转让积分"), 20)
         return
 
     if recipient.id == user.id:
-        await update.message.reply_text("❌ 不能向自己转让积分")
+        _sched_del(context, await update.message.reply_text("❌ 不能向自己转让积分"), 20)
         return
 
     # Parse arguments: /transfer <amount> [note...]
     try:
         args = context.args
         if not args:
-            await update.message.reply_html(
+            _sched_del(context, await update.message.reply_html(
                 "❌ 请指定转让积分数量。\n用法：<code>/transfer 数量 [备注]</code>"
-            )
+            ), 20)
             return
         amount = int(args[0])
         if amount <= 0:
             raise ValueError
         note = ' '.join(args[1:]) if len(args) > 1 else ""
     except (ValueError, IndexError):
-        await update.message.reply_text("❌ 积分数量必须是正整数")
+        _sched_del(context, await update.message.reply_text("❌ 积分数量必须是正整数"), 20)
         return
 
     if not global_flask_app:
@@ -8638,15 +8764,15 @@ async def cmd_transfer(update: Update, context):
     result, error = await asyncio.get_running_loop().run_in_executor(None, _do_transfer)
 
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
 
     recipient_name = recipient.first_name or f"User_{recipient.id}"
-    await update.message.reply_html(
+    _sched_del(context, await update.message.reply_html(
         f"✅ <b>积分转让成功！</b>\n\n"
         f"💸 转让 <b>{amount}</b> 积分给 {recipient_name}\n"
         f"💰 您的余额：<b>{result['sender_balance']}</b> 积分"
-    )
+    ), 90)
 
 
 async def cmd_rank(update: Update, context):
@@ -8654,7 +8780,7 @@ async def cmd_rank(update: Update, context):
     chat = update.effective_chat
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Parse limit (default 10, max 50)
@@ -8721,11 +8847,11 @@ async def cmd_rank(update: Update, context):
     results, error = await asyncio.get_running_loop().run_in_executor(None, _get_rankings)
     
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
     
     if not results:
-        await update.message.reply_text("📊 暂无积分排行数据")
+        _sched_del(context, await update.message.reply_text("📊 暂无积分排行数据"), 20)
         return
     
     # Build ranking message
@@ -8737,7 +8863,7 @@ async def cmd_rank(update: Update, context):
         badge = user_data['badge'] + " " if user_data['badge'] else ""
         msg += f"{rank_icon} {badge}{user_data['name']} - {user_data['points']} 积分\n"
     
-    await update.message.reply_text(msg, parse_mode='HTML')
+    _sched_del(context, await update.message.reply_text(msg, parse_mode='HTML'), 90)
 
 
 async def cmd_invite_rank(update: Update, context):
@@ -8745,7 +8871,7 @@ async def cmd_invite_rank(update: Update, context):
     chat = update.effective_chat
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Parse limit (default 10, max 50)
@@ -8808,11 +8934,11 @@ async def cmd_invite_rank(update: Update, context):
     results, error = await asyncio.get_running_loop().run_in_executor(None, _get_invite_rankings)
     
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
     
     if not results:
-        await update.message.reply_text("📊 暂无邀请排行数据")
+        _sched_del(context, await update.message.reply_text("📊 暂无邀请排行数据"), 20)
         return
     
     # Build ranking message
@@ -8823,7 +8949,7 @@ async def cmd_invite_rank(update: Update, context):
         rank_icon = medals[idx] if idx < 3 else f"{idx + 1}."
         msg += f"{rank_icon} {user_data['name']} - 邀请 {user_data['invite_count']} 人 ({user_data['total_points']} 积分)\n"
     
-    await update.message.reply_text(msg, parse_mode='HTML')
+    _sched_del(context, await update.message.reply_text(msg, parse_mode='HTML'), 90)
 
 
 async def cmd_mylink(update: Update, context):
@@ -8832,7 +8958,7 @@ async def cmd_mylink(update: Update, context):
     user = update.effective_user
 
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
 
     if not global_flask_app:
@@ -8852,7 +8978,7 @@ async def cmd_mylink(update: Update, context):
     group_id, reward_points = await asyncio.get_running_loop().run_in_executor(None, _get_invitation_info)
 
     if not group_id:
-        await update.message.reply_text("❌ 该群组未开启邀请活动，无法生成专属链接")
+        _sched_del(context, await update.message.reply_text("❌ 该群组未开启邀请活动，无法生成专属链接"), 20)
         return
 
     bot_me = await context.bot.get_me()
@@ -8865,7 +8991,7 @@ async def cmd_mylink(update: Update, context):
         f"📌 将此链接分享给好友，当好友通过链接加入群组后，"
         f"您将获得 <b>{reward_points} 积分</b> 奖励！"
     )
-    await update.message.reply_html(msg)
+    _sched_del(context, await update.message.reply_html(msg), 90)
 
 
 async def cmd_active(update: Update, context):
@@ -8873,7 +8999,7 @@ async def cmd_active(update: Update, context):
     chat = update.effective_chat
     
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Parse period (week/month, default week)
@@ -8940,11 +9066,11 @@ async def cmd_active(update: Update, context):
     data, error = await asyncio.get_running_loop().run_in_executor(None, _get_active_rankings)
     
     if error:
-        await update.message.reply_text(f"❌ {error}")
+        _sched_del(context, await update.message.reply_text(f"❌ {error}"), 20)
         return
     
     if not data['results']:
-        await update.message.reply_text(f"📊 暂无{data['period_label']}活跃数据")
+        _sched_del(context, await update.message.reply_text(f"📊 暂无{data['period_label']}活跃数据"), 20)
         return
     
     # Build ranking message
@@ -8955,7 +9081,7 @@ async def cmd_active(update: Update, context):
         rank_icon = medals[idx] if idx < 3 else f"{idx + 1}."
         msg += f"{rank_icon} {user_data['name']} - {user_data['messages']} 条消息\n"
     
-    await update.message.reply_text(msg, parse_mode='HTML')
+    _sched_del(context, await update.message.reply_text(msg, parse_mode='HTML'), 90)
 
 
 
@@ -9303,25 +9429,25 @@ async def cmd_kick(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要踢出的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要踢出的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
     try:
         await context.bot.ban_chat_member(chat.id, target_user.id)
         await context.bot.unban_chat_member(chat.id, target_user.id)
-        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 踢出群组")
+        _sched_del(context, await update.message.reply_text(f"✅ 已将 {target_user.first_name} 踢出群组"), 30)
         
         # Log admin action
         def _log():
@@ -9340,7 +9466,7 @@ async def cmd_kick(update: Update, context):
         if global_flask_app:
             await asyncio.get_running_loop().run_in_executor(None, _log)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_ban(update: Update, context):
     """封禁群成员命令 /ban"""
@@ -9349,24 +9475,24 @@ async def cmd_ban(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要封禁的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要封禁的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
     try:
         await context.bot.ban_chat_member(chat.id, target_user.id)
-        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 封禁")
+        _sched_del(context, await update.message.reply_text(f"✅ 已将 {target_user.first_name} 封禁"), 30)
         
         # Log admin action
         def _log():
@@ -9385,7 +9511,7 @@ async def cmd_ban(update: Update, context):
         if global_flask_app:
             await asyncio.get_running_loop().run_in_executor(None, _log)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_unban(update: Update, context):
     """解封群成员命令 /unban"""
@@ -9394,26 +9520,26 @@ async def cmd_unban(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要解封的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要解封的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
     try:
         await context.bot.unban_chat_member(chat.id, target_user.id)
-        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 解封")
+        _sched_del(context, await update.message.reply_text(f"✅ 已将 {target_user.first_name} 解封"), 30)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_mute(update: Update, context):
     """禁言群成员命令 /mute [时间(分钟)]"""
@@ -9422,18 +9548,18 @@ async def cmd_mute(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要禁言的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要禁言的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
@@ -9453,9 +9579,9 @@ async def cmd_mute(update: Update, context):
         permissions = get_muted_permissions()
         until_date = datetime.now() + timedelta(minutes=duration)
         await context.bot.restrict_chat_member(chat.id, target_user.id, permissions, until_date=until_date)
-        await update.message.reply_text(f"✅ 已将 {target_user.first_name} 禁言 {duration} 分钟")
+        _sched_del(context, await update.message.reply_text(f"✅ 已将 {target_user.first_name} 禁言 {duration} 分钟"), 30)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_unmute(update: Update, context):
     """解除禁言命令 /unmute"""
@@ -9464,18 +9590,18 @@ async def cmd_unmute(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要解除禁言的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要解除禁言的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
@@ -9483,7 +9609,7 @@ async def cmd_unmute(update: Update, context):
     # Check if target user is chat owner - skip unmute for chat owners
     is_owner = await is_user_chat_owner(context.bot, chat.id, target_user.id)
     if is_owner:
-        await update.message.reply_text(f"⏭️ 无法解除群主 {target_user.first_name} 的禁言 - 群主权限无需解除禁言")
+        _sched_del(context, await update.message.reply_text(f"⏭️ 无法解除群主 {target_user.first_name} 的禁言 - 群主权限无需解除禁言"), 20)
         print(f"⏭️ [解除禁言命令] 跳过解除禁言操作 - 用户 {target_user.id} 是群主 (Chat Owner) in group {chat.id}", flush=True)
         return
     
@@ -9513,9 +9639,9 @@ async def cmd_unmute(update: Update, context):
                         db.session.rollback()
             await asyncio.get_running_loop().run_in_executor(None, _clear_permanent_mute)
         
-        await update.message.reply_text(f"✅ 已解除 {target_user.first_name} 的禁言")
+        _sched_del(context, await update.message.reply_text(f"✅ 已解除 {target_user.first_name} 的禁言"), 30)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_pin(update: Update, context):
     """置顶消息命令 /pin"""
@@ -9524,25 +9650,25 @@ async def cmd_pin(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要置顶的消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要置顶的消息"), 20)
         return
     
     try:
         await context.bot.pin_chat_message(chat.id, update.message.reply_to_message.message_id)
-        await update.message.reply_text("✅ 消息已置顶")
+        _sched_del(context, await update.message.reply_text("✅ 消息已置顶"), 30)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_unpin(update: Update, context):
     """取消置顶消息命令 /unpin"""
@@ -9551,13 +9677,13 @@ async def cmd_unpin(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     try:
@@ -9567,9 +9693,9 @@ async def cmd_unpin(update: Update, context):
         else:
             # Unpin all messages
             await context.bot.unpin_all_chat_messages(chat.id)
-        await update.message.reply_text("✅ 已取消置顶")
+        _sched_del(context, await update.message.reply_text("✅ 已取消置顶"), 30)
     except Exception as e:
-        await update.message.reply_text(f"❌ 操作失败: {str(e)}")
+        _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_warn(update: Update, context):
     """警告用户命令 /warn [原因]"""
@@ -9578,18 +9704,18 @@ async def cmd_warn(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ 请回复要警告的用户消息")
+        _sched_del(context, await update.message.reply_text("❌ 请回复要警告的用户消息"), 20)
         return
     
     target_user = update.message.reply_to_message.from_user
@@ -9606,13 +9732,13 @@ async def cmd_userinfo(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
         return
     
     # Check if replying to a message or forwarded message
@@ -9623,7 +9749,7 @@ async def cmd_userinfo(update: Update, context):
         target_user = getattr(update.message, 'forward_from', None)
     
     if not target_user:
-        await update.message.reply_text("❌ 请回复或转发用户的消息来查看详情")
+        _sched_del(context, await update.message.reply_text("❌ 请回复或转发用户的消息来查看详情"), 20)
         return
     
     # Get user info from database
@@ -9754,7 +9880,7 @@ async def cmd_userinfo(update: Update, context):
         print(f"Error getting member info: {e}")
     
     info_text = "\n".join(info_lines)
-    await update.message.reply_html(info_text)
+    _sched_del(context, await update.message.reply_html(info_text), 90)
 
 async def cmd_menu(update: Update, context):
     """显示群底部按钮菜单命令 /menu 或 /buttons - 使用菜单键盘"""
@@ -10042,24 +10168,24 @@ async def cmd_lottery_draw(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
-        await update.message.reply_text("❌ 只有管理员才能手动开奖")
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能手动开奖"), 20)
         return
     
     # Parse lottery_id
     if len(context.args) < 1:
-        await update.message.reply_text("❌ 用法: /lottery_draw <抽奖ID>\n例如: /lottery_draw 1")
+        _sched_del(context, await update.message.reply_text("❌ 用法: /lottery_draw <抽奖ID>\n例如: /lottery_draw 1"), 20)
         return
     
     try:
         lottery_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("❌ 无效的抽奖ID，请输入数字")
+        _sched_del(context, await update.message.reply_text("❌ 无效的抽奖ID，请输入数字"), 20)
         return
     
     if not global_flask_app:
@@ -10158,7 +10284,7 @@ async def cmd_lottery_draw(update: Update, context):
     result = await asyncio.get_running_loop().run_in_executor(None, _draw_lottery)
     
     if result[0] == "error":
-        await update.message.reply_text(f"❌ {result[1]}")
+        _sched_del(context, await update.message.reply_text(f"❌ {result[1]}"), 20)
     else:
         _, winners, lottery_name, prize_desc = result
         
@@ -10170,9 +10296,9 @@ async def cmd_lottery_draw(update: Update, context):
             if prize_desc:
                 message += f"奖品：{prize_desc}\n"
             
-            await update.message.reply_text(message, parse_mode='HTML')
+            _sched_del(context, await update.message.reply_text(message, parse_mode='HTML'), 300)
         else:
-            await update.message.reply_text("⚠️ 开奖完成，但未找到符合条件的获奖者")
+            _sched_del(context, await update.message.reply_text("⚠️ 开奖完成，但未找到符合条件的获奖者"), 300)
 
 
 async def cmd_lottery_history(update: Update, context):
@@ -10181,7 +10307,7 @@ async def cmd_lottery_history(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     if not global_flask_app:
@@ -10204,7 +10330,7 @@ async def cmd_lottery_history(update: Update, context):
     lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_lottery_history)
     
     if not lotteries:
-        await update.message.reply_text("📭 暂无抽奖历史记录")
+        _sched_del(context, await update.message.reply_text("📭 暂无抽奖历史记录"), 20)
         return
     
     message_lines = ["🏆 抽奖历史记录\n"]
@@ -10229,7 +10355,7 @@ async def cmd_lottery_history(update: Update, context):
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             print(f"Error parsing winner_ids for lottery history: {e}")
     
-    await update.message.reply_text("\n".join(message_lines), parse_mode='HTML')
+    _sched_del(context, await update.message.reply_text("\n".join(message_lines), parse_mode='HTML'), 300)
 
 
 async def cmd_lottery(update: Update, context):
@@ -10238,7 +10364,7 @@ async def cmd_lottery(update: Update, context):
     
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ 此命令只能在群组中使用")
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
     
     if not global_flask_app:
@@ -10284,7 +10410,7 @@ async def cmd_lottery(update: Update, context):
     lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
     
     if not lotteries:
-        await update.message.reply_text("📭 当前没有进行中的抽奖活动")
+        _sched_del(context, await update.message.reply_text("📭 当前没有进行中的抽奖活动"), 20)
         return
     
     message_lines = ["🎰 进行中的抽奖活动\n"]
@@ -10311,7 +10437,7 @@ async def cmd_lottery(update: Update, context):
     message_lines.append("\n━━━━━━━━━━━━━━━━")
     message_lines.append("💡 提示: 在群内发言即可参与抽奖")
     
-    await update.message.reply_text("\n".join(message_lines))
+    _sched_del(context, await update.message.reply_text("\n".join(message_lines)), 300)
 
 
 async def check_auction_expiration(context):
@@ -11554,6 +11680,14 @@ async def _auto_delete_msg(context):
         pass
 
 
+def _sched_del(context, msg, delay: int):
+    """Schedule *msg* for deletion after *delay* seconds via the job queue."""
+    try:
+        context.job_queue.run_once(_auto_delete_msg, delay, data=msg)
+    except Exception:
+        pass
+
+
 async def on_non_text_message(update: Update, context):
     """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
     Applies spam-protection rules (block stickers/forwards) to media messages."""
@@ -11741,14 +11875,14 @@ async def on_message(update: Update, context):
                 result = await asyncio.get_running_loop().run_in_executor(None, _verify_code)
                 
                 if result is True:
-                    await msg.reply_html("✅ <b>验证成功！</b>\n\n网页将自动跳转到管理后台。")
+                    _sched_del(context, await msg.reply_html("✅ <b>验证成功！</b>\n\n网页将自动跳转到管理后台。"), 30)
                     return
                 elif result is False:
-                    await msg.reply_html("⚠️ <b>验证码已过期</b>\n\n请重新发送 /start 获取新的验证码。")
+                    _sched_del(context, await msg.reply_html("⚠️ <b>验证码已过期</b>\n\n请重新发送 /start 获取新的验证码。"), 30)
                     return
                 else:
                     # result is None - code didn't match any pending session
-                    await msg.reply_html("❌ <b>验证码无效</b>\n\n请检查验证码是否正确，或重新发送 /start 获取新的验证码。")
+                    _sched_del(context, await msg.reply_html("❌ <b>验证码无效</b>\n\n请检查验证码是否正确，或重新发送 /start 获取新的验证码。"), 30)
                     return
 
         # 使用全局 App Context

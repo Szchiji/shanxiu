@@ -1016,40 +1016,34 @@
     }
     
     // Preview
-    function previewMessage() {
+    async function previewMessage() {
         const mediaType = document.getElementById('mediaType').value;
         const mediaUrl = document.getElementById('mediaUrl').value;
         const content = htmlToTemplate(document.getElementById('editor').innerHTML);
-        
-        let previewHtml = '';
-        
-        if (mediaType === 'image' && mediaUrl) {
-            previewHtml += `<div class="mb-3"><img src="${mediaUrl}" class="img-fluid rounded" style="max-height: 200px;" onerror="this.src='https://via.placeholder.com/300x200?text=图片加载失败'"></div>`;
-        } else if (mediaType === 'video' && mediaUrl) {
-            previewHtml += `<div class="mb-3"><video src="${mediaUrl}" controls class="w-100 rounded" style="max-height: 200px;"></video></div>`;
-        }
-        
-        if (content) {
-            previewHtml += `<div class="mb-3">${content.replace(/\n/g, '<br>')}</div>`;
-        }
-        
-        if (currentLinks.length > 0) {
-            previewHtml += '<div class="d-flex flex-wrap gap-2">';
-            currentLinks.forEach(link => {
-                if (link.text && link.url) {
-                    previewHtml += `<a href="${link.url}" target="_blank" class="btn btn-sm btn-outline-primary">${link.text}</a>`;
-                }
+
+        const payload = {
+            group_id: groupId,
+            media_type: mediaType,
+            media_url: mediaUrl,
+            content: content,
+            links: JSON.stringify(currentLinks),
+        };
+
+        try {
+            const resp = await fetch('/core/api/send_preview_to_admin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
             });
-            previewHtml += '</div>';
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                showToast(data.msg || '✅ 预览消息已发送到您的私聊', 'success');
+            } else {
+                showToast(data.msg || '发送预览失败', 'danger');
+            }
+        } catch (e) {
+            showToast('网络错误，请重试', 'danger');
         }
-        
-        if (!previewHtml) {
-            previewHtml = '<div class="text-muted text-center">暂无内容</div>';
-        }
-        
-        document.getElementById('previewContent').innerHTML = previewHtml;
-        const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
-        previewModal.show();
     }
     
     // Save

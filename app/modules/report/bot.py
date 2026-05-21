@@ -219,6 +219,33 @@ def _format_user_identity(user_id, member=None, from_user=None) -> str:
     return ' ｜ '.join(parts)
 
 
+async def _try_delete_message(bot, chat_id: int, message_id: int) -> None:
+    """Silently delete a message, ignoring errors (too old, already deleted, etc.)."""
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+
+async def _edit_or_reply(context, message, chat_id: int, text: str, **kwargs):
+    """Edit the stored q_msg_id if available, otherwise send a new message.
+
+    Updates ``context.user_data['q_msg_id']`` so subsequent steps always point
+    at the single persistent question/status card.
+    """
+    q_msg_id = context.user_data.get('q_msg_id')
+    if q_msg_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=q_msg_id, text=text, **kwargs
+            )
+            return
+        except Exception:
+            pass
+    sent = await message.reply_text(text, **kwargs)
+    context.user_data['q_msg_id'] = sent.message_id
+
+
 def _build_channel_link(channel: str, msg_id: int) -> str:
     """Build a t.me link for a channel message.
 
@@ -268,9 +295,13 @@ async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_q_idx'] = 0
 
     total = len(questions)
-    await update.message.reply_text(
-        f'📝 开始填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total)
+    # Delete the /start command message to keep the chat clean.
+    await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f'📝 开始填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total),
     )
+    context.user_data['q_msg_id'] = msg.message_id
     return STEP_QUESTION
 
 
@@ -279,11 +310,17 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
     questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
     idx = context.user_data.get('current_q_idx', 0)
     answer = update.message.text.strip()
+    chat_id = update.effective_chat.id
+
+    # Always delete the user's answer to keep the chat clean.
+    await _try_delete_message(context.bot, chat_id, update.message.message_id)
 
     # Validate required questions: reject empty/whitespace-only answers.
-    # `answer` is already stripped above, so `answer == ''` is the correct check.
     if questions[idx].get('required', True) and answer == '':
-        await update.message.reply_text('⚠️ 此项为必填，请输入有效内容。')
+        await _edit_or_reply(
+            context, update.message, chat_id,
+            '⚠️ 此项为必填，请输入有效内容。\n\n' + _prompt_for_question(questions, idx, len(questions)),
+        )
         return STEP_QUESTION
 
     # Handle optional-skip marker
@@ -296,18 +333,24 @@ async def report_step_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
     total = len(questions)
     if idx < total:
-        await update.message.reply_text(_prompt_for_question(questions, idx, total))
+        await _edit_or_reply(
+            context, update.message, chat_id,
+            _prompt_for_question(questions, idx, total),
+        )
         return STEP_QUESTION
 
     # All questions answered – check if photo is needed
     clone_id = _get_clone_id(context)
     if flask_app and _require_photo_enabled(flask_app, clone_id=clone_id):
         photo_prompt = _get_photo_prompt(flask_app, clone_id=clone_id)
-        await update.message.reply_text(f'第{total + 1}步：{photo_prompt}')
+        await _edit_or_reply(
+            context, update.message, chat_id,
+            f'第{total + 1}步：{photo_prompt}',
+        )
         return STEP_PHOTO
 
     # No photo required – go to confirmation summary
-    return await _show_confirm(update, context)
+    return await _show_confirm_edit(update, context)
 
 
 async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -341,8 +384,52 @@ async def _show_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return STEP_CONFIRM
 
 
+async def _show_confirm_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show confirmation summary by editing the persistent question card (q_msg_id)."""
+    flask_app = _get_flask_app(context)
+    clone_id = _get_clone_id(context)
+    questions = context.user_data.get('questions', _DEFAULT_QUESTIONS)
+    raw_answers = context.user_data.get('answers', [])
+    photo_file_id = context.user_data.get('photo_file_id')
+
+    answers = [
+        {"question": questions[i]["text"], "answer": raw_answers[i] if i < len(raw_answers) else ''}
+        for i in range(len(questions))
+    ]
+
+    if flask_app:
+        preview_text = _build_push_caption(flask_app, '预览', answers, clone_id=clone_id)
+    else:
+        preview_text = _build_answers_block(answers)
+
+    lines = ['📝 <b>请确认以下报告内容（预览）：</b>\n', preview_text]
+    if photo_file_id:
+        lines.append('\n📷 已附带截图')
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton('✅ 确认提交', callback_data='report_confirm_submit'),
+        InlineKeyboardButton('✏️ 重新填写', callback_data='report_restart'),
+    ]])
+    msg_text = '\n\n'.join(lines)
+    chat_id = update.effective_chat.id
+    q_msg_id = context.user_data.get('q_msg_id')
+    if q_msg_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=q_msg_id,
+                text=msg_text, parse_mode='HTML', reply_markup=keyboard,
+            )
+            return STEP_CONFIRM
+        except Exception:
+            pass
+    sent = await update.message.reply_text(msg_text, parse_mode='HTML', reply_markup=keyboard)
+    context.user_data['q_msg_id'] = sent.message_id
+    return STEP_CONFIRM
+
+
 async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flask_app = _get_flask_app(context)
+    chat_id = update.effective_chat.id
     if flask_app is None:
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return ConversationHandler.END
@@ -355,11 +442,20 @@ async def report_step_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.document.mime_type.startswith('image/'):
         photo_file_id = update.message.document.file_id
     else:
-        await update.message.reply_text('❌ 请发送一张图片（截图为必填项，请发送预约聊天截图或付款截图）。')
+        # Delete the invalid message and show an error on the question card.
+        await _try_delete_message(context.bot, chat_id, update.message.message_id)
+        total = len(context.user_data.get('questions', _DEFAULT_QUESTIONS))
+        photo_prompt = _get_photo_prompt(flask_app, clone_id=_get_clone_id(context))
+        await _edit_or_reply(
+            context, update.message, chat_id,
+            f'❌ 请发送一张图片。\n\n第{total + 1}步：{photo_prompt}',
+        )
         return STEP_PHOTO
 
+    # Delete the photo message to keep the chat clean.
+    await _try_delete_message(context.bot, chat_id, update.message.message_id)
     context.user_data['photo_file_id'] = photo_file_id
-    return await _show_confirm(update, context)
+    return await _show_confirm_edit(update, context)
 
 
 async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,6 +479,8 @@ async def report_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             f'📝 重新填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total)
         )
+        # The confirm message is now the new question card.
+        context.user_data['q_msg_id'] = query.message.message_id
         return STEP_QUESTION
 
     if data == 'report_confirm_submit':
@@ -896,14 +994,20 @@ async def report_start_by_text(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        '📝 请发送被提交人的用户名或 ID，例如：\n'
-        '  • <code>@zhangsan</code>\n'
-        '  • <code>https://t.me/zhangsan</code>\n'
-        '  • <code>123456789</code>\n\n'
-        '发送 /cancel 可取消。',
+    # Delete the trigger message and send a single persistent card.
+    await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
+    msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=(
+            '📝 请发送被提交人的用户名或 ID，例如：\n'
+            '  • <code>@zhangsan</code>\n'
+            '  • <code>https://t.me/zhangsan</code>\n'
+            '  • <code>123456789</code>\n\n'
+            '发送 /cancel 可取消。'
+        ),
         parse_mode='HTML',
     )
+    context.user_data['q_msg_id'] = msg.message_id
     return STEP_TARGET
 
 
@@ -933,8 +1037,16 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                 pass
 
     if not lookup_username and lookup_user_id is None:
-        await update.message.reply_text(
-            '⚠️ 格式不正确，请发送用户名（如 @zhangsan 或 https://t.me/zhangsan）或数字 ID（如 123456789）。'
+        await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
+        await _edit_or_reply(
+            context, update.message, update.effective_chat.id,
+            '⚠️ 格式不正确，请发送用户名（如 @zhangsan 或 https://t.me/zhangsan）或数字 ID（如 123456789）。\n\n'
+            '📝 请发送被提交人的用户名或 ID，例如：\n'
+            '  • <code>@zhangsan</code>\n'
+            '  • <code>https://t.me/zhangsan</code>\n'
+            '  • <code>123456789</code>\n\n'
+            '发送 /cancel 可取消。',
+            parse_mode='HTML',
         )
         return STEP_TARGET
 
@@ -1039,9 +1151,16 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
 
     if member is None:
         hint = f'@{lookup_username}' if lookup_username else str(lookup_user_id)
-        await update.message.reply_text(
+        await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
+        await _edit_or_reply(
+            context, update.message, update.effective_chat.id,
             f'❌ 未找到用户 {hint}，请确认用户名或 ID 正确，然后重新发送。\n\n'
-            '发送 /cancel 可取消。'
+            '📝 请发送被提交人的用户名或 ID，例如：\n'
+            '  • <code>@zhangsan</code>\n'
+            '  • <code>https://t.me/zhangsan</code>\n'
+            '  • <code>123456789</code>\n\n'
+            '发送 /cancel 可取消。',
+            parse_mode='HTML',
         )
         return STEP_TARGET
 
@@ -1054,10 +1173,12 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['answers'] = []
     context.user_data['current_q_idx'] = 0
 
-    # Show who we found before starting questions
+    # Delete the user's target input and edit the persistent card to show question 1.
+    await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
     identity = _format_user_identity(target_user_id, member=member)
     total = len(questions)
-    await update.message.reply_text(
+    await _edit_or_reply(
+        context, update.message, update.effective_chat.id,
         f'✅ 已找到被提交人：{identity}\n\n'
         f'📝 开始填写报告（共{total}步）\n\n'
         + _prompt_for_question(questions, 0, total),

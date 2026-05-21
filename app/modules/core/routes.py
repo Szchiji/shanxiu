@@ -2785,6 +2785,132 @@ def api_send_scheduled_message_now(message_id):
         print(f"Error in send_scheduled_message_now: {e}", flush=True)
         return jsonify({'status':'error','msg':'操作失败，请稍后重试'})
 
+@core_bp.route('/api/send_preview_to_admin', methods=['POST'])
+def api_send_preview_to_admin():
+    """将消息内容以实际格式发送给当前登录管理员的私聊，用于预览效果"""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d:
+        return jsonify({'status': 'error', 'msg': 'Missing request body'})
+
+    admin_tg_id = session.get('login_user_id')
+    if not admin_tg_id:
+        return jsonify({'status': 'error', 'msg': '无法获取管理员 Telegram ID，请重新登录'})
+
+    group_id = d.get('group_id')
+    clone_id = session.get('clone_id')
+
+    # If a group_id is provided, resolve clone_id from the group
+    if group_id:
+        group = BotGroup.query.get(group_id)
+        if group:
+            clone_id = group.clone_id
+
+    # Select the correct bot
+    if clone_id is not None:
+        clone_info = bot_clone_manager.active_clones.get(clone_id)
+        if not clone_info:
+            return jsonify({'status': 'error', 'msg': '克隆机器人未运行，无法发送预览'})
+        ptb_app = clone_info['app']
+    else:
+        if not global_ptb_app or not global_bot_loop:
+            return jsonify({'status': 'error', 'msg': '机器人未启动，无法发送预览'})
+        ptb_app = global_ptb_app
+
+    if not global_bot_loop:
+        return jsonify({'status': 'error', 'msg': '机器人未启动，无法发送预览'})
+
+    msg_snapshot = {
+        'media_type': d.get('media_type', 'text'),
+        'media_url': (d.get('media_url') or '').strip() or None,
+        'content': (d.get('content') or '').strip() or None,
+        'links': d.get('links', '[]'),
+    }
+    chat_id = admin_tg_id
+
+    async def _send_preview():
+        buttons = []
+        try:
+            links = json.loads(msg_snapshot['links'] or '[]')
+            buttons = build_inline_keyboard_from_links(links)
+        except Exception:
+            pass
+        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+        content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
+
+        media_url = msg_snapshot['media_url']
+        tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+        if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
+            copy_kwargs = dict(
+                chat_id=chat_id,
+                from_chat_id=tg_from_chat,
+                message_id=tg_msg_id,
+                reply_markup=reply_markup,
+            )
+            if content:
+                copy_kwargs['caption'] = content
+                copy_kwargs['parse_mode'] = 'HTML'
+            try:
+                await ptb_app.bot.copy_message(**copy_kwargs)
+            except Exception:
+                try:
+                    await ptb_app.bot.forward_message(
+                        chat_id=chat_id,
+                        from_chat_id=tg_from_chat,
+                        message_id=tg_msg_id,
+                    )
+                except Exception:
+                    fallback_text = f"{content}\n{media_url}" if content else media_url
+                    await ptb_app.bot.send_message(
+                        chat_id=chat_id,
+                        text=fallback_text,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    )
+        elif msg_snapshot['media_type'] == 'image' and media_url:
+            await ptb_app.bot.send_photo(
+                chat_id=chat_id,
+                photo=media_url,
+                caption=content if content else None,
+                parse_mode='HTML' if content else None,
+                reply_markup=reply_markup,
+            )
+        elif msg_snapshot['media_type'] == 'video' and media_url:
+            await ptb_app.bot.send_video(
+                chat_id=chat_id,
+                video=media_url,
+                caption=content if content else None,
+                parse_mode='HTML' if content else None,
+                reply_markup=reply_markup,
+            )
+        elif content:
+            await ptb_app.bot.send_message(
+                chat_id=chat_id,
+                text=content,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        else:
+            raise ValueError('消息内容为空，无法发送预览')
+
+    future = asyncio.run_coroutine_threadsafe(_send_preview(), global_bot_loop)
+    try:
+        future.result(timeout=30)
+    except TimeoutError:
+        return jsonify({'status': 'error', 'msg': '发送超时，请稍后重试'})
+    except Exception as send_err:
+        err_msg = str(send_err)
+        print(f"Preview send error: {send_err}", flush=True)
+        if 'bot was blocked' in err_msg or 'chat not found' in err_msg or 'PEER_ID_INVALID' in err_msg:
+            return jsonify({'status': 'error', 'msg': '发送失败：请先在 Telegram 中向机器人发送一条消息以开启私聊'})
+        return jsonify({'status': 'error', 'msg': '发送预览失败，请检查机器人状态后重试'})
+
+    return jsonify({'status': 'ok', 'msg': '✅ 预览消息已发送到您的私聊'})
+
+
 @core_bp.route('/api/toggle_scheduled_message', methods=['POST'])
 def api_toggle_scheduled_message():
     """切换定时消息状态"""

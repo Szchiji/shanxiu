@@ -5016,6 +5016,87 @@ def exit_clone_backend():
     return redirect('/core/bot_clones')
 
 
+@core_bp.route('/api/resync_clone_groups', methods=['POST'])
+def api_resync_clone_groups():
+    """
+    手动同步克隆机器人的群组/频道。
+    当机器人加入群组时事件未被捕获时，可调用此接口重新注册。
+    请求体: {"chat_id": "-100xxxxxxxxxx"}
+    """
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': '需要登录'})
+
+    clone_id = session.get('clone_id')
+    if not clone_id:
+        return jsonify({'status': 'error', 'msg': '仅限克隆机器人后台使用'})
+
+    d = request.json or {}
+    chat_id_raw = str(d.get('chat_id', '')).strip()
+    if not chat_id_raw:
+        return jsonify({'status': 'error', 'msg': '请提供群组或频道的 chat_id'})
+
+    # Retrieve the clone's bot token
+    try:
+        clone = BotClone.query.get(clone_id)
+        if not clone:
+            return jsonify({'status': 'error', 'msg': '克隆机器人不存在'})
+        bot_token = clone.get_bot_token()
+    except Exception as e:
+        logging.error(f"api_resync_clone_groups: DB error fetching clone {clone_id}: {e}")
+        return jsonify({'status': 'error', 'msg': '数据库错误'})
+
+    # Call Telegram getChat to verify the bot has access to the chat
+    import requests as _requests
+    try:
+        resp = _requests.get(
+            f"https://api.telegram.org/bot{bot_token}/getChat",
+            params={"chat_id": chat_id_raw},
+            timeout=10,
+        )
+        data = resp.json()
+    except Exception as e:
+        logging.error(f"api_resync_clone_groups: Telegram API error: {e}")
+        return jsonify({'status': 'error', 'msg': '调用 Telegram API 失败，请检查网络'})
+
+    if not data.get('ok'):
+        tg_desc = data.get('description', 'Unknown error')
+        return jsonify({'status': 'error', 'msg': f'Telegram 返回错误: {tg_desc}'})
+
+    chat = data['result']
+    chat_type = chat.get('type', '')
+    if chat_type not in ('group', 'supergroup', 'channel'):
+        return jsonify({'status': 'error', 'msg': '仅支持群组和频道'})
+
+    chat_id_str = str(chat['id'])
+    chat_title = chat.get('title', chat_id_str)
+    label = '频道' if chat_type == 'channel' else '群组'
+
+    try:
+        existing = BotGroup.query.filter_by(chat_id=chat_id_str, clone_id=clone_id).first()
+        if existing:
+            existing.is_active = True
+            existing.title = chat_title
+            existing.type = chat_type
+            db.session.commit()
+            return jsonify({'status': 'ok', 'msg': f'{label} "{chat_title}" 已更新并激活'})
+        else:
+            g = BotGroup(
+                chat_id=chat_id_str,
+                title=chat_title,
+                type=chat_type,
+                is_active=True,
+                clone_id=clone_id,
+            )
+            g.fields_config = json.dumps(DEFAULT_FIELDS, ensure_ascii=False)
+            db.session.add(g)
+            db.session.commit()
+            return jsonify({'status': 'ok', 'msg': f'{label} "{chat_title}" 注册成功'})
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"api_resync_clone_groups: DB error saving group: {e}")
+        return jsonify({'status': 'error', 'msg': '数据库写入失败'})
+
+
 @core_bp.route('/api/save_inactive_user_settings', methods=['POST'])
 def api_save_inactive_user_settings():
     """保存不活跃用户设置"""
@@ -11616,6 +11697,10 @@ async def on_my_chat_member(update: Update, context):
         import traceback
         print(f"Error in on_my_chat_member: {e}")
         traceback.print_exc()
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
 
 async def cmd_clones(update: Update, context):
     """查看和管理克隆机器人 /clones - 仅管理员可用"""

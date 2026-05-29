@@ -14,6 +14,7 @@ import asyncio
 import os
 import logging
 from typing import Dict, Optional
+from telegram import Update
 from telegram.ext import Application
 from datetime import datetime
 import traceback
@@ -65,11 +66,15 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
         await app.initialize()
         await app.start()
         
+        # Build explicit allowed_updates list so my_chat_member is always received.
+        # Exclude high-volume types that are not needed by the bot to keep traffic low.
+        _all_allowed = [t.value for t in Update.ALL_TYPES]
+
         # Determine mode: Webhook or Polling
         if webhook_url:
             # Webhook mode
             logger.info(f"Clone bot {clone_id} using Webhook mode: {webhook_url}")
-            await app.bot.set_webhook(webhook_url)
+            await app.bot.set_webhook(webhook_url, allowed_updates=_all_allowed)
             # Store without starting updater
             active_clones[clone_id] = {
                 'app': app,
@@ -77,10 +82,14 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
                 'mode': 'webhook'
             }
         else:
-            # Polling mode
+            # Polling mode — do NOT drop pending updates so that my_chat_member
+            # events queued while the bot was offline are still processed.
             logger.info(f"Clone bot {clone_id} using Polling mode")
-            await app.updater.start_polling(drop_pending_updates=True)
-            
+            await app.updater.start_polling(
+                drop_pending_updates=False,
+                allowed_updates=_all_allowed,
+            )
+
             active_clones[clone_id] = {
                 'app': app,
                 'loop_task': None,

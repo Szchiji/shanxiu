@@ -142,6 +142,29 @@
         <p class="mb-0">管理您的 Telegram 机器人群组与频道</p>
     </div>
 
+    {# ── Clone bot: manual resync button (only shown in clone backend) ── #}
+    {% if session.get('clone_id') %}
+    <div class="text-center mb-3">
+        <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('resyncModal').style.display='flex'">
+            <i class="fa-solid fa-rotate me-1"></i>手动注册群组 / 频道
+        </button>
+    </div>
+
+    <!-- Resync modal -->
+    <div id="resyncModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;padding:2rem;max-width:420px;width:90%;">
+            <h6 class="fw-bold mb-3"><i class="fa-solid fa-rotate me-1"></i>手动注册群组 / 频道</h6>
+            <p class="small text-muted mb-3">如果机器人已在群组或频道内但未显示，请在下方填入 chat_id（数字格式，例如 <code>-1001234567890</code>）手动注册。</p>
+            <input id="resyncChatId" type="text" class="form-control mb-3" placeholder="-1001234567890">
+            <div id="resyncMsg" class="small mb-2" style="min-height:1.2em;"></div>
+            <div class="d-flex gap-2 justify-content-end">
+                <button class="btn btn-sm btn-secondary" onclick="document.getElementById('resyncModal').style.display='none'">取消</button>
+                <button class="btn btn-sm btn-primary" onclick="doResync()">注册</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {# ── Groups section ── #}
     <div class="section-divider">
         <span class="section-divider-line"></span>
@@ -305,6 +328,25 @@
                 alert('操作失败');
             }
         });
+    }
+
+    function doResync() {
+        const chatId = document.getElementById('resyncChatId').value.trim();
+        const msgEl = document.getElementById('resyncMsg');
+        if (!chatId) { msgEl.textContent = '请填入 chat_id'; msgEl.style.color = 'var(--bs-danger, red)'; return; }
+        msgEl.textContent = '正在注册…'; msgEl.style.color = 'var(--text-muted)';
+        fetch('/core/api/resync_clone_groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({chat_id: chatId})
+        }).then(r => r.json()).then(data => {
+            if (data.status === 'ok') {
+                msgEl.textContent = '✅ ' + data.msg; msgEl.style.color = 'green';
+                setTimeout(() => { document.getElementById('resyncModal').style.display='none'; location.reload(); }, 1200);
+            } else {
+                msgEl.textContent = '❌ ' + data.msg; msgEl.style.color = 'var(--bs-danger, red)';
+            }
+        }).catch(() => { msgEl.textContent = '请求失败'; msgEl.style.color = 'var(--bs-danger, red)'; });
     }
 </script>
 {% endblock %}

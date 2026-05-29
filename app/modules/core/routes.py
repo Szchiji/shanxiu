@@ -507,7 +507,38 @@ def page_select_group():
     all_entries = BotGroup.query.filter_by(clone_id=clone_id).order_by(BotGroup.is_active.desc(), BotGroup.updated_at.desc()).all()
     groups = [g for g in all_entries if g.type in ('group', 'supergroup')]
     channels = [g for g in all_entries if g.type == 'channel']
-    return render_template('select_group.html', groups=groups, channels=channels)
+
+    # For clone backends, retrieve the bot's @username so the template can
+    # display it in the manual-registration hint (helps users verify they
+    # added the correct bot account to their group).
+    clone_bot_username = None
+    if clone_id:
+        # Prefer the live bot_data cached by python-telegram-bot (no extra
+        # HTTP request needed when the clone is already running).
+        clone_info = bot_clone_manager.active_clones.get(clone_id)
+        if clone_info:
+            try:
+                clone_bot_username = clone_info['app'].bot.username
+            except Exception:
+                pass
+        # Fallback: one synchronous getMe call when the clone is not running.
+        if not clone_bot_username:
+            try:
+                clone = BotClone.query.get(clone_id)
+                if clone:
+                    bot_token = clone.get_bot_token()
+                    me_resp = requests.get(
+                        f"https://api.telegram.org/bot{bot_token}/getMe",
+                        timeout=5,
+                    )
+                    me_data = me_resp.json()
+                    if me_data.get('ok'):
+                        clone_bot_username = me_data['result'].get('username')
+            except Exception:
+                pass
+
+    return render_template('select_group.html', groups=groups, channels=channels,
+                           clone_bot_username=clone_bot_username)
 
 @core_bp.route('/group/<int:gid>/dashboard')
 def page_dashboard(gid):
@@ -5045,8 +5076,26 @@ def api_resync_clone_groups():
         logging.error(f"api_resync_clone_groups: DB error fetching clone {clone_id}: {e}")
         return jsonify({'status': 'error', 'msg': '数据库错误'})
 
-    # Call Telegram getChat to verify the bot has access to the chat
     import requests as _requests
+
+    # Call getMe first to validate the token and obtain the bot's username.
+    # This lets us include the exact bot @username in error messages so the
+    # user can verify they added the correct bot account to the group.
+    bot_username = None
+    try:
+        me_resp = _requests.get(
+            f"https://api.telegram.org/bot{bot_token}/getMe",
+            timeout=10,
+        )
+        me_data = me_resp.json()
+        if me_data.get('ok'):
+            bot_username = me_data['result'].get('username')
+    except Exception as e:
+        logging.warning(f"api_resync_clone_groups: getMe failed for clone {clone_id}: {e}")
+
+    bot_hint = f"（请确认已将 @{bot_username} 添加为群组/频道管理员）" if bot_username else ""
+
+    # Call Telegram getChat to verify the bot has access to the chat
     try:
         resp = _requests.get(
             f"https://api.telegram.org/bot{bot_token}/getChat",
@@ -5060,7 +5109,7 @@ def api_resync_clone_groups():
 
     if not data.get('ok'):
         tg_desc = data.get('description', 'Unknown error')
-        return jsonify({'status': 'error', 'msg': f'Telegram 返回错误: {tg_desc}'})
+        return jsonify({'status': 'error', 'msg': f'Telegram 返回错误: {tg_desc}。{bot_hint}'})
 
     chat = data['result']
     chat_type = chat.get('type', '')

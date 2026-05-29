@@ -32,6 +32,7 @@ core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templ
 global_ptb_app = None
 global_bot_loop = None
 global_flask_app = None  # 🆕 新增：持有 Flask App 实例
+_background_tasks: set = set()  # strong-ref holder for fire-and-forget asyncio tasks
 
 # Constants
 EXPIRATION_CHECK_INTERVAL = 3600  # Check expired users every hour (in seconds)
@@ -2935,7 +2936,9 @@ def api_send_preview_to_admin():
                     await msg.delete()
                 except Exception:
                     pass
-            asyncio.create_task(_delete_preview_later(sent_msg, 60))
+            _task = asyncio.create_task(_delete_preview_later(sent_msg, 60))
+            _background_tasks.add(_task)
+            _task.add_done_callback(_background_tasks.discard)
 
     future = asyncio.run_coroutine_threadsafe(_send_preview(), global_bot_loop)
     try:
@@ -6780,7 +6783,9 @@ async def check_forced_subscription(update: Update, context):
                             parse_mode='HTML'
                         )
                         # Auto-delete the alert after 30 seconds
-                        asyncio.create_task(delete_message_after_delay(context, chat.id, alert_msg.message_id, 30))
+                        _task = asyncio.create_task(delete_message_after_delay(context, chat.id, alert_msg.message_id, 30))
+                        _background_tasks.add(_task)
+                        _task.add_done_callback(_background_tasks.discard)
                     except Exception as e:
                         print(f"Error sending subscription alert: {e}")
                     

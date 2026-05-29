@@ -2930,13 +2930,13 @@ def api_send_preview_to_admin():
             raise ValueError('消息内容为空，无法发送预览')
 
         if sent_msg is not None:
-            async def _delete_preview_later(msg, delay):
+            async def _delete_preview_later(msg_id, delay):
                 await asyncio.sleep(delay)
                 try:
-                    await msg.delete()
+                    await ptb_app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
                 except Exception:
                     pass
-            _task = asyncio.create_task(_delete_preview_later(sent_msg, 60))
+            _task = asyncio.create_task(_delete_preview_later(sent_msg.message_id, 60))
             _background_tasks.add(_task)
             _task.add_done_callback(_background_tasks.discard)
 

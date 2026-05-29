@@ -2872,6 +2872,7 @@ def api_send_preview_to_admin():
 
         media_url = msg_snapshot['media_url']
         tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+        sent_msg = None
         if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
             copy_kwargs = dict(
                 chat_id=chat_id,
@@ -2883,17 +2884,17 @@ def api_send_preview_to_admin():
                 copy_kwargs['caption'] = content
                 copy_kwargs['parse_mode'] = 'HTML'
             try:
-                await ptb_app.bot.copy_message(**copy_kwargs)
+                sent_msg = await ptb_app.bot.copy_message(**copy_kwargs)
             except Exception:
                 try:
-                    await ptb_app.bot.forward_message(
+                    sent_msg = await ptb_app.bot.forward_message(
                         chat_id=chat_id,
                         from_chat_id=tg_from_chat,
                         message_id=tg_msg_id,
                     )
                 except Exception:
                     fallback_text = f"{content}\n{media_url}" if content else media_url
-                    await ptb_app.bot.send_message(
+                    sent_msg = await ptb_app.bot.send_message(
                         chat_id=chat_id,
                         text=fallback_text,
                         parse_mode='HTML',
@@ -2901,7 +2902,7 @@ def api_send_preview_to_admin():
                         link_preview_options=LinkPreviewOptions(is_disabled=True),
                     )
         elif msg_snapshot['media_type'] == 'image' and media_url:
-            await ptb_app.bot.send_photo(
+            sent_msg = await ptb_app.bot.send_photo(
                 chat_id=chat_id,
                 photo=media_url,
                 caption=content if content else None,
@@ -2909,7 +2910,7 @@ def api_send_preview_to_admin():
                 reply_markup=reply_markup,
             )
         elif msg_snapshot['media_type'] == 'video' and media_url:
-            await ptb_app.bot.send_video(
+            sent_msg = await ptb_app.bot.send_video(
                 chat_id=chat_id,
                 video=media_url,
                 caption=content if content else None,
@@ -2917,7 +2918,7 @@ def api_send_preview_to_admin():
                 reply_markup=reply_markup,
             )
         elif content:
-            await ptb_app.bot.send_message(
+            sent_msg = await ptb_app.bot.send_message(
                 chat_id=chat_id,
                 text=content,
                 parse_mode='HTML',
@@ -2926,6 +2927,15 @@ def api_send_preview_to_admin():
             )
         else:
             raise ValueError('消息内容为空，无法发送预览')
+
+        if sent_msg is not None:
+            async def _delete_preview_later(msg, delay):
+                await asyncio.sleep(delay)
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_delete_preview_later(sent_msg, 60))
 
     future = asyncio.run_coroutine_threadsafe(_send_preview(), global_bot_loop)
     try:
@@ -11473,12 +11483,13 @@ async def cmd_start(update: Update, context):
         keyboard = [[InlineKeyboardButton("🔐 点击验证身份", url=verify_url)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_html(
+        _welcome_msg = await update.message.reply_html(
             "👋 <b>欢迎，管理员！</b>\n\n"
             "请点击下方按钮进入身份验证页面，\n"
             "将页面上的验证码发送给我以完成登录。",
             reply_markup=reply_markup
         )
+        _sched_del(context, _welcome_msg, 300)
     else:
         # Get custom private start message and check for expired memberships
         def _get_private_start_msg_and_check_expiration():

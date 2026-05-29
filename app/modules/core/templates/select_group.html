@@ -154,6 +154,12 @@
     <div id="resyncModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;padding:2rem;max-width:420px;width:90%;">
             <h6 class="fw-bold mb-3"><i class="fa-solid fa-rotate me-1"></i>手动注册群组 / 频道</h6>
+            {% if clone_bot_username %}
+            <div class="alert alert-info py-2 px-3 mb-3 small">
+                <i class="fa-solid fa-robot me-1"></i>当前克隆机器人账号：<strong>@{{ clone_bot_username }}</strong><br>
+                请确认已将 <strong>@{{ clone_bot_username }}</strong> 添加为群组/频道的管理员。
+            </div>
+            {% endif %}
             <p class="small text-muted mb-3">如果机器人已在群组或频道内但未显示，请在下方填入 chat_id（数字格式，例如 <code>-1001234567890</code>）手动注册。</p>
             <input id="resyncChatId" type="text" class="form-control mb-3" placeholder="-1001234567890">
             <div id="resyncMsg" class="small mb-2" style="min-height:1.2em;"></div>

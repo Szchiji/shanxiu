@@ -965,8 +965,18 @@
                 <i class="fa-solid fa-moon" id="themeIcon"></i>
             </button>
             {% if session.get('logged_in') %}
+            {% if current_group is defined and current_group %}
+            <span class="nav-link px-2 text-muted" style="max-width:140px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" title="{{ current_group.title }}">
+                {% if current_group.type == 'channel' %}
+                <i class="fa-solid fa-satellite-dish me-1" style="color:#06b6d4;"></i>
+                {% else %}
+                <i class="fa-solid fa-users me-1" style="color:#22c55e;"></i>
+                {% endif %}
+                {{ current_group.title }}
+            </span>
+            {% endif %}
             {% if session.get('login_user_name') %}
-            <span class="nav-link px-2 text-muted d-none d-sm-inline">
+            <span class="nav-link px-2 text-muted" style="max-width:120px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" title="{{ session.get('login_user_name') }}">
                 <i class="fa-solid fa-user-circle me-1"></i>{{ session.get('login_user_name') }}
             </span>
             {% endif %}

@@ -9,63 +9,101 @@
         box-shadow: var(--card-shadow);
         margin-bottom: 1rem;
     }
-    
-    .table-container {
-        background: var(--bg-card);
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: var(--card-shadow);
+
+/* Card list layout */
+.msg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
     }
-    
-    @media (min-width: 768px) {
-        .table-container {
-            border-radius: 10px;
-        }
+
+.msg-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--card-shadow);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.msg-card:hover {
+    box-shadow: var(--hover-shadow);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.msg-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-wrap: wrap;
+}
+
+.msg-id {
+    font-weight: 700;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.msg-remark {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     }
-    
-    /* Mobile-friendly table */
-    .table {
-        font-size: 0.85rem;
+
+.msg-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.msg-card-body {
+    padding: 0.875rem 1rem;
+}
+
+.msg-info-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem 1.5rem;
+}
+
+@media (max-width: 575px) {
+    .msg-info-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
-    
-    @media (min-width: 768px) {
-        .table {
-            font-size: 0.95rem;
-        }
-    }
-    
-    .table th, .table td {
-        padding: 0.5rem 0.75rem;
-        vertical-align: middle;
-    }
-    
-    @media (min-width: 768px) {
-        .table th, .table td {
-            padding: 0.75rem 1rem;
-        }
-    }
-    
-    /* Hide some columns on mobile */
-    @media (max-width: 767px) {
-        .hide-mobile {
-            display: none !important;
-        }
-    }
-    
-    .action-btn {
-        transition: all 0.3s ease;
-        border-radius: 6px;
-        padding: 0.25rem 0.5rem;
-        font-size: 0.8rem;
-    }
-    
-    @media (min-width: 768px) {
-        .action-btn {
-            border-radius: 6px;
-            padding: 0.4rem 0.8rem;
-            font-size: 0.9rem;
-        }
-    }
+}
+
+.msg-info-item .info-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+}
+
+.msg-info-item .info-value {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.action-btn {
+    transition: all 0.2s ease;
+    border-radius: 6px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+}
     
     .modal-content {
         border-radius: 10px;
@@ -423,11 +461,6 @@
     .search-input {
         min-width: 150px;
     }
-    
-    /* Table cell styles */
-    .remark-cell {
-        max-width: 100px;
-    }
 
     /* Batch action bar */
     .batch-bar {
@@ -485,7 +518,8 @@
 <!-- Search Box -->
 <div class="search-box">
     <div class="d-flex align-items-center flex-wrap gap-2">
-        <i class="fa-solid fa-search text-muted ms-2"></i>
+        <input type="checkbox" id="selectAll" title="全选" onchange="toggleSelectAll(this.checked)" class="ms-2">
+        <i class="fa-solid fa-search text-muted ms-1"></i>
         <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索备注内容...">
         <button class="btn btn-primary btn-sm" onclick="searchItems()">
             <i class="fa-solid fa-search me-1"></i>搜索
@@ -513,112 +547,107 @@
     </button>
 </div>
 
-<div class="table-container">
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-            <thead>
-                <tr>
-                    <th class="ps-3 ps-md-4" style="width:36px;">
-                        <input type="checkbox" id="selectAll" title="全选" onchange="toggleSelectAll(this.checked)">
-                    </th>
-                    <th>ID</th>
-                    <th>类型</th>
-                    <th>间隔</th>
-                    <th>开始</th>
-                    <th>停止</th>
-                    <th>备注</th>
-                    <th>状态</th>
-                    <th>上次发送</th>
-                    <th>下次发送</th>
-                    <th class="text-end pe-3 pe-md-4">操作</th>
-                </tr>
-            </thead>
-            <tbody id="dataTable">
-                {% for item in scheduled_messages %}
-                <tr data-id="{{ item.id }}"
-                    data-media-type="{{ item.media_type }}"
-                    data-media-url="{{ item.media_url or '' }}"
-                    data-content="{{ (item.content or '')|e }}"
-                    data-links="{{ (item.links or '[]')|e }}"
-                    data-repeat-interval="{{ item.repeat_interval or 0 }}"
-                    data-delete-previous="{{ 'true' if item.delete_previous else 'false' }}"
-                    data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
-                    data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
-                    data-remark="{{ (item.remark or '')|e }}"
-                    data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
-                    data-message-thread-id="{{ item.message_thread_id or '' }}"
-                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4">
-                        <input type="checkbox" class="row-checkbox" value="{{ item.id }}" onchange="onRowCheckboxChange()">
-                    </td>
-                    <td class="fw-bold">{{ item.id }}</td>
-                    <td>
-                        {% if item.media_type == 'text' %}
-                        <span class="badge bg-primary">文本</span>
-                        {% elif item.media_type == 'image' %}
-                        <span class="badge bg-success">图片</span>
-                        {% elif item.media_type == 'video' %}
-                        <span class="badge bg-warning text-dark">视频</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if item.repeat_interval > 0 %}
-                        <span class="text-nowrap">{{ item.repeat_interval }}分钟</span>
-                        {% else %}
-                        <span class="text-muted">-</span>
-                        {% endif %}
-                    </td>
-                    <td>{{ item.start_time.strftime('%m-%d %H:%M:%S') if item.start_time else '-' }}</td>
-                    <td>{{ item.stop_time.strftime('%m-%d %H:%M:%S') if item.stop_time else '-' }}</td>
-                    <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
-                    <td>
-                        {% if item.is_active %}
-                        <span class="badge-status badge bg-success">启用</span>
-                        {% else %}
-                        <span class="badge-status badge bg-secondary">暂停</span>
-                        {% endif %}
-                    </td>
-                    <td>{{ item.last_sent_at.strftime('%m-%d %H:%M:%S') if item.last_sent_at else '-' }}</td>
-                    <td>
+<div id="dataTable" class="msg-list">
+    {% for item in scheduled_messages %}
+    <div class="msg-card"
+         data-id="{{ item.id }}"
+         data-media-type="{{ item.media_type }}"
+         data-media-url="{{ item.media_url or '' }}"
+         data-content="{{ (item.content or '')|e }}"
+         data-links="{{ (item.links or '[]')|e }}"
+         data-repeat-interval="{{ item.repeat_interval or 0 }}"
+         data-delete-previous="{{ 'true' if item.delete_previous else 'false' }}"
+         data-start-time="{{ item.start_time.isoformat() if item.start_time else '' }}"
+         data-stop-time="{{ item.stop_time.isoformat() if item.stop_time else '' }}"
+         data-remark="{{ (item.remark or '')|e }}"
+         data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
+         data-message-thread-id="{{ item.message_thread_id or '' }}"
+         data-is-active="{{ 'true' if item.is_active else 'false' }}">
+        <div class="msg-card-header">
+            <input type="checkbox" class="row-checkbox" value="{{ item.id }}" onchange="onRowCheckboxChange()">
+            <span class="msg-id">#{{ item.id }}</span>
+            {% if item.media_type == 'text' %}
+            <span class="badge bg-primary">文本</span>
+            {% elif item.media_type == 'image' %}
+            <span class="badge bg-success">图片</span>
+            {% elif item.media_type == 'video' %}
+            <span class="badge bg-warning">视频</span>
+            {% endif %}
+            <span class="msg-remark">{{ item.remark or '(无备注)' }}</span>
+            <div class="msg-card-actions">
+                {% if item.is_active %}
+                <span class="badge bg-success px-2 py-1">启用</span>
+                {% else %}
+                <span class="badge bg-secondary px-2 py-1">暂停</span>
+                {% endif %}
+                <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
+                    <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
+                </button>
+                <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        </div>
+        <div class="msg-card-body">
+            <div class="msg-info-grid">
+                <div class="msg-info-item">
+                    <span class="info-label">重复间隔</span>
+                    <span class="info-value">
+                        {% if item.repeat_interval > 0 %}{{ item.repeat_interval }}分钟{% else %}<span class="text-muted">不重复</span>{% endif %}
+                    </span>
+                </div>
+                <div class="msg-info-item">
+                    <span class="info-label">开始时间</span>
+                    <span class="info-value">
+                        {% if item.start_time %}{{ item.start_time.strftime('%m-%d %H:%M') }}{% else %}<span class="text-muted">立即</span>{% endif %}
+                    </span>
+                </div>
+                <div class="msg-info-item">
+                    <span class="info-label">停止时间</span>
+                    <span class="info-value">
+                        {% if item.stop_time %}{{ item.stop_time.strftime('%m-%d %H:%M') }}{% else %}<span class="text-muted">永不</span>{% endif %}
+                    </span>
+                </div>
+                <div class="msg-info-item">
+                    <span class="info-label">上次发送</span>
+                    <span class="info-value">
+                        {% if item.last_sent_at %}{{ item.last_sent_at.strftime('%m-%d %H:%M') }}{% else %}<span class="text-muted">-</span>{% endif %}
+                    </span>
+                </div>
+                <div class="msg-info-item">
+                    <span class="info-label">下次发送</span>
+                    <span class="info-value">
                         {% if item.is_active and item.repeat_interval > 0 %}
                             {% if item.next_send_at %}
-                                {{ item.next_send_at.strftime('%m-%d %H:%M:%S') }}
+                                {{ item.next_send_at.strftime('%m-%d %H:%M') }}
                             {% elif item.last_sent_at is none %}
-                                {% if item.start_time %}
-                                    {{ item.start_time.strftime('%m-%d %H:%M:%S') }}
-                                {% else %}
-                                    立即
-                                {% endif %}
+                                {% if item.start_time %}{{ item.start_time.strftime('%m-%d %H:%M') }}{% else %}<span class="text-success fw-bold">立即</span>{% endif %}
                             {% else %}
-                                -
+                                <span class="text-muted">-</span>
                             {% endif %}
                         {% else %}
-                        -
+                            <span class="text-muted">-</span>
                         {% endif %}
-                    </td>
-                    <td class="text-end pe-3 pe-md-4">
-                        <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
-                            <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
-                            <i class="fa-solid fa-pen"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                {% else %}
-                <tr id="emptyRow">
-                    <td colspan="11" class="text-center py-4 py-md-5 text-muted">
-                        <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
-                        暂无定时消息，点击上方按钮添加
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                    </span>
+                </div>
+                <div class="msg-info-item">
+                    <span class="info-label">发送后删除上条</span>
+                    <span class="info-value">
+                        {% if item.delete_previous %}<i class="fa-solid fa-check text-success"></i> 是{% else %}<span class="text-muted">否</span>{% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
     </div>
+    {% else %}
+    <div id="emptyRow" class="text-center py-5 text-muted">
+        <i class="fa-solid fa-inbox fa-3x mb-3 d-block opacity-50"></i>
+        暂无定时消息，点击上方按钮添加
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Pagination Controls -->
@@ -1134,7 +1163,7 @@
     }
     
     function openEditModal(id) {
-        const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
+        const row = document.querySelector(`#dataTable [data-id="${id}"]`);
         if (!row) return alert('未找到数据');
         
         // Get data from row attributes

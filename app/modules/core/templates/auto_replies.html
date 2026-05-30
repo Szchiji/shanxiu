@@ -10,102 +10,58 @@
         margin-bottom: 1rem;
     }
     
-    /* Card list layout */
-    .reply-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-
-    .reply-card {
+    .table-container {
         background: var(--bg-card);
-        border-radius: 12px;
-        box-shadow: var(--card-shadow);
+        border-radius: 10px;
         overflow: hidden;
-        transition: box-shadow 0.2s;
+        box-shadow: var(--card-shadow);
     }
-
-    .reply-card:hover {
-        box-shadow: var(--hover-shadow);
+    
+    @media (min-width: 768px) {
+        .table-container {
+            border-radius: 10px;
+        }
     }
-
-    .reply-card-header {
-        background: var(--bg-secondary);
-        padding: 0.65rem 1rem;
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        border-bottom: 1px solid var(--border-color);
+    
+    /* Mobile-friendly table */
+    .table {
+        font-size: 0.85rem;
     }
-
-    .reply-id {
-        font-size: 0.8rem;
-        color: var(--text-muted);
-        font-weight: 600;
-        flex-shrink: 0;
+    
+    @media (min-width: 768px) {
+        .table {
+            font-size: 0.95rem;
+        }
     }
-
-    .reply-keyword {
-        font-size: 0.9rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        background: var(--bg-card);
-        padding: 0.15rem 0.5rem;
-        border-radius: 6px;
-        border: 1px solid var(--border-color);
-        word-break: break-all;
-        flex: 1;
-        min-width: 0;
+    
+    .table th, .table td {
+        padding: 0.5rem 0.75rem;
+        vertical-align: middle;
     }
-
-    .reply-card-actions {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-        flex-shrink: 0;
-        margin-left: auto;
+    
+    @media (min-width: 768px) {
+        .table th, .table td {
+            padding: 0.75rem 1rem;
+        }
     }
-
-    .reply-card-body {
-        padding: 0.65rem 1rem;
+    
+    /* Hide some columns on mobile */
+    @media (max-width: 767px) {
+        .hide-mobile {
+            display: none !important;
+        }
     }
-
-    .reply-info-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        gap: 0.5rem 1rem;
-    }
-
-    .reply-info-item {
-        display: flex;
-        flex-direction: column;
-        gap: 0.1rem;
-    }
-
-    .info-label {
-        font-size: 0.72rem;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-    }
-
-    .info-value {
-        font-size: 0.88rem;
-        color: var(--text-primary);
-        font-weight: 500;
-        word-break: break-word;
-    }
-
+    
     .action-btn {
         transition: all 0.3s ease;
         border-radius: 6px;
         padding: 0.25rem 0.5rem;
         font-size: 0.8rem;
     }
-
+    
     @media (min-width: 768px) {
         .action-btn {
+            border-radius: 6px;
             padding: 0.4rem 0.8rem;
             font-size: 0.9rem;
         }
@@ -429,6 +385,10 @@
         min-width: 150px;
     }
     
+    /* Table cell styles */
+    .keyword-cell {
+        word-break: break-all;
+    }
 </style>
 
 <div class="page-header">
@@ -475,70 +435,74 @@
     </div>
 </div>
 
-<div id="dataTable" class="reply-list">
-    {% for item in auto_replies %}
-    <div class="reply-card"
-         data-id="{{ item.id }}"
-         data-trigger-keyword="{{ item.trigger_keyword|e }}"
-         data-media-type="{{ item.media_type }}"
-         data-media-url="{{ item.media_url or '' }}"
-         data-content="{{ item.content or ''|e }}"
-         data-links="{{ item.links or '[]'|e }}"
-         data-delete-after="{{ item.delete_after or 0 }}"
-         data-remark="{{ item.remark or ''|e }}"
-         data-is-active="{{ 'true' if item.is_active else 'false' }}">
-        <div class="reply-card-header">
-            <span class="reply-id">#{{ item.id }}</span>
-            <code class="reply-keyword">{{ item.trigger_keyword }}</code>
-            {% if item.media_type == 'text' %}
-            <span class="badge bg-primary">文本</span>
-            {% elif item.media_type == 'image' %}
-            <span class="badge bg-success">图片</span>
-            {% elif item.media_type == 'video' %}
-            <span class="badge bg-warning text-dark">视频</span>
-            {% endif %}
-            <div class="reply-card-actions">
-                {% if item.is_active %}
-                <span class="badge bg-success px-2 py-1">启用</span>
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">ID</th>
+                    <th>关键词</th>
+                    <th>类型</th>
+                    <th>备注</th>
+                    <th>状态</th>
+                    <th>更新时间</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody id="dataTable">
+                {% for item in auto_replies %}
+                <tr data-id="{{ item.id }}" 
+                    data-trigger-keyword="{{ item.trigger_keyword|e }}"
+                    data-media-type="{{ item.media_type }}"
+                    data-media-url="{{ item.media_url or '' }}"
+                    data-content="{{ item.content or ''|e }}"
+                    data-links="{{ item.links or '[]'|e }}"
+                    data-delete-after="{{ item.delete_after or 0 }}"
+                    data-remark="{{ item.remark or ''|e }}"
+                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
+                    <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
+                    <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
+                    <td>
+                        {% if item.media_type == 'text' %}
+                        <span class="badge bg-primary">文本</span>
+                        {% elif item.media_type == 'image' %}
+                        <span class="badge bg-success">图片</span>
+                        {% elif item.media_type == 'video' %}
+                        <span class="badge bg-warning text-dark">视频</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ item.remark or '-' }}</td>
+                    <td>
+                        {% if item.is_active %}
+                        <span class="badge-status badge bg-success">启用</span>
+                        {% else %}
+                        <span class="badge-status badge bg-secondary">暂停</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ item.updated_at.strftime('%m-%d %H:%M:%S') if item.updated_at else '-' }}</td>
+                    <td class="text-end pe-3 pe-md-4">
+                        <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
+                            <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
                 {% else %}
-                <span class="badge bg-secondary px-2 py-1">暂停</span>
-                {% endif %}
-                <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
-                    <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
-                </button>
-                <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
-                    <i class="fa-solid fa-pen"></i>
-                </button>
-                <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
-                    <i class="fa-solid fa-trash"></i>
-                </button>
-            </div>
-        </div>
-        <div class="reply-card-body">
-            <div class="reply-info-grid">
-                <div class="reply-info-item">
-                    <span class="info-label">备注</span>
-                    <span class="info-value">{{ item.remark or '<span class="text-muted">-</span>' }}</span>
-                </div>
-                <div class="reply-info-item">
-                    <span class="info-label">更新时间</span>
-                    <span class="info-value">{{ item.updated_at.strftime('%m-%d %H:%M') if item.updated_at else '-' }}</span>
-                </div>
-                {% if item.delete_after %}
-                <div class="reply-info-item">
-                    <span class="info-label">自动删除</span>
-                    <span class="info-value">{{ item.delete_after }} 秒后</span>
-                </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr id="emptyRow">
+                    <td colspan="7" class="text-center py-4 py-md-5 text-muted">
+                        <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
+                        暂无自动回复规则，点击上方按钮添加
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-    {% else %}
-    <div id="emptyRow" class="text-center py-5 text-muted">
-        <i class="fa-solid fa-inbox fa-3x mb-3 d-block opacity-50"></i>
-        暂无自动回复规则，点击上方按钮添加
-    </div>
-    {% endfor %}
 </div>
 
 <!-- Pagination Controls -->
@@ -1015,7 +979,7 @@
     }
     
     function openEditModal(id) {
-        const row = document.querySelector(`[data-id="${id}"]`);
+        const row = document.querySelector(`#dataTable tr[data-id="${id}"]`);
         if (!row) return alert('未找到数据');
         
         // Get data from row attributes

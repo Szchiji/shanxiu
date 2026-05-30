@@ -1120,7 +1120,7 @@
 <body>
     <header class="navbar navbar-expand sticky-top flex-md-nowrap p-0">
         <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="#">
-            {% if session.get('logged_in') %}
+            {% if session.get('logged_in') and current_group is defined and current_group %}
             <button class="sidebar-toggle d-none d-md-inline-flex me-2" type="button" onclick="toggleSidebar()" aria-label="Toggle sidebar">
                 <i class="fas fa-bars"></i>
             </button>
@@ -1181,7 +1181,7 @@
 
     <div class="container-fluid">
         <div class="row">
-            {% if session.get('logged_in') %}
+            {% if session.get('logged_in') and current_group is defined and current_group %}
             <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
                 <div class="sidebar-sticky">
                     <div class="sidebar-heading">
@@ -1480,7 +1480,7 @@
             </nav>
             {% endif %}
 
-            <main class="{% if session.get('logged_in') %}col-md-9 ms-sm-auto col-lg-10{% else %}col-md-12 ms-sm-auto col-lg-12{% endif %} px-md-4">
+            <main class="{% if session.get('logged_in') and current_group is defined and current_group %}col-md-9 ms-sm-auto col-lg-10{% else %}col-md-12 ms-sm-auto col-lg-12{% endif %} px-md-4">
                 {% block content %}{% endblock %}
             </main>
         </div>

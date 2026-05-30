@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, session, jsonify, abort
+from flask import Blueprint, render_template, request, redirect, session, jsonify, abort, Response
 from app import db, limiter
 from app import get_bot_instance_role, is_clone_instance, is_main_instance
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
@@ -48,6 +48,10 @@ CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
 CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
 CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
 SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Users checked per run in forced-channel subscription task
+
+# Simple in-memory cache for Telegram photos: key -> (timestamp, bytes, content_type)
+_tg_photo_cache: dict = {}
+TG_PHOTO_CACHE_TTL = 300  # seconds (5 minutes)
 
 # Mute reasons (internationalization support)
 MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
@@ -2032,6 +2036,78 @@ def api_get_user_info():
             'profile_data': profile_data
         }
     })
+
+@core_bp.route('/api/tg-photo')
+def api_tg_photo():
+    """代理 Telegram 用户/群组头像。
+    参数:
+      id   - Telegram user_id 或 chat_id（字符串）
+      type - 'user' | 'group'（默认 'user'）
+    """
+    if not session.get('logged_in'):
+        return '', 403
+
+    entity_id = request.args.get('id', '').strip()
+    entity_type = request.args.get('type', 'user')
+
+    if not entity_id:
+        return '', 400
+
+    cache_key = f"{entity_type}:{entity_id}"
+    now = time.time()
+
+    # Return cached bytes if still fresh
+    cached = _tg_photo_cache.get(cache_key)
+    if cached and (now - cached[0]) < TG_PHOTO_CACHE_TTL:
+        return Response(cached[1], mimetype=cached[2])
+
+    # Determine which bot to use
+    bot = None
+    if global_ptb_app:
+        bot = global_ptb_app.bot
+
+    # For group photos, prefer the clone bot that manages the group
+    if entity_type == 'group' and entity_id:
+        group = BotGroup.query.filter_by(chat_id=str(entity_id)).first()
+        if group and group.clone_id:
+            clone_info = bot_clone_manager.active_clones.get(group.clone_id)
+            if clone_info:
+                bot = clone_info['app'].bot
+
+    if not bot or not global_bot_loop:
+        return '', 503
+
+    try:
+        async def _fetch_photo():
+            if entity_type == 'group':
+                chat = await bot.get_chat(entity_id)
+                if not chat.photo:
+                    return None, None
+                file = await bot.get_file(chat.photo.small_file_id)
+            else:
+                photos = await bot.get_user_profile_photos(int(entity_id), limit=1)
+                if not photos or photos.total_count == 0:
+                    return None, None
+                file = await bot.get_file(photos.photos[0][-1].file_id)
+            # Download raw bytes
+            bio = BytesIO()
+            await file.download_to_memory(bio)
+            bio.seek(0)
+            return bio.read(), 'image/jpeg'
+
+        future = asyncio.run_coroutine_threadsafe(_fetch_photo(), global_bot_loop)
+        img_bytes, mime = future.result(timeout=10)
+
+        if not img_bytes:
+            return '', 404
+
+        _tg_photo_cache[cache_key] = (now, img_bytes, mime)
+        return Response(img_bytes, mimetype=mime)
+
+    except Exception as e:
+        logging.warning(f"tg-photo fetch failed for {entity_type}:{entity_id}: {e}")
+        return '', 404
+
 
 @core_bp.route('/api/bulk_import_users', methods=['POST'])
 def api_bulk_import_users():

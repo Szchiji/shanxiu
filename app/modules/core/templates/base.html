@@ -166,6 +166,22 @@
             flex-shrink: 0;
             text-transform: uppercase;
         }
+
+        .tg-avatar-img {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+
+        .tg-group-avatar-img {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
         
         main { 
             padding-top: 20px; 
@@ -982,17 +998,25 @@
             {% if session.get('logged_in') %}
             {% if current_group is defined and current_group %}
             <span class="nav-link px-2 text-muted d-flex align-items-center gap-1" title="{{ current_group.title }}">
+                <img class="tg-group-avatar-img" id="navGroupAvatar"
+                     src="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
+                     onerror="this.style.display='none';document.getElementById('navGroupIcon').style.display='inline-block';"
+                     alt="{{ current_group.title }}" />
                 {% if current_group.type == 'channel' %}
-                <i class="fa-solid fa-satellite-dish" style="color:#06b6d4;flex-shrink:0;"></i>
+                <i class="fa-solid fa-satellite-dish" id="navGroupIcon" style="color:#06b6d4;flex-shrink:0;display:none;"></i>
                 {% else %}
-                <i class="fa-solid fa-users" style="color:#22c55e;flex-shrink:0;"></i>
+                <i class="fa-solid fa-users" id="navGroupIcon" style="color:#22c55e;flex-shrink:0;display:none;"></i>
                 {% endif %}
                 <span class="d-none d-md-inline" style="max-width:140px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">{{ current_group.title }}</span>
             </span>
             {% endif %}
             {% if session.get('login_user_name') %}
             <span class="nav-link px-2 text-muted d-flex align-items-center gap-1" title="{{ session.get('login_user_name') }}">
-                <span class="user-avatar-badge">{{ session.get('login_user_name')[0] }}</span>
+                <img class="tg-avatar-img" id="navUserAvatar"
+                     src="/core/api/tg-photo?id={{ session.get('login_user_id') }}&type=user"
+                     onerror="this.style.display='none';document.getElementById('navUserBadge').style.display='inline-flex';"
+                     alt="{{ session.get('login_user_name') }}" />
+                <span class="user-avatar-badge" id="navUserBadge" style="display:none;">{{ session.get('login_user_name')[0] }}</span>
                 <span class="d-none d-md-inline" style="max-width:120px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">{{ session.get('login_user_name') }}</span>
             </span>
             {% endif %}
@@ -1013,11 +1037,16 @@
                 <div class="sidebar-sticky">
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
+                            <img style="width:16px;height:16px;border-radius:50%;object-fit:cover;flex-shrink:0;vertical-align:middle;"
+                                 src="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
+                                 onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block';"
+                                 alt="{{ current_group.title }}" />
                             {% if current_group.type == 'channel' %}
-                            <i class="fa-solid fa-satellite-dish" style="font-size: 8px; color: #06b6d4;"></i> {{ current_group.title }}
+                            <i class="fa-solid fa-satellite-dish" style="font-size: 8px; color: #06b6d4; display:none;"></i>
                             {% else %}
-                            <i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> {{ current_group.title }}
+                            <i class="fa-solid fa-circle text-success" style="font-size: 8px; display:none;"></i>
                             {% endif %}
+                            {{ current_group.title }}
                         {% else %}
                             <i class="fa-solid fa-circle text-warning" style="font-size: 8px;"></i> 未选择群组
                         {% endif %}

@@ -376,22 +376,52 @@
             margin: 0 10px 8px;
         }
         
-        /* Responsive sidebar */
+        /* Responsive sidebar — always visible on mobile, narrower width */
         @media (max-width: 767.98px) {
+            :root {
+                --sidebar-width: 155px;
+            }
             .sidebar {
                 position: fixed;
                 top: 0;
-                left: -280px;
-                width: 280px;
-                transition: left 0.3s ease-in-out;
-                z-index: 1040;
-            }
-            .sidebar.show {
                 left: 0;
+                width: 155px;
+                z-index: 100;
+                /* always shown — no slide-out toggle on mobile */
             }
-            main {
-                margin-left: 0 !important;
+            main.col-md-9 {
+                margin-left: 155px !important;
+                width: calc(100% - 155px) !important;
+                max-width: calc(100% - 155px) !important;
+                flex: 0 0 calc(100% - 155px) !important;
             }
+            /* backdrop never needed now */
+            .sidebar-backdrop { display: none !important; }
+            /* tighten up sidebar on mobile */
+            .sidebar .nav-link,
+            .sidebar .sidebar-group-toggle {
+                padding: 6px 10px !important;
+                margin: 1px 6px !important;
+                font-size: 0.74rem !important;
+                min-height: 30px !important;
+            }
+            .sidebar .nav-link i,
+            .sidebar .sidebar-group-toggle i.group-icon {
+                margin-right: 6px !important;
+                font-size: 0.8rem !important;
+            }
+            .sidebar .sidebar-submenu .nav-link {
+                padding: 5px 10px 5px 30px !important;
+                font-size: 0.72rem !important;
+                min-height: 28px !important;
+            }
+            .sidebar .sidebar-heading {
+                font-size: 0.62rem !important;
+                padding: 12px 10px 8px !important;
+                margin: 0 6px 6px !important;
+            }
+            /* hide feature descriptions on mobile to save space */
+            .sidebar .nav-link .feature-desc { display: none !important; }
         }
         
         .sidebar-toggle {
@@ -957,6 +987,100 @@
             }
         }
 
+        /* ── Dark navy sidebar (always, both themes) ── */
+        .sidebar {
+            background: #1c2638 !important;
+            border-right: 1px solid #253347 !important;
+        }
+        .sidebar .sidebar-heading {
+            color: rgba(255,255,255,0.42) !important;
+            border-bottom-color: rgba(255,255,255,0.08) !important;
+        }
+        .sidebar .nav-link {
+            color: rgba(255,255,255,0.78) !important;
+        }
+        .sidebar .nav-link:hover {
+            color: #fff !important;
+            background: rgba(255,255,255,0.08) !important;
+            border-color: transparent !important;
+        }
+        .sidebar .nav-link.active {
+            background: #2563eb !important;
+            color: #fff !important;
+            border-color: transparent !important;
+        }
+        .sidebar .nav-link.active .feature-desc { color: rgba(255,255,255,0.75) !important; }
+        .sidebar .sidebar-group-toggle {
+            color: rgba(255,255,255,0.78) !important;
+        }
+        .sidebar .sidebar-group-toggle:hover {
+            color: #fff !important;
+            background: rgba(255,255,255,0.08) !important;
+            border-color: transparent !important;
+        }
+        .sidebar .sidebar-group-toggle.active-group {
+            color: #93c5fd !important;
+            background: rgba(59,130,246,0.18) !important;
+            border-color: rgba(59,130,246,0.25) !important;
+        }
+        .sidebar .sidebar-chevron { opacity: 0.45 !important; }
+        .sidebar .sidebar-submenu .nav-link { color: rgba(255,255,255,0.60) !important; }
+        .sidebar .sidebar-submenu .nav-link:hover { color: #fff !important; }
+        .sidebar .sidebar-submenu .nav-link.active {
+            color: #93c5fd !important;
+            background: rgba(59,130,246,0.15) !important;
+            border-left-color: #3b82f6 !important;
+        }
+        /* ── Colorful sidebar icons ── */
+        .ic-blue   { color: #60a5fa !important; }
+        .ic-green  { color: #4ade80 !important; }
+        .ic-pink   { color: #f472b6 !important; }
+        .ic-purple { color: #c084fc !important; }
+        .ic-red    { color: #f87171 !important; }
+        .ic-orange { color: #fb923c !important; }
+        .ic-cyan   { color: #22d3ee !important; }
+        .ic-amber  { color: #fbbf24 !important; }
+        .ic-teal   { color: #2dd4bf !important; }
+        .ic-gray   { color: #94a3b8 !important; }
+        /* keep active/hover icon white */
+        .sidebar .nav-link.active .ic-blue,
+        .sidebar .nav-link.active .ic-green,
+        .sidebar .nav-link.active .ic-pink,
+        .sidebar .nav-link.active .ic-purple,
+        .sidebar .nav-link.active .ic-red,
+        .sidebar .nav-link.active .ic-orange,
+        .sidebar .nav-link.active .ic-cyan,
+        .sidebar .nav-link.active .ic-amber,
+        .sidebar .nav-link.active .ic-teal,
+        .sidebar .nav-link.active .ic-gray { color: #fff !important; }
+        /* ── Top navbar tab strip ── */
+        .navbar-tab-strip {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            background: rgba(0,0,0,0.06);
+            border-radius: 8px;
+            padding: 3px;
+        }
+        [data-bs-theme="dark"] .navbar-tab-strip { background: rgba(255,255,255,0.07); }
+        .navbar-tab {
+            padding: 4px 14px !important;
+            border-radius: 6px !important;
+            font-size: 0.8rem !important;
+            font-weight: 500 !important;
+            color: var(--text-secondary) !important;
+            white-space: nowrap;
+            line-height: 1.6;
+            transition: all 0.15s ease;
+        }
+        .navbar-tab:hover { color: var(--text-primary) !important; background: rgba(0,0,0,0.06) !important; }
+        .navbar-tab.active {
+            background: var(--bg-secondary) !important;
+            color: var(--accent) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
+        [data-bs-theme="dark"] .navbar-tab.active { background: #21262d !important; }
+
         /* Dark mode alert overrides */
         [data-bs-theme="dark"] .alert-info {
             background: rgba(59, 130, 246, 0.12);
@@ -984,13 +1108,25 @@
     <header class="navbar navbar-expand sticky-top flex-md-nowrap p-0">
         <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3" href="#">
             {% if session.get('logged_in') %}
-            <button class="sidebar-toggle me-2" type="button" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+            <button class="sidebar-toggle d-none d-md-inline-flex me-2" type="button" onclick="toggleSidebar()" aria-label="Toggle sidebar">
                 <i class="fas fa-bars"></i>
             </button>
             {% endif %}
             <i class="fa-solid fa-robot me-2"></i>
-            <span>散修群管机器人</span>
+            <span class="d-none d-md-inline">散修群管机器人</span>
         </a>
+        {% if session.get('logged_in') %}
+        <div class="navbar-nav mx-auto d-flex flex-row align-items-center">
+            <div class="navbar-tab-strip">
+                <a href="/core/select_group" class="nav-link navbar-tab {% if page != 'bot_clones' %}active{% endif %}">
+                    <i class="fa-solid fa-users me-1"></i>我的群
+                </a>
+                <a href="/core/bot_clones" class="nav-link navbar-tab {% if page == 'bot_clones' %}active{% endif %}">
+                    <i class="fa-solid fa-robot me-1"></i>我的机器人
+                </a>
+            </div>
+        </div>
+        {% endif %}
         <div class="navbar-nav ms-auto d-flex flex-row align-items-center gap-2 pe-3">
             <button class="theme-toggle-btn" onclick="toggleTheme()" title="切换深色/浅色模式" id="themeToggleBtn">
                 <i class="fa-solid fa-moon" id="themeIcon"></i>
@@ -1058,7 +1194,7 @@
                         <!-- Dashboard -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/dashboard" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
-                                <i class="fa-solid fa-chart-line"></i> 数据概览
+                                <i class="fa-solid fa-chart-line ic-blue"></i> 数据概览
                             </a>
                         </li>
 
@@ -1073,14 +1209,14 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_automation"
                                     aria-expanded="{{ 'true' if ch_auto_active else 'false' }}">
-                                <i class="fa-solid fa-satellite-dish group-icon"></i>
+                                <i class="fa-solid fa-satellite-dish group-icon ic-cyan"></i>
                                 频道自动化
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if ch_auto_active %}show{% endif %}" id="sg_automation">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply ic-cyan"></i> 自动回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock ic-amber"></i> 定时消息</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1093,13 +1229,13 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_analytics"
                                     aria-expanded="{{ 'true' if ch_analytics_active else 'false' }}">
-                                <i class="fa-solid fa-chart-bar group-icon"></i>
+                                <i class="fa-solid fa-chart-bar group-icon ic-cyan"></i>
                                 统计 &amp; 监控
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if ch_analytics_active %}show{% endif %}" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line ic-cyan"></i> 消息统计</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1112,14 +1248,14 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_ch_sync"
                                     aria-expanded="{{ 'true' if ch_sync_active else 'false' }}">
-                                <i class="fa-solid fa-sync group-icon"></i>
+                                <i class="fa-solid fa-sync group-icon ic-teal"></i>
                                 同步消息
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if ch_sync_active %}show{% endif %}" id="sg_ch_sync">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync ic-teal"></i> 同步设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list ic-teal"></i> 同步日志</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1127,14 +1263,14 @@
                         <!-- Report Management -->
                         <li class="nav-item">
                             <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-flag"></i> 报告管理
+                                <i class="fa-solid fa-flag ic-red"></i> 报告管理
                             </a>
                         </li>
 
                         <!-- Other Settings -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-cog"></i> 其他设置
+                                <i class="fa-solid fa-cog ic-gray"></i> 其他设置
                             </a>
                         </li>
 
@@ -1149,16 +1285,16 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_users"
                                     aria-expanded="{{ 'true' if grp_users_active else 'false' }}">
-                                <i class="fa-solid fa-user-check group-icon"></i>
+                                <i class="fa-solid fa-user-check group-icon ic-green"></i>
                                 用户管理
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_users_active %}show{% endif %}" id="sg_users">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/users" class="nav-link {% if page == 'users' %}active{% endif %}"><i class="fa-solid fa-users"></i> 认证用户</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/members" class="nav-link {% if page == 'group_members' %}active{% endif %}"><i class="fa-solid fa-user-group"></i> 群成员列表</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/fields" class="nav-link {% if page == 'fields' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 资料字段</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/settings" class="nav-link {% if page == 'settings' %}active{% endif %}"><i class="fa-solid fa-sliders"></i> 功能配置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/users" class="nav-link {% if page == 'users' %}active{% endif %}"><i class="fa-solid fa-users ic-green"></i> 认证用户</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/members" class="nav-link {% if page == 'group_members' %}active{% endif %}"><i class="fa-solid fa-user-group ic-green"></i> 群成员列表</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/fields" class="nav-link {% if page == 'fields' %}active{% endif %}"><i class="fa-solid fa-list-check ic-blue"></i> 资料字段</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/settings" class="nav-link {% if page == 'settings' %}active{% endif %}"><i class="fa-solid fa-sliders ic-blue"></i> 功能配置</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1171,13 +1307,13 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_private"
                                     aria-expanded="{{ 'true' if grp_private_active else 'false' }}">
-                                <i class="fa-solid fa-mobile-screen-button group-icon"></i>
+                                <i class="fa-solid fa-mobile-screen-button group-icon ic-pink"></i>
                                 私聊设置
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_private_active %}show{% endif %}" id="sg_private">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}"><i class="fa-solid fa-rocket"></i> /start 消息</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}"><i class="fa-solid fa-rocket ic-pink"></i> /start 消息</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1190,15 +1326,15 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_automation"
                                     aria-expanded="{{ 'true' if grp_auto_active else 'false' }}">
-                                <i class="fa-solid fa-robot group-icon"></i>
+                                <i class="fa-solid fa-robot group-icon ic-purple"></i>
                                 群组自动化
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_auto_active %}show{% endif %}" id="sg_automation">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/group_bottom_button" class="nav-link {% if page == 'group_bottom_button' %}active{% endif %}"><i class="fa-solid fa-hand-pointer"></i> 底部按钮</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply ic-purple"></i> 自动回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock ic-amber"></i> 定时消息</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_bottom_button" class="nav-link {% if page == 'group_bottom_button' %}active{% endif %}"><i class="fa-solid fa-hand-pointer ic-blue"></i> 底部按钮</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1211,17 +1347,17 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_security"
                                     aria-expanded="{{ 'true' if grp_sec_active else 'false' }}">
-                                <i class="fa-solid fa-shield group-icon"></i>
+                                <i class="fa-solid fa-shield group-icon ic-red"></i>
                                 群组安全
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_sec_active %}show{% endif %}" id="sg_security">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}"><i class="fa-solid fa-user-shield"></i> 进退群设置</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}"><i class="fa-solid fa-shield-virus"></i> 垃圾防护</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/keyword_filter" class="nav-link {% if page == 'keyword_filter' %}active{% endif %}"><i class="fa-solid fa-filter"></i> 关键词过滤</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="nav-link {% if page == 'forced_channel_subscription' %}active{% endif %}"><i class="fa-solid fa-rss"></i> 强制订阅</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="nav-link {% if page == 'inactive_user_settings' %}active{% endif %}"><i class="fa-solid fa-user-clock"></i> 不活跃用户</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}"><i class="fa-solid fa-user-shield ic-red"></i> 进退群设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}"><i class="fa-solid fa-shield-virus ic-red"></i> 垃圾防护</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/keyword_filter" class="nav-link {% if page == 'keyword_filter' %}active{% endif %}"><i class="fa-solid fa-filter ic-orange"></i> 关键词过滤</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/forced_channel_subscription" class="nav-link {% if page == 'forced_channel_subscription' %}active{% endif %}"><i class="fa-solid fa-rss ic-orange"></i> 强制订阅</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/inactive_user_settings" class="nav-link {% if page == 'inactive_user_settings' %}active{% endif %}"><i class="fa-solid fa-user-clock ic-amber"></i> 不活跃用户</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1234,17 +1370,17 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_features"
                                     aria-expanded="{{ 'true' if grp_feat_active else 'false' }}">
-                                <i class="fa-solid fa-layer-group group-icon"></i>
+                                <i class="fa-solid fa-layer-group group-icon ic-orange"></i>
                                 群组功能
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_feat_active %}show{% endif %}" id="sg_features">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时开关群</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}"><i class="fa-solid fa-user-plus"></i> 邀请活动</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}"><i class="fa-solid fa-medal"></i> 成员等级</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}"><i class="fa-solid fa-clock ic-amber"></i> 定时开关群</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}"><i class="fa-solid fa-user-plus ic-green"></i> 邀请活动</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}"><i class="fa-solid fa-medal ic-amber"></i> 成员等级</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync ic-teal"></i> 同步设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list ic-teal"></i> 同步日志</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1257,14 +1393,14 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_analytics"
                                     aria-expanded="{{ 'true' if grp_analytics_active else 'false' }}">
-                                <i class="fa-solid fa-chart-bar group-icon"></i>
+                                <i class="fa-solid fa-chart-bar group-icon ic-cyan"></i>
                                 统计 &amp; 监控
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_analytics_active %}show{% endif %}" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}"><i class="fa-solid fa-user-edit"></i> 改名监控</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line ic-cyan"></i> 消息统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}"><i class="fa-solid fa-user-edit ic-cyan"></i> 改名监控</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1277,20 +1413,20 @@
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_points"
                                     aria-expanded="{{ 'true' if grp_points_active else 'false' }}">
-                                <i class="fa-solid fa-coins group-icon"></i>
+                                <i class="fa-solid fa-coins group-icon ic-amber"></i>
                                 积分 &amp; 互动
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
                             <div class="collapse {% if grp_points_active %}show{% endif %}" id="sg_points">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 积分规则</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/points_shop" class="nav-link {% if page in ['points_shop', 'points_exchange', 'points_auction'] %}active{% endif %}"><i class="fa-solid fa-store"></i> 积分商城</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}"><i class="fa-solid fa-comments-dollar"></i> 积分回复</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}"><i class="fa-solid fa-history"></i> 积分日志</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}"><i class="fa-solid fa-trophy"></i> 群抽奖</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/group_votes" class="nav-link {% if page == 'group_votes' %}active{% endif %}"><i class="fa-solid fa-square-poll-vertical"></i> 群投票</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/quiz_games" class="nav-link {% if page == 'quiz_games' %}active{% endif %}"><i class="fa-solid fa-brain"></i> 问答游戏</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/red_packet_settings" class="nav-link {% if page == 'red_packet_settings' %}active{% endif %}"><i class="fa-solid fa-gift"></i> 红包</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}"><i class="fa-solid fa-list-check ic-amber"></i> 积分规则</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_shop" class="nav-link {% if page in ['points_shop', 'points_exchange', 'points_auction'] %}active{% endif %}"><i class="fa-solid fa-store ic-blue"></i> 积分商城</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_auto_reply" class="nav-link {% if page == 'points_auto_reply' %}active{% endif %}"><i class="fa-solid fa-comments-dollar ic-green"></i> 积分回复</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/points_log" class="nav-link {% if page == 'points_log' %}active{% endif %}"><i class="fa-solid fa-history ic-gray"></i> 积分日志</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_lottery" class="nav-link {% if page == 'group_lottery' %}active{% endif %}"><i class="fa-solid fa-trophy ic-amber"></i> 群抽奖</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/group_votes" class="nav-link {% if page == 'group_votes' %}active{% endif %}"><i class="fa-solid fa-square-poll-vertical ic-blue"></i> 群投票</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/quiz_games" class="nav-link {% if page == 'quiz_games' %}active{% endif %}"><i class="fa-solid fa-brain ic-purple"></i> 问答游戏</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/red_packet_settings" class="nav-link {% if page == 'red_packet_settings' %}active{% endif %}"><i class="fa-solid fa-gift ic-red"></i> 红包</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1298,14 +1434,14 @@
                         <!-- Report Management -->
                         <li class="nav-item">
                             <a href="/admin/report_settings" class="nav-link {% if page == 'report_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-flag"></i> 报告管理
+                                <i class="fa-solid fa-flag ic-red"></i> 报告管理
                             </a>
                         </li>
 
                         <!-- Other Settings -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-cog"></i> 其他设置
+                                <i class="fa-solid fa-cog ic-gray"></i> 其他设置
                             </a>
                         </li>
 
@@ -1316,14 +1452,14 @@
                         {% if is_main_instance and not session.get('clone_id') %}
                         <li class="nav-item">
                             <a href="/core/bot_clones" class="nav-link {% if page == 'bot_clones' %}active{% endif %}">
-                                <i class="fa-solid fa-robot"></i> 机器人克隆
+                                <i class="fa-solid fa-robot ic-purple"></i> 机器人克隆
                             </a>
                         </li>
                         {% endif %}
 
                         <li class="nav-item">
                             <a href="/core/select_group" class="nav-link {% if page == 'select_group' %}active{% endif %}">
-                                <i class="fa-solid fa-layer-group"></i> 选择群组
+                                <i class="fa-solid fa-layer-group ic-blue"></i> 选择群组
                             </a>
                         </li>
                     </ul>
@@ -1384,22 +1520,18 @@
         // Sync icon with already-set theme (set by anti-flash inline script in <head>)
         updateThemeIcon(document.documentElement.getAttribute('data-bs-theme') || 'light');
         
-        // ── Responsive sidebar toggle ─────────────────────────────────
+        // ── Responsive sidebar toggle (desktop-only collapse) ─────────
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebarMenu');
-            const backdrop = document.getElementById('sidebarBackdrop');
             const main = document.querySelector('main');
             
-            if (window.innerWidth < DESKTOP_BREAKPOINT) {
-                // Mobile: slide-in overlay with backdrop
-                const isShowing = sidebar && sidebar.classList.toggle('show');
-                if (backdrop) backdrop.classList.toggle('show', isShowing);
-            } else {
+            if (window.innerWidth >= DESKTOP_BREAKPOINT) {
                 // Desktop: collapse sidebar and expand main content
                 const hidden = sidebar && sidebar.classList.toggle('sidebar-hidden');
                 if (main) main.classList.toggle('sidebar-hidden');
                 localStorage.setItem('bh_sidebar_hidden', hidden ? '1' : '0');
             }
+            // Mobile: sidebar is always visible — no toggle needed
         }
         
         // Restore desktop sidebar collapsed state

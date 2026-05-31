@@ -1247,10 +1247,10 @@
                 const modalEl = document.getElementById('itemModal');
                 const modalInstance = bootstrap.Modal.getInstance(modalEl);
                 if (modalInstance) {
-                    modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+                    modalEl.addEventListener('hidden.bs.modal', () => window.location.href = window.location.href, { once: true });
                     modalInstance.hide();
                 } else {
-                    location.reload();
+                    window.location.href = window.location.href;
                 }
             } else {
                 alert(result.msg || '保存失败');
@@ -1297,10 +1297,10 @@
                 const modalEl = document.getElementById('itemModal');
                 const modalInstance = bootstrap.Modal.getInstance(modalEl);
                 if (modalInstance) {
-                    modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+                    modalEl.addEventListener('hidden.bs.modal', () => window.location.href = window.location.href, { once: true });
                     modalInstance.hide();
                 } else {
-                    location.reload();
+                    window.location.href = window.location.href;
                 }
             } else {
                 alert(result.msg || '发送失败');
@@ -1327,7 +1327,7 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                location.reload();
+                window.location.href = window.location.href;
             } else {
                 alert(result.msg || '操作失败');
             }
@@ -1349,7 +1349,7 @@
             const result = await res.json();
             if (result.status === 'ok') {
                 // Reload page to reflect changes
-                location.reload();
+                window.location.href = window.location.href;
             } else {
                 alert(result.msg || '删除失败');
             }
@@ -1443,7 +1443,7 @@ async function importData(xlsx_content) {
         
         if (result.status === 'ok') {
             alert(`成功导入 ${result.imported} 条消息，跳过 ${result.skipped} 条`);
-            location.reload();
+            window.location.href = window.location.href;
         } else {
             alert(result.msg || '导入失败');
         }
@@ -1498,7 +1498,7 @@ async function importData(xlsx_content) {
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                location.reload();
+                window.location.href = window.location.href;
             } else {
                 alert(result.msg || '操作失败');
             }

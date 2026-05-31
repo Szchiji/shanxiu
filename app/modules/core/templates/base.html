@@ -130,7 +130,6 @@
             background: var(--bg-secondary) !important;
             border-bottom: 1px solid var(--border-color);
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            backdrop-filter: blur(12px);
             height: 56px;
         }
         
@@ -589,7 +588,6 @@
         /* Tables */
         .table {
             border-radius: 8px;
-            overflow: hidden;
             color: var(--text-primary);
         }
         
@@ -1461,7 +1459,7 @@
             btn.innerHTML = '<i class="fa-solid fa-check me-1"></i>' + (opts.confirmText || '确认');
             
             _confirmCallback = callback;
-            const modal = new bootstrap.Modal(document.getElementById('globalConfirmDialog'));
+            const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('globalConfirmDialog'));
             modal.show();
         }
         

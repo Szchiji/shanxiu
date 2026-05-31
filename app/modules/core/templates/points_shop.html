@@ -359,7 +359,7 @@
                                     {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
                                 </span>
                             </div>
-                            <div class="d-flex gap-1">
+                            <div class="d-flex flex-column gap-1">
                                 <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auctions_json[loop.index0]|tojson }})'>
                                     <i class="fa-solid fa-edit"></i>
                                 </button>

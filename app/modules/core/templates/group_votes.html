@@ -109,7 +109,7 @@
                                     {% if v.end_time %}<small class="text-muted">结束: {{ v.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>{% endif %}
                                 </div>
                             </div>
-                            <div class="d-flex gap-1 ms-3">
+                            <div class="d-flex flex-column gap-1 ms-3">
                                 <button class="btn btn-sm btn-success" onclick="publishVote({{ v.id }})" {% if v.status == 'ended' %}disabled title="已结束"{% endif %}>
                                     <i class="fa-solid fa-paper-plane"></i>
                                 </button>

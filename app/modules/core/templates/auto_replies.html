@@ -481,15 +481,17 @@
                     </td>
                     <td>{{ item.updated_at.strftime('%m-%d %H:%M:%S') if item.updated_at else '-' }}</td>
                     <td class="text-end pe-3 pe-md-4">
-                        <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
-                            <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
-                            <i class="fa-solid fa-pen"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
+                        <div class="d-flex flex-column gap-1 align-items-end">
+                            <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
+                                <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
                     </td>
                 </tr>
                 {% else %}

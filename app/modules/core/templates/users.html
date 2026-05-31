@@ -281,15 +281,17 @@
                     </td>
                     <td>{{ user.expiration_date }}</td>
                     <td class="text-end pe-3 pe-md-4">
-                        <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
-                            <i class="fa-solid fa-bell"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
-                            <i class="fa-solid fa-pen"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ user.tg_display_name or user.tg_id }}')" title="删除">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
+                        <div class="d-flex flex-column gap-1 align-items-end">
+                            <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
+                                <i class="fa-solid fa-bell"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ user.tg_display_name or user.tg_id }}')" title="删除">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

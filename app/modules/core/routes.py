@@ -4956,7 +4956,8 @@ def api_save_bot_clone():
                             bot_token=clone_data['token'],
                             webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                             flask_app=global_flask_app,
-                            handlers_setup_func=setup_clone_handlers
+                            handlers_setup_func=setup_clone_handlers,
+                            post_init_func=_register_bot_commands,
                         ),
                         global_bot_loop
                     )
@@ -4985,7 +4986,8 @@ def api_save_bot_clone():
                             bot_token=clone_data['token'],
                             webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                             flask_app=global_flask_app,
-                            handlers_setup_func=setup_clone_handlers
+                            handlers_setup_func=setup_clone_handlers,
+                            post_init_func=_register_bot_commands,
                         ),
                         global_bot_loop
                     )
@@ -5080,7 +5082,8 @@ def api_toggle_bot_clone():
                         bot_token=clone_data['token'],
                         webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                         flask_app=global_flask_app,
-                        handlers_setup_func=setup_clone_handlers
+                        handlers_setup_func=setup_clone_handlers,
+                        post_init_func=_register_bot_commands,
                     ),
                     global_bot_loop
                 )
@@ -9305,6 +9308,305 @@ async def cmd_active(update: Update, context):
     _sched_del(context, await update.message.reply_text(msg, parse_mode='HTML'), 90)
 
 
+# ---------------------------------------------------------------------------
+# /help — show available commands
+# ---------------------------------------------------------------------------
+
+async def cmd_help(update: Update, context):
+    """显示帮助信息 /help"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type in ['group', 'supergroup']:
+        is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+
+        lines = [
+            "📋 <b>命令帮助</b>\n",
+            "👤 <b>用户命令</b>",
+            "• /points — 查看我的积分和等级",
+            "• /rank — 积分排行榜",
+            "• /active — 活跃用户排行榜",
+            "• /checkin — 每日打卡",
+            "• /signin — 每日签到获取积分",
+            "• /mylink — 获取专属邀请链接",
+            "• /invite_rank — 邀请排行榜",
+            "• /lottery — 查看进行中的抽奖",
+            "• /transfer @用户 数量 — 积分转让",
+            "• /menu — 显示群组菜单",
+        ]
+
+        if is_admin:
+            lines.extend([
+                "",
+                "🔧 <b>管理员命令</b>（回复目标消息使用）",
+                "• /kick — 踢出用户",
+                "• /ban — 永久封禁用户",
+                "• /unban — 解除封禁",
+                "• /mute [分钟] — 禁言用户（默认60分钟）",
+                "• /unmute — 解除禁言",
+                "• /warn [原因] — 警告用户",
+                "• /userinfo — 查看用户详细信息",
+                "• /pin — 置顶消息",
+                "• /unpin — 取消置顶",
+            ])
+    else:
+        lines = [
+            "📋 <b>命令帮助</b>\n",
+            "• /start — 开始使用 / 管理员登录",
+            "• /help — 显示此帮助信息",
+        ]
+
+    _sched_del(context, await update.message.reply_html("\n".join(lines)), 120)
+
+
+# ---------------------------------------------------------------------------
+# /checkin — daily check-in (打卡)
+# ---------------------------------------------------------------------------
+
+async def cmd_checkin(update: Update, context):
+    """每日打卡命令 /checkin"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+
+    if not global_flask_app:
+        return
+
+    def _check_and_checkin():
+        with global_flask_app.app_context():
+            clone_id = context.application.bot_data.get('clone_id')
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=clone_id).first()
+            if not group:
+                return {'status': 'error', 'msg': '群组不存在'}
+
+            conf = get_group_conf(group)
+
+            if not conf.get('checkin_open'):
+                return {'status': 'disabled'}
+
+            del_time = safe_int(conf.get('checkin_del_time'), 0)
+
+            db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+            if not db_user:
+                return {
+                    'status': 'not_registered',
+                    'msg': sanitize_html_for_telegram(conf.get('msg_not_registered', '⚠️ 您尚未认证，请先完成认证')),
+                    'del_time': del_time,
+                }
+
+            # Check if membership has expired
+            if db_user.expiration_date and get_beijing_now() > db_user.expiration_date:
+                return {
+                    'status': 'expired',
+                    'msg': sanitize_html_for_telegram(
+                        conf.get('msg_expired_ban', '⛔️ 您的认证已过期，已被暂时禁言。请联系管理员续费。')
+                    ),
+                    'group_user_id': db_user.id,
+                    'is_banned': db_user.is_banned,
+                }
+
+            # Check if already checked in today
+            today = get_beijing_today()
+            if db_user.checkin_time and db_user.checkin_time >= today:
+                return {
+                    'status': 'repeat',
+                    'msg': sanitize_html_for_telegram(conf.get('msg_repeat_checkin', '🔄 <b>今天已打卡</b>')),
+                    'del_time': del_time,
+                }
+
+            # First check-in of the day
+            db_user.checkin_time = get_beijing_now()
+            db_user.online = True
+            db.session.commit()
+
+            return {
+                'status': 'success',
+                'msg': sanitize_html_for_telegram(conf.get('msg_checkin_success', '✅ 打卡成功')),
+                'del_time': del_time,
+            }
+
+    result = await asyncio.get_running_loop().run_in_executor(None, _check_and_checkin)
+
+    status = result.get('status')
+    msg = result.get('msg', '')
+    del_time = result.get('del_time', 0)
+
+    if status == 'disabled':
+        _sched_del(context, await update.message.reply_text("ℹ️ 该群未开启打卡功能"), 20)
+    elif status == 'error':
+        _sched_del(context, await update.message.reply_text(f"❌ {msg}"), 20)
+    elif status == 'not_registered':
+        r = await update.message.reply_html(msg)
+        if del_time > 0:
+            _sched_del(context, r, del_time)
+    elif status == 'expired':
+        try:
+            await context.bot.restrict_chat_member(
+                chat_id=chat.id,
+                user_id=user.id,
+                permissions=get_muted_permissions()
+            )
+
+            def _mark_banned():
+                with global_flask_app.app_context():
+                    gu = GroupUser.query.get(result['group_user_id'])
+                    if gu and not gu.is_banned:
+                        gu.is_banned = True
+                        db.session.commit()
+            await asyncio.get_running_loop().run_in_executor(None, _mark_banned)
+        except Exception:
+            pass
+        _sched_del(context, await update.message.reply_html(msg), 30)
+    elif status in ('repeat', 'success'):
+        r = await update.message.reply_html(msg)
+        if del_time > 0:
+            _sched_del(context, r, del_time)
+
+
+# ---------------------------------------------------------------------------
+# /signin — daily points sign-in (签到)
+# ---------------------------------------------------------------------------
+
+async def cmd_signin(update: Update, context):
+    """每日签到获取积分命令 /signin"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+
+    if not global_flask_app:
+        return
+
+    def _do_signin():
+        with global_flask_app.app_context():
+            clone_id = context.application.bot_data.get('clone_id')
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=clone_id).first()
+            if not group:
+                return {'status': 'error', 'msg': '群组不存在'}
+
+            conf = get_group_conf(group)
+
+            if not conf.get('signin_open'):
+                return {'status': 'disabled'}
+
+            del_time = safe_int(conf.get('signin_del_time'), 0)
+
+            signin_rule = PointsRule.query.filter_by(
+                group_id=group.id,
+                rule_type='checkin',
+                is_active=True
+            ).first()
+
+            if not signin_rule:
+                return {'status': 'disabled'}
+
+            today = get_beijing_today()
+
+            # Check if already signed in today
+            already_signed = PointsLog.query.filter_by(
+                group_id=group.id,
+                user_id=user.id,
+                reason='每日签到'
+            ).filter(PointsLog.created_at >= today).first()
+
+            user_points = UserPoints.query.filter_by(
+                group_id=group.id,
+                user_id=user.id
+            ).first()
+            cur_balance = user_points.points_balance if user_points else 0
+
+            def _substitute(tpl, earned=0, balance=0):
+                tpl = tpl.replace('{tg_id}', str(user.id))
+                tpl = tpl.replace('{积分}', str(earned))
+                tpl = tpl.replace('{余额}', str(balance))
+                return tpl
+
+            if already_signed:
+                raw_tpl = conf.get('msg_repeat_signin', '🔄 <b>今日已签到，当前余额：{余额}</b>')
+                msg_text = sanitize_html_for_telegram(_substitute(raw_tpl, earned=0, balance=cur_balance))
+                return {'status': 'repeat', 'msg': msg_text, 'del_time': del_time}
+
+            # Award points
+            if not user_points:
+                user_points = UserPoints(
+                    group_id=group.id,
+                    user_id=user.id,
+                    points_balance=0
+                )
+                db.session.add(user_points)
+
+            earned_points = signin_rule.points_amount
+            user_points.points_balance += earned_points
+            cur_balance = user_points.points_balance
+
+            db.session.add(PointsLog(
+                group_id=group.id,
+                user_id=user.id,
+                points_change=earned_points,
+                reason='每日签到',
+                balance_after=cur_balance
+            ))
+            db.session.commit()
+
+            raw_tpl = conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')
+            msg_text = sanitize_html_for_telegram(_substitute(raw_tpl, earned=earned_points, balance=cur_balance))
+            return {'status': 'success', 'msg': msg_text, 'del_time': del_time}
+
+    result = await asyncio.get_running_loop().run_in_executor(None, _do_signin)
+
+    status = result.get('status')
+    msg = result.get('msg', '')
+    del_time = result.get('del_time', 0)
+
+    if status == 'disabled':
+        _sched_del(context, await update.message.reply_text("ℹ️ 该群未开启签到功能"), 20)
+    elif status == 'error':
+        _sched_del(context, await update.message.reply_text(f"❌ {msg}"), 20)
+    elif status in ('repeat', 'success'):
+        r = await update.message.reply_html(msg)
+        if del_time > 0:
+            _sched_del(context, r, del_time)
+
+
+# ---------------------------------------------------------------------------
+# Register bot commands with Telegram (enables autocomplete in clients)
+# ---------------------------------------------------------------------------
+
+async def _register_bot_commands(bot):
+    """Register user-facing commands with Telegram so they appear as suggestions."""
+    from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
+
+    group_commands = [
+        BotCommand("help", "查看帮助信息"),
+        BotCommand("points", "查看我的积分和等级"),
+        BotCommand("rank", "积分排行榜"),
+        BotCommand("active", "活跃用户排行榜"),
+        BotCommand("checkin", "每日打卡"),
+        BotCommand("signin", "每日签到获取积分"),
+        BotCommand("mylink", "获取专属邀请链接"),
+        BotCommand("invite_rank", "邀请排行榜"),
+        BotCommand("lottery", "查看进行中的抽奖"),
+        BotCommand("transfer", "积分转让 (@用户 数量)"),
+        BotCommand("menu", "显示群组菜单"),
+    ]
+
+    private_commands = [
+        BotCommand("start", "开始使用 / 管理员登录"),
+        BotCommand("help", "查看帮助信息"),
+    ]
+
+    try:
+        await bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+        print("✅ Bot 命令已注册到 Telegram", flush=True)
+    except Exception as e:
+        print(f"⚠️ 注册 Bot 命令失败: {e}", flush=True)
+
 
 async def run_bot(app_instance):
     """
@@ -9413,6 +9715,9 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
+    app.add_handler(CommandHandler("help", cmd_help))  # 显示帮助信息
+    app.add_handler(CommandHandler("checkin", cmd_checkin))  # 每日打卡
+    app.add_handler(CommandHandler("signin", cmd_signin))  # 每日签到
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -9429,7 +9734,8 @@ async def run_bot(app_instance):
     
     await app.initialize()
     await app.start()
-    
+    await _register_bot_commands(app.bot)
+
     # 根据环境变量自动判断运行模式
     domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
     if domain:
@@ -9549,6 +9855,9 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("points", cmd_points))  # 查询自己积分余额
     app.add_handler(CommandHandler("balance", cmd_points))  # alias for points
     app.add_handler(CommandHandler("transfer", cmd_transfer))  # 积分转让
+    app.add_handler(CommandHandler("help", cmd_help))  # 显示帮助信息
+    app.add_handler(CommandHandler("checkin", cmd_checkin))  # 每日打卡
+    app.add_handler(CommandHandler("signin", cmd_signin))  # 每日签到
 
     # Note: Periodic background jobs are intentionally NOT registered here.
     # All system-wide jobs (check_expired_users, check_scheduled_messages, etc.)
@@ -9612,7 +9921,8 @@ async def start_all_clone_bots(flask_app):
                     bot_token=clone_data['token'],
                     webhook_url=get_clone_webhook_url(clone_data['id'], clone_data['webhook_url']),
                     flask_app=flask_app,
-                    handlers_setup_func=setup_clone_handlers
+                    handlers_setup_func=setup_clone_handlers,
+                    post_init_func=_register_bot_commands,
                 )
                 
                 if success:

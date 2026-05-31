@@ -29,8 +29,8 @@ active_clones: Dict[int, dict] = {}
 logger = logging.getLogger(__name__)
 
 
-async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[str] = None, 
-                          flask_app=None, handlers_setup_func=None):
+async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[str] = None,
+                          flask_app=None, handlers_setup_func=None, post_init_func=None):
     """
     启动一个克隆机器人实例
     
@@ -40,6 +40,7 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
         webhook_url: Webhook URL (如果使用webhook模式)
         flask_app: Flask应用实例 (用于数据库访问)
         handlers_setup_func: 设置处理器的函数 (接收Application实例)
+        post_init_func: 可选的异步函数，在 initialize() 完成后调用，参数为 bot 实例
     
     Returns:
         bool: 成功返回True, 失败返回False
@@ -65,6 +66,13 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
         # Initialize and start
         await app.initialize()
         await app.start()
+
+        # Run optional post-init hook (e.g. set_my_commands)
+        if post_init_func:
+            try:
+                await post_init_func(app.bot)
+            except Exception as _pie:
+                logger.warning(f"post_init_func for clone {clone_id} failed: {_pie}")
         
         # Build explicit allowed_updates list so my_chat_member is always received.
         # Exclude high-volume types that are not needed by the bot to keep traffic low.

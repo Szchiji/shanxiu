@@ -531,10 +531,10 @@
                     <th>间隔</th>
                     <th>开始</th>
                     <th>停止</th>
-                    <th>备注</th>
-                    <th>状态</th>
                     <th>上次发送</th>
                     <th>下次发送</th>
+                    <th>备注</th>
+                    <th>状态</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
@@ -575,14 +575,6 @@
                     </td>
                     <td>{{ item.start_time.strftime('%m-%d %H:%M:%S') if item.start_time else '-' }}</td>
                     <td>{{ item.stop_time.strftime('%m-%d %H:%M:%S') if item.stop_time else '-' }}</td>
-                    <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
-                    <td>
-                        {% if item.is_active %}
-                        <span class="badge-status badge bg-success">启用</span>
-                        {% else %}
-                        <span class="badge-status badge bg-secondary">暂停</span>
-                        {% endif %}
-                    </td>
                     <td>{{ item.last_sent_at.strftime('%m-%d %H:%M:%S') if item.last_sent_at else '-' }}</td>
                     <td>
                         {% if item.is_active and item.repeat_interval > 0 %}
@@ -599,6 +591,14 @@
                             {% endif %}
                         {% else %}
                         -
+                        {% endif %}
+                    </td>
+                    <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
+                    <td>
+                        {% if item.is_active %}
+                        <span class="badge-status badge bg-success">启用</span>
+                        {% else %}
+                        <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">

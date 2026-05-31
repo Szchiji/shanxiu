@@ -1237,8 +1237,14 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                alert('保存成功');
-                location.reload();
+                const modalEl = document.getElementById('itemModal');
+                const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                if (modalInstance) {
+                    modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+                    modalInstance.hide();
+                } else {
+                    location.reload();
+                }
             } else {
                 alert(result.msg || '保存失败');
             }
@@ -1281,8 +1287,14 @@
             });
             const result = await res.json();
             if (result.status === 'ok') {
-                alert('发送成功');
-                location.reload();
+                const modalEl = document.getElementById('itemModal');
+                const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                if (modalInstance) {
+                    modalEl.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+                    modalInstance.hide();
+                } else {
+                    location.reload();
+                }
             } else {
                 alert(result.msg || '发送失败');
                 btn.disabled = false;

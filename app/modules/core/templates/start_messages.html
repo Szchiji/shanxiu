@@ -289,15 +289,17 @@
                         {% endif %}
                     </td>
                     <td class="text-end pe-4">
-                        <button class="action-btn btn btn-sm btn-warning text-white" onclick="toggleItem({{ item.id }})" title="切换状态">
-                            <i class="fa-solid fa-toggle-on"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-primary" onclick="editItem({{ item.id }})" title="编辑">
-                            <i class="fa-solid fa-pen"></i>
-                        </button>
-                        <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
+                        <div class="d-flex flex-column gap-1 align-items-end">
+                            <button class="action-btn btn btn-sm btn-warning text-white" onclick="toggleItem({{ item.id }})" title="切换状态">
+                                <i class="fa-solid fa-toggle-on"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" onclick="editItem({{ item.id }})" title="编辑">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" onclick="deleteItem({{ item.id }})" title="删除">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

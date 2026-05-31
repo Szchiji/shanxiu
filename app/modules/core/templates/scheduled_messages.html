@@ -602,7 +602,7 @@
                         {% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">
-                        <div class="d-flex flex-column gap-1 align-items-end">
+                        <div class="d-flex gap-1 align-items-end">
                             <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                                 <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
                             </button>

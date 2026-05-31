@@ -67,7 +67,7 @@
                                     {{ '启用' if rule.is_active else '禁用' }}
                                 </span>
                             </div>
-                            <div class="d-flex flex-column gap-1">
+                            <div class="d-flex gap-1">
                                 <button class="btn btn-sm btn-primary" onclick="editRule({{ rule.id }}, '{{ rule.rule_name }}', '{{ rule.rule_type }}', {{ rule.points_amount }}, {{ 'true' if rule.is_active else 'false' }}, {{ rule.max_daily_points or 'null' }})">
                                     <i class="fa-solid fa-edit"></i>
                                 </button>

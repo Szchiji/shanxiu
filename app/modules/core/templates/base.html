@@ -1086,12 +1086,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_automation"
-                                    aria-expanded="{{ 'true' if ch_auto_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-satellite-dish group-icon"></i>
                                 频道自动化
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if ch_auto_active %}show{% endif %}" id="sg_automation">
+                            <div class="collapse show" id="sg_automation">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
@@ -1109,12 +1109,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_analytics"
-                                    aria-expanded="{{ 'true' if ch_analytics_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-chart-bar group-icon"></i>
                                 统计 &amp; 监控
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if ch_analytics_active %}show{% endif %}" id="sg_analytics">
+                            <div class="collapse show" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/channel_stats" class="nav-link {% if page == 'channel_stats' %}active{% endif %}"><i class="fa-solid fa-wave-square"></i> 频道统计</a></li>
@@ -1129,12 +1129,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_ch_sync"
-                                    aria-expanded="{{ 'true' if ch_sync_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-sync group-icon"></i>
                                 同步消息
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if ch_sync_active %}show{% endif %}" id="sg_ch_sync">
+                            <div class="collapse show" id="sg_ch_sync">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
@@ -1166,12 +1166,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_users"
-                                    aria-expanded="{{ 'true' if grp_users_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-user-check group-icon"></i>
                                 用户管理
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_users_active %}show{% endif %}" id="sg_users">
+                            <div class="collapse show" id="sg_users">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/users" class="nav-link {% if page == 'users' %}active{% endif %}"><i class="fa-solid fa-users"></i> 认证用户</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/members" class="nav-link {% if page == 'group_members' %}active{% endif %}"><i class="fa-solid fa-user-group"></i> 群成员列表</a></li>
@@ -1188,12 +1188,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_private"
-                                    aria-expanded="{{ 'true' if grp_private_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-mobile-screen-button group-icon"></i>
                                 私聊设置
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_private_active %}show{% endif %}" id="sg_private">
+                            <div class="collapse show" id="sg_private">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/start_messages" class="nav-link {% if page == 'start_messages' %}active{% endif %}"><i class="fa-solid fa-rocket"></i> /start 消息</a></li>
                                 </ul>
@@ -1207,12 +1207,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_automation"
-                                    aria-expanded="{{ 'true' if grp_auto_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-robot group-icon"></i>
                                 群组自动化
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_auto_active %}show{% endif %}" id="sg_automation">
+                            <div class="collapse show" id="sg_automation">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
@@ -1228,12 +1228,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_security"
-                                    aria-expanded="{{ 'true' if grp_sec_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-shield group-icon"></i>
                                 群组安全
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_sec_active %}show{% endif %}" id="sg_security">
+                            <div class="collapse show" id="sg_security">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/entry_exit_settings" class="nav-link {% if page == 'entry_exit_settings' %}active{% endif %}"><i class="fa-solid fa-user-shield"></i> 进退群设置</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/spam_protection" class="nav-link {% if page == 'spam_protection' %}active{% endif %}"><i class="fa-solid fa-shield-virus"></i> 垃圾防护</a></li>
@@ -1251,12 +1251,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_features"
-                                    aria-expanded="{{ 'true' if grp_feat_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-layer-group group-icon"></i>
                                 群组功能
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_feat_active %}show{% endif %}" id="sg_features">
+                            <div class="collapse show" id="sg_features">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时开关群</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}"><i class="fa-solid fa-user-plus"></i> 邀请活动</a></li>
@@ -1274,12 +1274,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_analytics"
-                                    aria-expanded="{{ 'true' if grp_analytics_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-chart-bar group-icon"></i>
                                 统计 &amp; 监控
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_analytics_active %}show{% endif %}" id="sg_analytics">
+                            <div class="collapse show" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/user_name_change" class="nav-link {% if page == 'user_name_change' %}active{% endif %}"><i class="fa-solid fa-user-edit"></i> 改名监控</a></li>
@@ -1294,12 +1294,12 @@
                                     type="button"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#sg_points"
-                                    aria-expanded="{{ 'true' if grp_points_active else 'false' }}">
+                                    aria-expanded="true">
                                 <i class="fa-solid fa-coins group-icon"></i>
                                 积分 &amp; 互动
                                 <i class="fa-solid fa-chevron-down sidebar-chevron"></i>
                             </button>
-                            <div class="collapse {% if grp_points_active %}show{% endif %}" id="sg_points">
+                            <div class="collapse show" id="sg_points">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/points_rules" class="nav-link {% if page == 'points_rules' %}active{% endif %}"><i class="fa-solid fa-list-check"></i> 积分规则</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/points_shop" class="nav-link {% if page in ['points_shop', 'points_exchange', 'points_auction'] %}active{% endif %}"><i class="fa-solid fa-store"></i> 积分商城</a></li>

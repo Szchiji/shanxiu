@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .settings-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        box-shadow: var(--card-shadow);
+        margin-bottom: 1.5rem;
+    }
+    .table td, .table th {
+        vertical-align: middle;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-ticket me-2"></i>频道优惠券</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">根据关键词自动回复带按钮的优惠券或活动链接</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>新增优惠券
+        </button>
+    </div>
+</div>
+
+{% call feature_description('channel_coupons') %}
+<ul>
+    <li>可在频道讨论区根据关键词自动发送优惠券码与跳转按钮。</li>
+    <li>支持自定义按钮文字、活动链接和触发关键词。</li>
+    <li>排序值越小越靠前，便于管理多组活动配置。</li>
+</ul>
+{% endcall %}
+
+<div class="settings-card card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>优惠券列表
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="couponsTable">
+                <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>券码</th>
+                        <th>按钮</th>
+                        <th>关键词</th>
+                        <th>排序</th>
+                        <th>状态</th>
+                        <th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in coupons %}
+                    <tr data-id="{{ item.id }}"
+                        data-coupon-name="{{ item.coupon_name|e }}"
+                        data-coupon-code="{{ (item.coupon_code or '')|e }}"
+                        data-button-text="{{ (item.button_text or '')|e }}"
+                        data-button-url="{{ (item.button_url or '')|e }}"
+                        data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
+                        data-sort-order="{{ item.sort_order or 0 }}"
+                        data-is-active="{{ 'true' if item.is_active else 'false' }}">
+                        <td>{{ item.coupon_name }}</td>
+                        <td>{{ item.coupon_code or '—' }}</td>
+                        <td>
+                            <div>{{ item.button_text or '—' }}</div>
+                            <small class="text-muted">{{ item.button_url or '无链接' }}</small>
+                        </td>
+                        <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
+                        <td>{{ item.sort_order or 0 }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-edit"></i></button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteCoupon({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-center text-muted py-5">暂无频道优惠券</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="couponModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-ticket me-2"></i><span id="modalTitle">新增优惠券</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="coupon_id">
+                <div class="mb-3">
+                    <label class="form-label">优惠券名称</label>
+                    <input type="text" class="form-control" id="coupon_name" placeholder="例如：618 专享券">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">优惠券码</label>
+                    <input type="text" class="form-control" id="coupon_code" placeholder="例如：SALE618">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">按钮文字</label>
+                    <input type="text" class="form-control" id="button_text" placeholder="例如：立即领取">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">按钮链接</label>
+                    <input type="text" class="form-control" id="button_url" placeholder="https://...">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">触发关键词</label>
+                    <textarea class="form-control" id="trigger_keywords" rows="3" placeholder="一行一个关键词，或使用逗号分隔；留空则匹配全部消息"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">排序值</label>
+                    <input type="number" class="form-control" id="sort_order" value="0">
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label" for="is_active">启用优惠券</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveCoupon()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let couponModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    couponModal = new bootstrap.Modal(document.getElementById('couponModal'));
+});
+
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = '新增优惠券';
+    document.getElementById('coupon_id').value = '';
+    document.getElementById('coupon_name').value = '';
+    document.getElementById('coupon_code').value = '';
+    document.getElementById('button_text').value = '';
+    document.getElementById('button_url').value = '';
+    document.getElementById('trigger_keywords').value = '';
+    document.getElementById('sort_order').value = '0';
+    document.getElementById('is_active').checked = true;
+    couponModal.show();
+}
+
+function openEditModal(id) {
+    const row = document.querySelector(`#couponsTable tr[data-id="${id}"]`);
+    if (!row) return;
+    document.getElementById('modalTitle').textContent = '编辑优惠券';
+    document.getElementById('coupon_id').value = id;
+    document.getElementById('coupon_name').value = row.dataset.couponName || '';
+    document.getElementById('coupon_code').value = row.dataset.couponCode || '';
+    document.getElementById('button_text').value = row.dataset.buttonText || '';
+    document.getElementById('button_url').value = row.dataset.buttonUrl || '';
+    document.getElementById('trigger_keywords').value = row.dataset.triggerKeywords || '';
+    document.getElementById('sort_order').value = row.dataset.sortOrder || '0';
+    document.getElementById('is_active').checked = row.dataset.isActive === 'true';
+    couponModal.show();
+}
+
+async function saveCoupon() {
+    const couponName = document.getElementById('coupon_name').value.trim();
+    if (!couponName) {
+        showToast('请输入优惠券名称', 'warning');
+        return;
+    }
+
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('coupon_id').value || null,
+        coupon_name: couponName,
+        coupon_code: document.getElementById('coupon_code').value.trim(),
+        button_text: document.getElementById('button_text').value.trim(),
+        button_url: document.getElementById('button_url').value.trim(),
+        trigger_keywords: document.getElementById('trigger_keywords').value.trim(),
+        sort_order: parseInt(document.getElementById('sort_order').value) || 0,
+        is_active: document.getElementById('is_active').checked
+    };
+
+    try {
+        const res = await fetch('/core/api/save_channel_coupon', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (result.status === 'ok') {
+            couponModal.hide();
+            showToast('保存成功', 'success');
+            setTimeout(() => location.reload(), 600);
+        } else {
+            showToast(result.msg || '保存失败', 'danger');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('网络错误，请重试', 'danger');
+    }
+}
+
+function deleteCoupon(id) {
+    showConfirm('确定要删除这张优惠券吗？', async function() {
+        try {
+            const res = await fetch('/core/api/delete_channel_coupon', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                showToast('删除成功', 'success');
+                setTimeout(() => location.reload(), 600);
+            } else {
+                showToast(result.msg || '删除失败', 'danger');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('网络错误，请重试', 'danger');
+        }
+    });
+}
+</script>
+{% endblock %}

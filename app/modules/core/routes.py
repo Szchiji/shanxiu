@@ -4,7 +4,8 @@ from app import get_bot_instance_role, is_clone_instance, is_main_instance
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
-                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone, LotteryMessageCount,
+                        UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone,
+                        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelMessageStats, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
@@ -104,6 +105,7 @@ def generate_session_token():
 _REASON_MESSAGE = "发送消息"
 _REASON_CHECKIN = "每日签到"
 _REASON_SHARE = "转发消息"
+_REASON_CHANNEL_SUB = "频道订阅奖励"
 
 def get_beijing_now():
     """Get current time in Beijing timezone as naive datetime (for database storage)"""
@@ -171,6 +173,26 @@ def build_inline_keyboard_from_links(links):
         keyboard.append([btn['button'] for btn in row_buttons])
     
     return keyboard
+
+
+def parse_keyword_list(raw_keywords):
+    """Parse comma/newline separated keywords into a normalized list."""
+    if not raw_keywords:
+        return []
+    if isinstance(raw_keywords, (list, tuple)):
+        items = raw_keywords
+    else:
+        items = re.split(r'[\n,，]+', str(raw_keywords))
+    return [str(item).strip().lower() for item in items if str(item).strip()]
+
+
+def text_matches_keywords(text, raw_keywords):
+    """Return True when text contains any configured keyword, or no keyword is configured."""
+    keywords = parse_keyword_list(raw_keywords)
+    if not keywords:
+        return True
+    haystack = (text or '').lower()
+    return any(keyword in haystack for keyword in keywords)
 
 async def is_user_admin_in_group(bot, chat_id, user_id):
     """Check if a user is an administrator in a specific group"""
@@ -1175,6 +1197,7 @@ def page_group_lottery(gid):
         'prize_description': l.prize_description or '',
         'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
         'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
+        'announce_channel_id': l.announce_channel_id or '',
         'status': l.status,
         'winner_ids': l.winner_ids
     } for l in lotteries], ensure_ascii=False)
@@ -1356,6 +1379,55 @@ def page_message_statistics(gid):
     return render_template('message_statistics.html', page='message_statistics', 
                          group=group, stats=stats, top_users=top_users, 
                          start_date=start_date, end_date=end_date)
+
+@core_bp.route('/group/<int:gid>/channel_forward_rules')
+def page_channel_forward_rules(gid):
+    """频道转发规则"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    rules = ChannelForwardRule.query.filter_by(group_id=gid).order_by(ChannelForwardRule.updated_at.desc(), ChannelForwardRule.id.desc()).all()
+    return render_template('channel_forward_rules.html', page='channel_forward_rules', group=group, rules=rules)
+
+
+@core_bp.route('/group/<int:gid>/channel_templates')
+def page_channel_templates(gid):
+    """频道消息模板"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    templates = ChannelMessageTemplate.query.filter_by(group_id=gid).order_by(ChannelMessageTemplate.updated_at.desc(), ChannelMessageTemplate.id.desc()).all()
+    return render_template('channel_templates.html', page='channel_templates', group=group, templates=templates)
+
+
+@core_bp.route('/group/<int:gid>/channel_coupons')
+def page_channel_coupons(gid):
+    """频道优惠券"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    coupons = ChannelCoupon.query.filter_by(group_id=gid).order_by(ChannelCoupon.sort_order.asc(), ChannelCoupon.id.desc()).all()
+    return render_template('channel_coupons.html', page='channel_coupons', group=group, coupons=coupons)
+
+
+@core_bp.route('/group/<int:gid>/channel_stats')
+def page_channel_stats(gid):
+    """频道消息统计"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    stats_entries = ChannelMessageStats.query.filter_by(group_id=gid).order_by(ChannelMessageStats.created_at.desc()).limit(100).all()
+    stats_summary = {
+        'total_messages': ChannelMessageStats.query.filter_by(group_id=gid).count(),
+        'today_messages': ChannelMessageStats.query.filter(
+            ChannelMessageStats.group_id == gid,
+            ChannelMessageStats.created_at >= get_beijing_today()
+        ).count(),
+        'forward_rules': ChannelForwardRule.query.filter_by(group_id=gid, is_active=True).count(),
+        'active_templates': ChannelMessageTemplate.query.filter_by(group_id=gid, is_active=True).count(),
+        'active_coupons': ChannelCoupon.query.filter_by(group_id=gid, is_active=True).count(),
+    }
+    return render_template('channel_stats.html', page='channel_stats', group=group, stats_entries=stats_entries, stats_summary=stats_summary)
 
 @core_bp.route('/group/<int:gid>/group_votes')
 def page_group_votes(gid):
@@ -2685,6 +2757,14 @@ def api_save_scheduled_message():
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
         item.message_thread_id = safe_int(d.get('message_thread_id'), None)
+        item.target_type = 'channel' if d.get('target_type') == 'channel' else 'group'
+        item.target_channel_id = (d.get('target_channel_id') or '').strip() or None
+        if item.target_type != 'channel':
+            item.target_channel_id = None
+        elif not item.target_channel_id:
+            return jsonify({'status':'error','msg':'频道ID不能为空'})
+        if item.target_type == 'channel':
+            item.message_thread_id = None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -2725,6 +2805,14 @@ def api_send_scheduled_message_now(message_id):
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
         item.message_thread_id = safe_int(d.get('message_thread_id'), None)
+        item.target_type = 'channel' if d.get('target_type') == 'channel' else 'group'
+        item.target_channel_id = (d.get('target_channel_id') or '').strip() or None
+        if item.target_type != 'channel':
+            item.target_channel_id = None
+        elif not item.target_channel_id:
+            return jsonify({'status':'error','msg':'频道ID不能为空'})
+        if item.target_type == 'channel':
+            item.message_thread_id = None
 
         db.session.commit()
 
@@ -2749,7 +2837,7 @@ def api_send_scheduled_message_now(message_id):
             ptb_app = global_ptb_app
 
         # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
-        chat_id = group.chat_id
+        chat_id = item.target_channel_id if item.target_type == 'channel' and item.target_channel_id else group.chat_id
         msg_snapshot = {
             'media_type': item.media_type,
             'media_url': item.media_url,
@@ -2757,7 +2845,7 @@ def api_send_scheduled_message_now(message_id):
             'links': item.links,
             'delete_previous': item.delete_previous,
             'last_message_id': item.last_message_id,
-            'message_thread_id': item.message_thread_id,
+            'message_thread_id': item.message_thread_id if item.target_type != 'channel' else None,
             'auto_pin': item.auto_pin,
         }
 
@@ -3560,6 +3648,8 @@ def api_save_other_settings():
         settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
         settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
         settings.auto_delete_channel_discussion_msg = d.get('auto_delete_channel_discussion_msg', False)
+        settings.channel_auto_buttons = d.get('channel_auto_buttons', False)
+        settings.channel_discussion_keyword_filter = (d.get('channel_discussion_keyword_filter') or '').strip() or None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3645,6 +3735,7 @@ def api_save_forced_channel_subscription():
         settings.check_interval = d.get('check_interval', 3600)
         settings.unsubscribe_action = d.get('unsubscribe_action', 'kick')
         settings.verification_message = d.get('verification_message')
+        settings.reward_points = safe_int(d.get('reward_points'), 0)
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4490,6 +4581,7 @@ def api_save_group_lottery():
         else:
             lottery.end_time = None
         lottery.status = d.get('status', 'pending')
+        lottery.announce_channel_id = (d.get('announce_channel_id') or '').strip() or None
         if not lottery.winner_ids:
             lottery.winner_ids = '[]'
         
@@ -5534,24 +5626,27 @@ def api_publish_group_lottery():
         lines.append(f"结束时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("\n积极发言，参与抽奖！")
     announcement = "\n".join(lines)
-    chat_id = group.chat_id
+    target_chat_ids = [group.chat_id]
+    if lottery.announce_channel_id and lottery.announce_channel_id not in target_chat_ids:
+        target_chat_ids.append(lottery.announce_channel_id)
     lottery_id_db = lottery.id
 
-    async def _send_lottery_announcement():
+    async def _send_lottery_announcement(chat_id):
         return await ptb_app.bot.send_message(
             chat_id=chat_id,
             text=announcement,
             parse_mode='HTML'
         )
 
-    future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(), global_bot_loop)
-    try:
-        future.result(timeout=20)
-    except TimeoutError:
-        return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
-    except Exception as send_err:
-        logging.error(f"❌ [api_publish_group_lottery] send error: {send_err}")
-        return jsonify({'status':'error','msg':'消息发送失败，请检查机器人权限或稍后重试'})
+    for target_chat_id in target_chat_ids:
+        future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(target_chat_id), global_bot_loop)
+        try:
+            future.result(timeout=20)
+        except TimeoutError:
+            return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
+        except Exception as send_err:
+            logging.error(f"❌ [api_publish_group_lottery] send error to {target_chat_id}: {send_err}")
+            return jsonify({'status':'error','msg':'消息发送失败，请检查机器人权限或稍后重试'})
 
     # Mark lottery as active if still pending
     try:
@@ -5563,6 +5658,205 @@ def api_publish_group_lottery():
         logging.error(f"❌ [api_publish_group_lottery] DB update error: {db_err}")
 
     return jsonify({'status':'ok','msg':'抽奖公告已发送到群组'})
+
+
+@core_bp.route('/api/save_channel_forward_rule', methods=['POST'])
+def api_save_channel_forward_rule():
+    """保存频道转发规则"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        if d.get('id'):
+            item = ChannelForwardRule.query.get(d['id'])
+            if not item: return jsonify({'status':'error','msg':'Rule not found'})
+            if item.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
+        else:
+            item = ChannelForwardRule(group_id=d['group_id'])
+            db.session.add(item)
+
+        item.rule_name = (d.get('rule_name') or '').strip() or '未命名规则'
+        item.source_keywords = (d.get('source_keywords') or '').strip() or None
+        item.target_chat_id = (d.get('target_chat_id') or '').strip()
+        item.target_thread_id = safe_int(d.get('target_thread_id'), None)
+        item.forward_mode = d.get('forward_mode', 'copy') if d.get('forward_mode') in ('copy', 'forward') else 'copy'
+        item.is_active = bool(d.get('is_active', True))
+
+        if not item.target_chat_id:
+            return jsonify({'status':'error','msg':'目标聊天ID不能为空'})
+
+        db.session.commit()
+        return jsonify({'status':'ok', 'id': item.id})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('保存频道转发规则失败: %s', e)
+        return jsonify({'status':'error','msg':'保存频道转发规则失败'})
+
+
+@core_bp.route('/api/delete_channel_forward_rule', methods=['POST'])
+def api_delete_channel_forward_rule():
+    """删除频道转发规则"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    try:
+        item = ChannelForwardRule.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Rule not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('删除频道转发规则失败: %s', e)
+        return jsonify({'status':'error','msg':'删除频道转发规则失败'})
+
+
+@core_bp.route('/api/save_channel_template', methods=['POST'])
+def api_save_channel_template():
+    """保存频道消息模板"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        if d.get('id'):
+            item = ChannelMessageTemplate.query.get(d['id'])
+            if not item: return jsonify({'status':'error','msg':'Template not found'})
+            if item.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
+        else:
+            item = ChannelMessageTemplate(group_id=d['group_id'])
+            db.session.add(item)
+
+        item.template_name = (d.get('template_name') or '').strip() or '未命名模板'
+        item.trigger_keywords = (d.get('trigger_keywords') or '').strip() or None
+        item.media_type = d.get('media_type', 'text') if d.get('media_type') in ('text', 'image', 'video') else 'text'
+        item.media_url = (d.get('media_url') or '').strip() or None
+        item.content = (d.get('content') or '').strip() or None
+        item.links = d.get('links', '[]') or '[]'
+        item.send_as_reply = bool(d.get('send_as_reply', True))
+        item.is_active = bool(d.get('is_active', True))
+
+        db.session.commit()
+        return jsonify({'status':'ok', 'id': item.id})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('保存频道模板失败: %s', e)
+        return jsonify({'status':'error','msg':'保存频道模板失败'})
+
+
+@core_bp.route('/api/delete_channel_template', methods=['POST'])
+def api_delete_channel_template():
+    """删除频道消息模板"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    try:
+        item = ChannelMessageTemplate.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Template not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('删除频道模板失败: %s', e)
+        return jsonify({'status':'error','msg':'删除频道模板失败'})
+
+
+@core_bp.route('/api/save_channel_coupon', methods=['POST'])
+def api_save_channel_coupon():
+    """保存频道优惠券"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        if d.get('id'):
+            item = ChannelCoupon.query.get(d['id'])
+            if not item: return jsonify({'status':'error','msg':'Coupon not found'})
+            if item.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
+        else:
+            item = ChannelCoupon(group_id=d['group_id'])
+            db.session.add(item)
+
+        item.coupon_name = (d.get('coupon_name') or '').strip() or '未命名优惠券'
+        item.coupon_code = (d.get('coupon_code') or '').strip() or None
+        item.button_text = (d.get('button_text') or '').strip() or None
+        item.button_url = (d.get('button_url') or '').strip() or None
+        item.trigger_keywords = (d.get('trigger_keywords') or '').strip() or None
+        item.sort_order = safe_int(d.get('sort_order'), 0)
+        item.is_active = bool(d.get('is_active', True))
+
+        db.session.commit()
+        return jsonify({'status':'ok', 'id': item.id})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('保存频道优惠券失败: %s', e)
+        return jsonify({'status':'error','msg':'保存频道优惠券失败'})
+
+
+@core_bp.route('/api/delete_channel_coupon', methods=['POST'])
+def api_delete_channel_coupon():
+    """删除频道优惠券"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
+
+    try:
+        item = ChannelCoupon.query.get(d['id'])
+        if not item: return jsonify({'status':'error','msg':'Coupon not found'})
+        err = _api_check_group_access(BotGroup.query.get(item.group_id))
+        if err: return err
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('删除频道优惠券失败: %s', e)
+        return jsonify({'status':'error','msg':'删除频道优惠券失败'})
+
+
+@core_bp.route('/api/clear_channel_stats', methods=['POST'])
+def api_clear_channel_stats():
+    """清空频道消息统计"""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        ChannelMessageStats.query.filter_by(group_id=d['group_id']).delete(synchronize_session=False)
+        db.session.commit()
+        return jsonify({'status':'ok'})
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('清空频道统计失败: %s', e)
+        return jsonify({'status':'error','msg':'清空频道统计失败'})
 
 
 @core_bp.route('/api/save_quiz_game', methods=['POST'])
@@ -6139,6 +6433,8 @@ async def check_scheduled_messages(context):
                         messages_to_send.append({
                             'id': msg.id,
                             'chat_id': msg.group.chat_id,
+                            'target_type': msg.target_type or 'group',
+                            'target_channel_id': msg.target_channel_id,
                             'clone_id': msg.group.clone_id,  # which bot to use
                             'media_type': msg.media_type,
                             'media_url': msg.media_url,
@@ -6200,8 +6496,8 @@ async def check_scheduled_messages(context):
     # 发送消息
     for msg_data in messages_to_send:
         try:
-            chat_id = msg_data['chat_id']
-            message_thread_id = msg_data.get('message_thread_id')
+            chat_id = msg_data['target_channel_id'] if msg_data.get('target_type') == 'channel' and msg_data.get('target_channel_id') else msg_data['chat_id']
+            message_thread_id = None if msg_data.get('target_type') == 'channel' else msg_data.get('message_thread_id')
 
             # Resolve which bot should send to this group
             bot = _get_bot_for_clone(msg_data.get('clone_id'), context.bot)
@@ -7534,11 +7830,36 @@ async def check_channel_subscriptions(context):
                     with global_flask_app.app_context():
                         group = BotGroup.query.get(group_id)
                         if not group:
-                            return None, None, None
-                        group_users = GroupUser.query.filter_by(group_id=group.id).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
-                        return int(group.chat_id), group.clone_id, [u.tg_id for u in group_users]
+                            return None, None, None, None
+                        group_users = GroupUser.query.filter_by(group_id=group.id).order_by(GroupUser.id.asc()).limit(SUBSCRIPTION_CHECK_BATCH_SIZE).all()
+                        return int(group.chat_id), group.clone_id, group.id, [
+                            {'row_id': u.id, 'tg_id': u.tg_id, 'is_channel_subscribed': bool(u.is_channel_subscribed)}
+                            for u in group_users
+                        ]
+
+                def _update_subscription_state(group_id, row_id, tg_id, subscribed, reward_points):
+                    with global_flask_app.app_context():
+                        group_user = GroupUser.query.get(row_id)
+                        if not group_user:
+                            return
+                        was_subscribed = bool(group_user.is_channel_subscribed)
+                        group_user.is_channel_subscribed = subscribed
+                        if subscribed and not was_subscribed and reward_points > 0:
+                            user_points = UserPoints.query.filter_by(group_id=group_id, user_id=tg_id).first()
+                            if not user_points:
+                                user_points = UserPoints(group_id=group_id, user_id=tg_id, points_balance=0)
+                                db.session.add(user_points)
+                            user_points.points_balance += reward_points
+                            db.session.add(PointsLog(
+                                group_id=group_id,
+                                user_id=tg_id,
+                                points_change=reward_points,
+                                reason=_REASON_CHANNEL_SUB,
+                                balance_after=user_points.points_balance
+                            ))
+                        db.session.commit()
                 
-                chat_id, group_clone_id, user_ids = await asyncio.get_running_loop().run_in_executor(
+                chat_id, group_clone_id, current_group_id, group_users = await asyncio.get_running_loop().run_in_executor(
                     None, _get_group_and_users, settings.group_id
                 )
                 if chat_id is None:
@@ -7549,7 +7870,8 @@ async def check_channel_subscriptions(context):
                 if bot is None:
                     continue
                 
-                for tg_id in user_ids:
+                for user_info in group_users:
+                    tg_id = user_info['tg_id']
                     try:
                         # Check if user is subscribed to the channel
                         member = await bot.get_chat_member(
@@ -7563,6 +7885,9 @@ async def check_channel_subscriptions(context):
 
                         # If not subscribed (left or kicked), apply action
                         if member.status in ['left', 'kicked']:
+                            await asyncio.get_running_loop().run_in_executor(
+                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, False, 0
+                            )
                             # Check if user is chat owner/admin in the group - skip all actions for them
                             is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
@@ -7589,7 +7914,12 @@ async def check_channel_subscriptions(context):
                                     print(f"   Error details: {str(restrict_error)}", flush=True)
                                     print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         # If subscribed (member, administrator, creator), unmute if action was mute
-                        elif member.status in ['member', 'administrator', 'creator'] and settings.unsubscribe_action == 'mute':
+                        elif member.status in ['member', 'administrator', 'creator']:
+                            await asyncio.get_running_loop().run_in_executor(
+                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, True, safe_int(settings.reward_points, 0)
+                            )
+                            if settings.unsubscribe_action != 'mute':
+                                continue
                             # Reuse cached owner check if already done; otherwise look it up
                             if is_owner is None:
                                 is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
@@ -10630,7 +10960,7 @@ async def cmd_auction(update: Update, context):
     await update.message.reply_text("\n".join(message_lines))
 
 async def handle_channel_pin(update: Update, context):
-    """处理频道消息：取消自动置顶 / 自动删除互推消息"""
+    """处理频道消息：取消自动置顶 / 自动删除互推消息 / 频道扩展动作"""
     if not global_flask_app or not update.message:
         return
     
@@ -10644,43 +10974,66 @@ async def handle_channel_pin(update: Update, context):
         # Check if this is a channel post forwarded to the group
         if not msg.sender_chat or msg.sender_chat.type != 'channel':
             return
-        
+
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
-            
+
             settings = OtherSettings.query.filter_by(group_id=group.id).first()
             if not settings:
                 return
 
-            # Auto-delete linked channel discussion messages (is_automatic_forward) if enabled
-            if settings.auto_delete_channel_discussion_msg and msg.is_automatic_forward:
-                try:
-                    await msg.delete()
-                    return
-                except Exception as e:
-                    print(f"Error deleting channel discussion message {msg.message_id} in {chat.id}: {e}")
-                    return
+            forward_rules = [{
+                'rule_name': rule.rule_name,
+                'source_keywords': rule.source_keywords,
+                'target_chat_id': rule.target_chat_id,
+                'target_thread_id': rule.target_thread_id,
+                'forward_mode': rule.forward_mode or 'copy',
+            } for rule in ChannelForwardRule.query.filter_by(group_id=group.id, is_active=True).all()]
+            templates = [{
+                'template_name': item.template_name,
+                'trigger_keywords': item.trigger_keywords,
+                'media_type': item.media_type or 'text',
+                'media_url': item.media_url,
+                'content': item.content,
+                'links': item.links or '[]',
+                'send_as_reply': bool(item.send_as_reply),
+            } for item in ChannelMessageTemplate.query.filter_by(group_id=group.id, is_active=True).all()]
+            coupons = [{
+                'coupon_name': item.coupon_name,
+                'coupon_code': item.coupon_code,
+                'button_text': item.button_text or item.coupon_name,
+                'button_url': item.button_url,
+                'trigger_keywords': item.trigger_keywords,
+                'sort_order': item.sort_order or 0,
+            } for item in ChannelCoupon.query.filter_by(group_id=group.id, is_active=True).order_by(ChannelCoupon.sort_order.asc(), ChannelCoupon.id.asc()).all()]
 
-            # Auto-delete promote (channel) messages if enabled
-            if settings.auto_delete_promote_msg:
-                try:
-                    await msg.delete()
-                    return
-                except Exception as e:
-                    print(f"Error deleting promote message: {e}")
-                    return
-
-            if not settings.cancel_channel_pin:
+        # Auto-delete linked channel discussion messages (is_automatic_forward) if enabled
+        if settings.auto_delete_channel_discussion_msg and msg.is_automatic_forward:
+            try:
+                await msg.delete()
                 return
-            
+            except Exception as e:
+                print(f"Error deleting channel discussion message {msg.message_id} in {chat.id}: {e}")
+                return
+
+        # Auto-delete promote (channel) messages if enabled
+        if settings.auto_delete_promote_msg:
+            try:
+                await msg.delete()
+                return
+            except Exception as e:
+                print(f"Error deleting promote message: {e}")
+                return
+
+        content_text = (msg.text or msg.caption or '').strip()
+
+        if settings.cancel_channel_pin:
             # Wait a moment for Telegram to auto-pin the message
             await asyncio.sleep(1)
-            
+
             try:
-                # Get pinned messages in the chat
-                # If this channel message was just pinned, unpin it
                 await context.bot.unpin_chat_message(
                     chat_id=chat.id,
                     message_id=msg.message_id
@@ -10688,6 +11041,120 @@ async def handle_channel_pin(update: Update, context):
                 print(f"Unpinned channel message {msg.message_id} in chat {chat.id}")
             except Exception as e:
                 print(f"Error unpinning channel message: {e}")
+
+        if settings.channel_discussion_keyword_filter and text_matches_keywords(content_text, settings.channel_discussion_keyword_filter):
+            try:
+                await msg.delete()
+                return
+            except Exception as e:
+                print(f"Error deleting channel discussion message by keyword filter: {e}")
+
+        matched_rule_names = []
+
+        async def _send_template_message(template_data):
+            reply_markup = None
+            try:
+                reply_markup = InlineKeyboardMarkup(build_inline_keyboard_from_links(json.loads(template_data.get('links') or '[]')))
+            except Exception:
+                reply_markup = None
+            send_kwargs = {
+                'chat_id': chat.id,
+                'reply_markup': reply_markup,
+            }
+            if template_data.get('send_as_reply'):
+                send_kwargs['reply_to_message_id'] = msg.message_id
+
+            media_type = template_data.get('media_type') or 'text'
+            media_url = template_data.get('media_url')
+            content = sanitize_html_for_telegram(template_data.get('content') or '')
+            if media_type == 'image' and media_url:
+                await context.bot.send_photo(
+                    photo=media_url,
+                    caption=content or None,
+                    parse_mode='HTML' if content else None,
+                    **send_kwargs
+                )
+            elif media_type == 'video' and media_url:
+                await context.bot.send_video(
+                    video=media_url,
+                    caption=content or None,
+                    parse_mode='HTML' if content else None,
+                    **send_kwargs
+                )
+            elif content:
+                await context.bot.send_message(
+                    text=content,
+                    parse_mode='HTML',
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    **send_kwargs
+                )
+
+        for template_data in templates:
+            if text_matches_keywords(content_text, template_data.get('trigger_keywords')):
+                try:
+                    await _send_template_message(template_data)
+                    matched_rule_names.append(f"模板:{template_data['template_name']}")
+                except Exception as template_err:
+                    print(f"Error sending channel template {template_data['template_name']}: {template_err}")
+
+        if settings.channel_auto_buttons:
+            coupon_links = []
+            coupon_lines = []
+            matched_coupons = [coupon for coupon in coupons if coupon.get('button_url') and text_matches_keywords(content_text, coupon.get('trigger_keywords'))]
+            for idx, coupon in enumerate(matched_coupons):
+                coupon_links.append({
+                    'text': coupon.get('button_text') or coupon.get('coupon_name') or f'按钮{idx + 1}',
+                    'url': coupon.get('button_url'),
+                    'row': idx // 2,
+                    'order': idx % 2,
+                })
+                if coupon.get('coupon_code'):
+                    coupon_lines.append(f"• {coupon['coupon_name']}：<code>{coupon['coupon_code']}</code>")
+                matched_rule_names.append(f"优惠券:{coupon['coupon_name']}")
+            if coupon_links:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        reply_to_message_id=msg.message_id,
+                        text='🎁 <b>频道福利</b>\n' + ('\n'.join(coupon_lines) if coupon_lines else '点击下方按钮查看详情'),
+                        parse_mode='HTML',
+                        reply_markup=InlineKeyboardMarkup(build_inline_keyboard_from_links(coupon_links)),
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    )
+                except Exception as coupon_err:
+                    print(f"Error sending channel coupon buttons: {coupon_err}")
+
+        for rule in forward_rules:
+            if not text_matches_keywords(content_text, rule.get('source_keywords')):
+                continue
+            try:
+                kwargs = {
+                    'chat_id': rule['target_chat_id'],
+                    'from_chat_id': chat.id,
+                    'message_id': msg.message_id,
+                }
+                if rule.get('target_thread_id'):
+                    kwargs['message_thread_id'] = rule['target_thread_id']
+                if rule.get('forward_mode') == 'forward':
+                    await context.bot.forward_message(**kwargs)
+                else:
+                    await context.bot.copy_message(**kwargs)
+                matched_rule_names.append(f"转发:{rule['rule_name']}")
+            except Exception as rule_err:
+                print(f"Error applying forward rule {rule['rule_name']}: {rule_err}")
+
+        with global_flask_app.app_context():
+            db.session.add(ChannelMessageStats(
+                group_id=group.id,
+                channel_chat_id=str(msg.sender_chat.id) if msg.sender_chat else None,
+                channel_message_id=getattr(msg, 'forward_from_message_id', None) or msg.message_id,
+                discussion_chat_id=str(chat.id),
+                discussion_message_id=msg.message_id,
+                media_type='image' if msg.photo else ('video' if msg.video else 'text'),
+                message_text=content_text[:1000] if content_text else None,
+                matched_rules=json.dumps(matched_rule_names, ensure_ascii=False)
+            ))
+            db.session.commit()
                     
     except Exception as e:
         print(f"Error in handle_channel_pin: {e}")

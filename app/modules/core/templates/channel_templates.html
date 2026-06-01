@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .settings-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        box-shadow: var(--card-shadow);
+        margin-bottom: 1.5rem;
+    }
+    .template-preview {
+        max-width: 320px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-layer-group me-2"></i>频道消息模板</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">频道消息命中关键词后，自动回复预设模板内容</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>新增模板
+        </button>
+    </div>
+</div>
+
+{% call feature_description('channel_templates') %}
+<ul>
+    <li>按关键词匹配频道讨论消息，自动回复文本、图片或视频模板。</li>
+    <li>支持附带按钮链接，输入格式为 <code>按钮文字|https://example.com</code>，一行一个。</li>
+    <li>可选择是否以回复形式发送，便于在讨论区上下文中使用。</li>
+</ul>
+{% endcall %}
+
+<div class="settings-card card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>模板列表
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="templatesTable">
+                <thead>
+                    <tr>
+                        <th>模板名称</th>
+                        <th>关键词</th>
+                        <th>内容</th>
+                        <th>类型</th>
+                        <th>状态</th>
+                        <th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in templates %}
+                    <tr data-id="{{ item.id }}"
+                        data-template-name="{{ item.template_name|e }}"
+                        data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
+                        data-media-type="{{ item.media_type }}"
+                        data-media-url="{{ (item.media_url or '')|e }}"
+                        data-content="{{ (item.content or '')|e }}"
+                        data-links="{{ (item.links or '[]')|e }}"
+                        data-send-as-reply="{{ 'true' if item.send_as_reply else 'false' }}"
+                        data-is-active="{{ 'true' if item.is_active else 'false' }}">
+                        <td>{{ item.template_name }}</td>
+                        <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
+                        <td class="template-preview text-muted small">{{ item.content or item.media_url or '无内容' }}</td>
+                        <td>{{ item.media_type }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-edit"></i></button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteTemplate({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道消息模板</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="templateModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-layer-group me-2"></i><span id="modalTitle">新增模板</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="template_id">
+                <div class="mb-3">
+                    <label class="form-label">模板名称</label>
+                    <input type="text" class="form-control" id="template_name" placeholder="例如：频道欢迎回复">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">触发关键词</label>
+                    <textarea class="form-control" id="trigger_keywords" rows="3" placeholder="一行一个关键词，或使用逗号分隔；留空则匹配全部消息"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">媒体类型</label>
+                    <select class="form-control" id="media_type">
+                        <option value="text">文本</option>
+                        <option value="image">图片</option>
+                        <option value="video">视频</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">媒体地址 <span class="text-muted">（图片/视频时可填写）</span></label>
+                    <input type="text" class="form-control" id="media_url" placeholder="https://...">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">回复内容</label>
+                    <textarea class="form-control" id="content" rows="5" placeholder="模板文本内容"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">按钮链接</label>
+                    <textarea class="form-control" id="links_text" rows="4" placeholder="按钮文字|https://example.com"></textarea>
+                    <div class="form-text">每行一个按钮，格式：按钮文字|链接</div>
+                </div>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="send_as_reply" checked>
+                    <label class="form-check-label" for="send_as_reply">以回复形式发送</label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label" for="is_active">启用模板</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveTemplate()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let templateModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    templateModal = new bootstrap.Modal(document.getElementById('templateModal'));
+});
+
+function formatLinksText(raw) {
+    if (!raw) return '';
+    try {
+        const links = JSON.parse(raw);
+        return (links || []).map(link => `${link.text || ''}|${link.url || ''}`).join('\n');
+    } catch (e) {
+        return '';
+    }
+}
+
+function parseLinksText() {
+    const lines = document.getElementById('links_text').value.split('\n');
+    const links = [];
+    for (const line of lines) {
+        const value = line.trim();
+        if (!value) continue;
+        const parts = value.split('|');
+        if (parts.length < 2) {
+            throw new Error('按钮链接格式应为：按钮文字|链接');
+        }
+        const text = parts.shift().trim();
+        const url = parts.join('|').trim();
+        if (text && url) links.push({text, url});
+    }
+    return JSON.stringify(links);
+}
+
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = '新增模板';
+    document.getElementById('template_id').value = '';
+    document.getElementById('template_name').value = '';
+    document.getElementById('trigger_keywords').value = '';
+    document.getElementById('media_type').value = 'text';
+    document.getElementById('media_url').value = '';
+    document.getElementById('content').value = '';
+    document.getElementById('links_text').value = '';
+    document.getElementById('send_as_reply').checked = true;
+    document.getElementById('is_active').checked = true;
+    templateModal.show();
+}
+
+function openEditModal(id) {
+    const row = document.querySelector(`#templatesTable tr[data-id="${id}"]`);
+    if (!row) return;
+    document.getElementById('modalTitle').textContent = '编辑模板';
+    document.getElementById('template_id').value = id;
+    document.getElementById('template_name').value = row.dataset.templateName || '';
+    document.getElementById('trigger_keywords').value = row.dataset.triggerKeywords || '';
+    document.getElementById('media_type').value = row.dataset.mediaType || 'text';
+    document.getElementById('media_url').value = row.dataset.mediaUrl || '';
+    document.getElementById('content').value = row.dataset.content || '';
+    document.getElementById('links_text').value = formatLinksText(row.dataset.links || '[]');
+    document.getElementById('send_as_reply').checked = row.dataset.sendAsReply === 'true';
+    document.getElementById('is_active').checked = row.dataset.isActive === 'true';
+    templateModal.show();
+}
+
+async function saveTemplate() {
+    const templateName = document.getElementById('template_name').value.trim();
+    if (!templateName) {
+        showToast('请输入模板名称', 'warning');
+        return;
+    }
+
+    let links = '[]';
+    try {
+        links = parseLinksText();
+    } catch (err) {
+        showToast(err.message, 'warning');
+        return;
+    }
+
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('template_id').value || null,
+        template_name: templateName,
+        trigger_keywords: document.getElementById('trigger_keywords').value.trim(),
+        media_type: document.getElementById('media_type').value,
+        media_url: document.getElementById('media_url').value.trim(),
+        content: document.getElementById('content').value,
+        links,
+        send_as_reply: document.getElementById('send_as_reply').checked,
+        is_active: document.getElementById('is_active').checked
+    };
+
+    try {
+        const res = await fetch('/core/api/save_channel_template', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (result.status === 'ok') {
+            templateModal.hide();
+            showToast('保存成功', 'success');
+            setTimeout(() => location.reload(), 600);
+        } else {
+            showToast(result.msg || '保存失败', 'danger');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('网络错误，请重试', 'danger');
+    }
+}
+
+function deleteTemplate(id) {
+    showConfirm('确定要删除这条模板吗？', async function() {
+        try {
+            const res = await fetch('/core/api/delete_channel_template', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                showToast('删除成功', 'success');
+                setTimeout(() => location.reload(), 600);
+            } else {
+                showToast(result.msg || '删除失败', 'danger');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('网络错误，请重试', 'danger');
+        }
+    });
+}
+</script>
+{% endblock %}

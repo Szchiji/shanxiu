@@ -7837,7 +7837,7 @@ async def check_channel_subscriptions(context):
                             for u in group_users
                         ]
 
-                def _update_subscription_state(group_id, row_id, tg_id, subscribed, reward_points):
+                def _update_subscription_state(group_id, row_id, tg_id, subscribed, reward_points, settings_id=None):
                     with global_flask_app.app_context():
                         group_user = GroupUser.query.get(row_id)
                         if not group_user:
@@ -7845,6 +7845,19 @@ async def check_channel_subscriptions(context):
                         was_subscribed = bool(group_user.is_channel_subscribed)
                         group_user.is_channel_subscribed = subscribed
                         if subscribed and not was_subscribed and reward_points > 0:
+                            # Check reward_given_user_ids to avoid awarding points more than once
+                            if settings_id:
+                                fcs = ForcedChannelSubscription.query.get(settings_id)
+                                if fcs:
+                                    try:
+                                        given_ids = json.loads(fcs.reward_given_user_ids or '[]')
+                                    except (json.JSONDecodeError, TypeError):
+                                        given_ids = []
+                                    if tg_id in given_ids:
+                                        db.session.commit()
+                                        return
+                                    given_ids.append(tg_id)
+                                    fcs.reward_given_user_ids = json.dumps(given_ids)
                             user_points = UserPoints.query.filter_by(group_id=group_id, user_id=tg_id).first()
                             if not user_points:
                                 user_points = UserPoints(group_id=group_id, user_id=tg_id, points_balance=0)
@@ -7916,7 +7929,7 @@ async def check_channel_subscriptions(context):
                         # If subscribed (member, administrator, creator), unmute if action was mute
                         elif member.status in ['member', 'administrator', 'creator']:
                             await asyncio.get_running_loop().run_in_executor(
-                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, True, safe_int(settings.reward_points, 0)
+                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, True, safe_int(settings.reward_points, 0), settings.id
                             )
                             if settings.unsubscribe_action != 'mute':
                                 continue
@@ -8229,7 +8242,8 @@ async def run_lottery_draws(context):
                             'clone_id': group.clone_id,  # which bot to use
                             'lottery_name': lottery.lottery_name,
                             'prize_description': lottery.prize_description,
-                            'winners': winners
+                            'winners': winners,
+                            'announce_channel_id': lottery.announce_channel_id,
                         }
                 
                 result = await asyncio.get_running_loop().run_in_executor(None, _process_lottery, lottery_id)
@@ -8248,15 +8262,19 @@ async def run_lottery_draws(context):
                     if bot is None:
                         logging.warning(f"⏭️ [抽奖任务] 跳过公告：对应克隆机器人未运行 (群组: {result['chat_id']})")
                     else:
-                        try:
-                            await bot.send_message(
-                                chat_id=result['chat_id'],
-                                text=message,
-                                parse_mode='HTML'
-                            )
-                            logging.info(f"📢 [抽奖任务] 成功在群组 {result['chat_id']} 发送获奖公告")
-                        except Exception as send_error:
-                            logging.error(f"❌ [抽奖任务] 发送获奖公告失败 (群组: {result['chat_id']}): {send_error}")
+                        announce_targets = [result['chat_id']]
+                        if result.get('announce_channel_id') and result['announce_channel_id'] not in announce_targets:
+                            announce_targets.append(result['announce_channel_id'])
+                        for target_chat_id in announce_targets:
+                            try:
+                                await bot.send_message(
+                                    chat_id=target_chat_id,
+                                    text=message,
+                                    parse_mode='HTML'
+                                )
+                                logging.info(f"📢 [抽奖任务] 成功在 {target_chat_id} 发送获奖公告")
+                            except Exception as send_error:
+                                logging.error(f"❌ [抽奖任务] 发送获奖公告失败 ({target_chat_id}): {send_error}")
                         
             except Exception as e:
                 logging.error(f"❌ [抽奖任务] 处理抽奖 {lottery_id} 时出错: {e}")
@@ -11054,7 +11072,8 @@ async def handle_channel_pin(update: Update, context):
         async def _send_template_message(template_data):
             reply_markup = None
             try:
-                reply_markup = InlineKeyboardMarkup(build_inline_keyboard_from_links(json.loads(template_data.get('links') or '[]')))
+                kb = build_inline_keyboard_from_links(json.loads(template_data.get('links') or '[]'))
+                reply_markup = InlineKeyboardMarkup(kb) if kb else None
             except Exception:
                 reply_markup = None
             send_kwargs = {

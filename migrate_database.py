@@ -138,8 +138,17 @@ def run_migrations():
         "ALTER TABLE invitation_activity ADD COLUMN IF NOT EXISTS link_keyword VARCHAR(255) NULL",
         # other_settings: Add auto_delete_channel_discussion_msg to delete linked channel discussion posts
         "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS auto_delete_channel_discussion_msg BOOLEAN DEFAULT FALSE",
+        # other_settings: Add channel_auto_buttons and channel_discussion_keyword_filter (feat PR #256)
+        "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS channel_auto_buttons BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS channel_discussion_keyword_filter TEXT NULL",
         # group_lottery: Add announce_channel_id to support posting results to a channel
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS announce_channel_id VARCHAR(50) NULL",
+        # group_users: Add subscription tracking and join source (feat PR #256)
+        "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS is_channel_subscribed BOOLEAN NULL",
+        "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS join_source VARCHAR(50) NULL",
+        # forced_channel_subscription: Add reward fields (feat PR #256)
+        "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_points INTEGER DEFAULT 0",
+        "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_given_user_ids TEXT DEFAULT '[]'",
     ]
 
     with app.app_context():

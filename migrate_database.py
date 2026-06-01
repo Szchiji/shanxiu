@@ -138,6 +138,8 @@ def run_migrations():
         "ALTER TABLE invitation_activity ADD COLUMN IF NOT EXISTS link_keyword VARCHAR(255) NULL",
         # other_settings: Add auto_delete_channel_discussion_msg to delete linked channel discussion posts
         "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS auto_delete_channel_discussion_msg BOOLEAN DEFAULT FALSE",
+        # group_lottery: Add announce_channel_id to support posting results to a channel
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS announce_channel_id VARCHAR(50) NULL",
     ]
 
     with app.app_context():

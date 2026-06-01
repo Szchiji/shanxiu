@@ -221,6 +221,8 @@ async def is_user_chat_owner(bot, chat_id, user_id):
         member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ('creator', 'administrator')
     except Exception as e:
+        if 'Chat not found' in str(e):
+            raise
         print(f"Error checking chat owner status: {e}")
         return False
 
@@ -7883,7 +7885,10 @@ async def check_channel_subscriptions(context):
                 if bot is None:
                     continue
                 
+                group_chat_gone = False
                 for user_info in group_users:
+                    if group_chat_gone:
+                        break
                     tg_id = user_info['tg_id']
                     try:
                         # Check if user is subscribed to the channel
@@ -7925,6 +7930,8 @@ async def check_channel_subscriptions(context):
                                     print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                     print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                                     print(f"   Error details: {str(restrict_error)}", flush=True)
+                                    if 'Chat not found' in str(restrict_error):
+                                        raise
                                     print(f"   Traceback: {traceback.format_exc()}", flush=True)
                         # If subscribed (member, administrator, creator), unmute if action was mute
                         elif member.status in ['member', 'administrator', 'creator']:
@@ -7952,9 +7959,15 @@ async def check_channel_subscriptions(context):
                                 print(f"❌ [频道订阅检测] Failed to unmute user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
                                 print(f"   Error type: {type(unmute_error).__name__}", flush=True)
                                 print(f"   Error details: {str(unmute_error)}", flush=True)
+                                if 'Chat not found' in str(unmute_error):
+                                    raise
                     except Exception as e:
-                        # User may not be in channel or bot doesn't have access
-                        print(f"Error checking subscription for user {tg_id}: {e}")
+                        if 'Chat not found' in str(e):
+                            print(f"⚠️ [频道订阅检测] Group {settings.group_id} (chat_id={chat_id}) not found, skipping remaining users", flush=True)
+                            group_chat_gone = True
+                        else:
+                            # User may not be in channel or bot doesn't have access
+                            print(f"Error checking subscription for user {tg_id}: {e}")
                         
             except Exception as e:
                 print(f"Error processing channel subscription for group {settings.group_id}: {e}")

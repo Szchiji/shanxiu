@@ -51,6 +51,8 @@ def run_migrations():
         "ALTER TABLE scheduled_messages ADD COLUMN remark TEXT",
         "ALTER TABLE scheduled_messages ADD COLUMN auto_pin BOOLEAN DEFAULT FALSE",
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS target_type VARCHAR(20) DEFAULT 'group'",
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS target_channel_id VARCHAR(50)",
         "ALTER TABLE scheduled_messages ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
         "ALTER TABLE scheduled_messages ADD COLUMN last_sent_at TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS next_send_at TIMESTAMP",

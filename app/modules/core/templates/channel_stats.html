@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .stats-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        box-shadow: var(--card-shadow);
+        padding: 1.25rem;
+        height: 100%;
+    }
+    .stats-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+    }
+    .table-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        box-shadow: var(--card-shadow);
+        margin-top: 1.5rem;
+    }
+    .message-preview {
+        max-width: 320px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-chart-line me-2"></i>频道消息统计</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看频道消息自动化触发记录与规则使用情况</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="clearStats()">
+            <i class="fa-solid fa-trash-can me-2"></i>清空统计
+        </button>
+    </div>
+</div>
+
+{% call feature_description('channel_stats') %}
+<ul>
+    <li>记录最近的频道消息处理结果，便于排查关键词匹配、模板回复和转发规则。</li>
+    <li>支持查看今日消息数、启用中的规则/模板/优惠券数量。</li>
+    <li>清空统计不会影响实际规则配置，仅删除历史记录。</li>
+</ul>
+{% endcall %}
+
+<div class="row g-3">
+    <div class="col-md-4 col-xl">
+        <div class="stats-card">
+            <div class="text-muted small mb-2">累计消息</div>
+            <div class="stats-value">{{ stats_summary.total_messages }}</div>
+        </div>
+    </div>
+    <div class="col-md-4 col-xl">
+        <div class="stats-card">
+            <div class="text-muted small mb-2">今日消息</div>
+            <div class="stats-value">{{ stats_summary.today_messages }}</div>
+        </div>
+    </div>
+    <div class="col-md-4 col-xl">
+        <div class="stats-card">
+            <div class="text-muted small mb-2">启用转发规则</div>
+            <div class="stats-value">{{ stats_summary.forward_rules }}</div>
+        </div>
+    </div>
+    <div class="col-md-6 col-xl">
+        <div class="stats-card">
+            <div class="text-muted small mb-2">启用消息模板</div>
+            <div class="stats-value">{{ stats_summary.active_templates }}</div>
+        </div>
+    </div>
+    <div class="col-md-6 col-xl">
+        <div class="stats-card">
+            <div class="text-muted small mb-2">启用优惠券</div>
+            <div class="stats-value">{{ stats_summary.active_coupons }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="table-card card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-clock-rotate-left me-2 text-primary"></i>最近 100 条处理记录
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>频道消息</th>
+                        <th>讨论消息</th>
+                        <th>类型</th>
+                        <th>内容</th>
+                        <th>命中规则</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stats_entries %}
+                    <tr>
+                        <td>{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else '—' }}</td>
+                        <td>
+                            <div>{{ item.channel_chat_id or '—' }}</div>
+                            <small class="text-muted">消息ID: {{ item.channel_message_id or '—' }}</small>
+                        </td>
+                        <td>
+                            <div>{{ item.discussion_chat_id or '—' }}</div>
+                            <small class="text-muted">消息ID: {{ item.discussion_message_id or '—' }}</small>
+                        </td>
+                        <td>{{ item.media_type or 'text' }}</td>
+                        <td class="message-preview text-muted small">{{ item.message_text or '—' }}</td>
+                        <td class="text-muted small">{{ item.matched_rules or '[]' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道统计数据</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function clearStats() {
+    showConfirm('确定要清空当前群组的频道统计数据吗？', async function() {
+        try {
+            const res = await fetch('/core/api/clear_channel_stats', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({group_id: {{ group.id }}})
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                showToast('统计已清空', 'success');
+                setTimeout(() => location.reload(), 600);
+            } else {
+                showToast(result.msg || '操作失败', 'danger');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('网络错误，请重试', 'danger');
+        }
+    });
+}
+</script>
+{% endblock %}

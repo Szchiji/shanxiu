@@ -82,6 +82,14 @@
                            placeholder="默认: 3600">
                     <small class="text-muted">多久检查一次用户是否仍在频道中</small>
                 </div>
+
+                <div class="mb-3">
+                    <label class="form-label">订阅奖励积分</label>
+                    <input type="number" class="form-control" id="reward_points"
+                           value="{{ settings.reward_points if settings else 0 }}"
+                           min="0" placeholder="默认: 0">
+                    <small class="text-muted">用户重新订阅成功后可获得的积分，0 表示不奖励</small>
+                </div>
                 
                 <div class="mb-3">
                     <label class="form-label">取消订阅时的操作</label>
@@ -110,6 +118,7 @@ function saveSettings() {
         channel_id: document.getElementById('channel_id').value,
         channel_username: document.getElementById('channel_username').value,
         check_interval: parseInt(document.getElementById('check_interval').value) || 3600,
+        reward_points: parseInt(document.getElementById('reward_points').value) || 0,
         unsubscribe_action: document.getElementById('unsubscribe_action').value,
         verification_message: document.getElementById('verification_message').value
     };

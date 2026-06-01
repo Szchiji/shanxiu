@@ -95,13 +95,28 @@
                 
                 <h6 class="fw-bold mb-3">频道消息设置</h6>
                 
-                <div class="form-check form-switch mb-0 p-3 bg-light rounded">
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
                     <input class="form-check-input" type="checkbox" id="cancel_channel_pin" 
                            {{ 'checked' if settings and settings.cancel_channel_pin }}>
                     <label class="form-check-label fw-bold">
                         <i class="fa-solid fa-unlink me-2 text-danger"></i>取消频道消息置顶
                     </label>
                     <div class="form-text mt-2">自动取消来自关联频道的消息置顶</div>
+                </div>
+
+                <div class="form-check form-switch mb-3 p-3 bg-light rounded">
+                    <input class="form-check-input" type="checkbox" id="channel_auto_buttons"
+                           {{ 'checked' if settings and settings.channel_auto_buttons }}>
+                    <label class="form-check-label fw-bold">
+                        <i class="fa-solid fa-ticket me-2 text-success"></i>自动发送频道按钮
+                    </label>
+                    <div class="form-text mt-2">当频道消息命中优惠券规则时，自动回复按钮和兑换码</div>
+                </div>
+
+                <div class="mb-0 p-3 bg-light rounded">
+                    <label class="form-label fw-bold">频道讨论关键词过滤</label>
+                    <textarea class="form-control" id="channel_discussion_keyword_filter" rows="3" placeholder="填写关键词，支持逗号或换行分隔">{{ settings.channel_discussion_keyword_filter if settings and settings.channel_discussion_keyword_filter else '' }}</textarea>
+                    <div class="form-text mt-2">命中关键词的频道讨论消息会被自动删除</div>
                 </div>
             </div>
         </div>
@@ -119,7 +134,9 @@
             auto_delete_promote_msg: document.getElementById('auto_delete_promote_msg').checked,
             auto_delete_channel_discussion_msg: document.getElementById('auto_delete_channel_discussion_msg').checked,
             auto_delete_pin_msg: document.getElementById('auto_delete_pin_msg').checked,
-            cancel_channel_pin: document.getElementById('cancel_channel_pin').checked
+            cancel_channel_pin: document.getElementById('cancel_channel_pin').checked,
+            channel_auto_buttons: document.getElementById('channel_auto_buttons').checked,
+            channel_discussion_keyword_filter: document.getElementById('channel_discussion_keyword_filter').value.trim()
         };
         
         showLoading('保存设置中...');

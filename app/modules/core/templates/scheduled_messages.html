@@ -460,7 +460,7 @@
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-clock me-2"></i>定时消息管理</h4>
-            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">定时发送消息到群组，支持重复发送和自动删除上一条</p>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">定时发送消息到群组或频道，支持重复发送和自动删除上一条</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
             <button class="btn btn-success btn-sm" onclick="exportData()" title="导出配置">
@@ -479,7 +479,7 @@
 <!-- Feature Description -->
 {% call feature_description('scheduled_messages') %}
 <ul>
-    <li><strong>定时消息：</strong>设置在特定时间或按固定间隔自动向群组发送消息。</li>
+    <li><strong>定时消息：</strong>设置在特定时间或按固定间隔自动向群组或频道发送消息。</li>
     <li><strong>消息类型：</strong>支持文本、图片、视频三种格式。</li>
     <li><strong>重复发送：</strong>设置间隔（分钟）可以让消息定期循环发送，0 表示只发一次。</li>
     <li><strong>时间控制：</strong>可设置开始时间和停止时间，控制消息发送的时间范围。</li>
@@ -528,6 +528,7 @@
                     </th>
                     <th>ID</th>
                     <th>类型</th>
+                    <th>目标</th>
                     <th>间隔</th>
                     <th>开始</th>
                     <th>停止</th>
@@ -552,6 +553,8 @@
                     data-remark="{{ (item.remark or '')|e }}"
                     data-auto-pin="{{ 'true' if item.auto_pin else 'false' }}"
                     data-message-thread-id="{{ item.message_thread_id or '' }}"
+                    data-target-type="{{ item.target_type or 'group' }}"
+                    data-target-channel-id="{{ item.target_channel_id or '' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4">
                         <input type="checkbox" class="row-checkbox" value="{{ item.id }}" onchange="onRowCheckboxChange()">
@@ -564,6 +567,15 @@
                         <span class="badge bg-success">图片</span>
                         {% elif item.media_type == 'video' %}
                         <span class="badge bg-warning text-dark">视频</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.target_type == 'channel' %}
+                        <div><span class="badge bg-info">频道</span></div>
+                        <small class="text-muted">{{ item.target_channel_id or '-' }}</small>
+                        {% else %}
+                        <div><span class="badge bg-secondary">群组</span></div>
+                        <small class="text-muted">默认聊天</small>
                         {% endif %}
                     </td>
                     <td>
@@ -617,7 +629,7 @@
                 </tr>
                 {% else %}
                 <tr id="emptyRow">
-                    <td colspan="11" class="text-center py-4 py-md-5 text-muted">
+                    <td colspan="12" class="text-center py-4 py-md-5 text-muted">
                         <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
                         暂无定时消息，点击上方按钮添加
                     </td>
@@ -696,6 +708,23 @@
                         </button>
                     </div>
                     
+                    <div class="time-config-section">
+                        <h6 class="fw-bold mb-2"><i class="fa-solid fa-paper-plane me-2"></i>发送目标</h6>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label fw-bold">目标类型</label>
+                                <select class="form-select" id="targetType" onchange="updateTargetFields()">
+                                    <option value="group">发送到当前群组</option>
+                                    <option value="channel">发送到指定频道</option>
+                                </select>
+                            </div>
+                            <div class="col-6" id="targetChannelSection" style="display:none;">
+                                <label class="form-label fw-bold">频道ID</label>
+                                <input type="text" class="form-control" id="targetChannelId" placeholder="例如：-1001234567890">
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 时间配置 -->
                     <div class="time-config-section">
                         <h6 class="fw-bold mb-2"><i class="fa-solid fa-clock me-2"></i>时间配置</h6>
@@ -817,10 +846,24 @@
 <script>
     const groupId = {{ group.id }};
     let currentLinks = [];
+
+    function updateTargetFields() {
+        const targetType = document.getElementById('targetType').value;
+        const targetChannelSection = document.getElementById('targetChannelSection');
+        const threadInput = document.getElementById('messageThreadId');
+        targetChannelSection.style.display = targetType === 'channel' ? '' : 'none';
+        if (targetType === 'channel') {
+            threadInput.value = '';
+            threadInput.disabled = true;
+        } else {
+            threadInput.disabled = false;
+        }
+    }
     
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         renderLinksContainer();
+        updateTargetFields();
         
         // Enter key for search
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
@@ -1132,8 +1175,11 @@
         document.getElementById('remark').value = '';
         document.getElementById('autoPin').checked = false;
         document.getElementById('messageThreadId').value = '';
+        document.getElementById('targetType').value = 'group';
+        document.getElementById('targetChannelId').value = '';
         currentLinks = [];
         renderLinksContainer();
+        updateTargetFields();
         document.getElementById('sendNowBtn').style.display = 'none';
         
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
@@ -1157,7 +1203,9 @@
             stop_time: row.dataset.stopTime || '',
             remark: row.dataset.remark || '',
             auto_pin: row.dataset.autoPin === 'true',
-            message_thread_id: row.dataset.messageThreadId || ''
+            message_thread_id: row.dataset.messageThreadId || '',
+            target_type: row.dataset.targetType || 'group',
+            target_channel_id: row.dataset.targetChannelId || ''
         };
         
         document.getElementById('modalTitle').textContent = '编辑定时消息';
@@ -1172,6 +1220,9 @@
         document.getElementById('remark').value = item.remark;
         document.getElementById('autoPin').checked = item.auto_pin;
         document.getElementById('messageThreadId').value = item.message_thread_id;
+        document.getElementById('targetType').value = item.target_type;
+        document.getElementById('targetChannelId').value = item.target_channel_id;
+        updateTargetFields();
         
         try {
             currentLinks = JSON.parse(item.links);
@@ -1233,7 +1284,9 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null
+            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null,
+            target_type: document.getElementById('targetType').value,
+            target_channel_id: document.getElementById('targetChannelId').value.trim()
         };
         
         try {
@@ -1279,7 +1332,9 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null
+            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null,
+            target_type: document.getElementById('targetType').value,
+            target_channel_id: document.getElementById('targetChannelId').value.trim()
         };
 
         const btn = document.getElementById('sendNowBtn');

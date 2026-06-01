@@ -32,6 +32,8 @@ class GroupUser(db.Model):
     checkin_time = db.Column(db.DateTime)
     last_activity = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)  # Track last message activity
     online = db.Column(db.Boolean, default=False)
+    is_channel_subscribed = db.Column(db.Boolean, nullable=True)  # None=未检测, True=已订阅, False=未订阅
+    join_source = db.Column(db.String(50), nullable=True)  # invite, channel, direct, etc.
     created_at = db.Column(db.DateTime, default=datetime.now)  # Track when user joined the group
     __table_args__ = (db.UniqueConstraint('group_id', 'tg_id', name='_group_user_uc'),)
     
@@ -87,6 +89,8 @@ class ScheduledMessage(db.Model):
     remark = db.Column(db.Text, nullable=True)  # 备注
     auto_pin = db.Column(db.Boolean, default=False)  # 是否自动置顶
     message_thread_id = db.Column(db.Integer, nullable=True)  # 话题ID (用于论坛话题群)
+    target_type = db.Column(db.String(20), default='group')  # group, channel
+    target_channel_id = db.Column(db.String(50), nullable=True)  # 目标频道ID
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
     next_send_at = db.Column(db.DateTime, nullable=True)  # 下次发送时间
@@ -242,6 +246,8 @@ class ForcedChannelSubscription(db.Model):
     check_interval = db.Column(db.Integer, default=3600)  # 检查间隔(秒)
     unsubscribe_action = db.Column(db.String(20), default='kick')  # kick, ban, mute
     verification_message = db.Column(db.Text, nullable=True)
+    reward_points = db.Column(db.Integer, default=0)  # 订阅成功奖励积分
+    reward_given_user_ids = db.Column(db.Text, default='[]')  # JSON: 已发放奖励的用户tg_id列表
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -376,6 +382,7 @@ class GroupLottery(db.Model):
     # 通用设置
     start_time = db.Column(db.DateTime, nullable=True)
     end_time = db.Column(db.DateTime, nullable=True)
+    announce_channel_id = db.Column(db.String(50), nullable=True)  # 公告频道ID
     winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
     status = db.Column(db.String(20), default='pending')  # pending, active, ended
     created_at = db.Column(db.DateTime, default=datetime.now)
@@ -478,6 +485,8 @@ class OtherSettings(db.Model):
     auto_delete_pin_msg = db.Column(db.Boolean, default=False)  # 自动删除置顶提示消息
     cancel_channel_pin = db.Column(db.Boolean, default=False)  # 取消频道消息置顶
     auto_delete_channel_discussion_msg = db.Column(db.Boolean, default=False)  # 自动删除频道关联留言
+    channel_auto_buttons = db.Column(db.Boolean, default=False)  # 是否自动发送频道优惠券按钮
+    channel_discussion_keyword_filter = db.Column(db.Text, nullable=True)  # 频道讨论关键词过滤（逗号分隔）
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -503,6 +512,78 @@ class BotClone(db.Model):
         """Return the decrypted bot token (handles both encrypted and legacy plaintext values)."""
         from app.utils import decrypt_token
         return decrypt_token(self.bot_token)
+
+class ChannelForwardRule(db.Model):
+    """频道转发规则"""
+    __tablename__ = 'channel_forward_rules'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    rule_name = db.Column(db.String(255), nullable=False)
+    source_keywords = db.Column(db.Text, nullable=True)  # 逗号/换行分隔关键词
+    target_chat_id = db.Column(db.String(50), nullable=False)
+    target_thread_id = db.Column(db.Integer, nullable=True)
+    forward_mode = db.Column(db.String(20), default='copy')  # copy, forward
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='channel_forward_rules', lazy=True)
+
+
+class ChannelMessageTemplate(db.Model):
+    """频道消息模板"""
+    __tablename__ = 'channel_message_templates'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    template_name = db.Column(db.String(255), nullable=False)
+    trigger_keywords = db.Column(db.Text, nullable=True)  # 逗号/换行分隔关键词
+    media_type = db.Column(db.String(20), default='text')
+    media_url = db.Column(db.Text, nullable=True)
+    content = db.Column(db.Text, nullable=True)
+    links = db.Column(db.Text, default='[]')
+    send_as_reply = db.Column(db.Boolean, default=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='channel_message_templates', lazy=True)
+
+
+class ChannelCoupon(db.Model):
+    """频道优惠券按钮"""
+    __tablename__ = 'channel_coupons'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    coupon_name = db.Column(db.String(255), nullable=False)
+    coupon_code = db.Column(db.String(100), nullable=True)
+    button_text = db.Column(db.String(255), nullable=True)
+    button_url = db.Column(db.Text, nullable=True)
+    trigger_keywords = db.Column(db.Text, nullable=True)
+    sort_order = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='channel_coupons', lazy=True)
+
+
+class ChannelMessageStats(db.Model):
+    """频道消息统计"""
+    __tablename__ = 'channel_message_stats'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
+    channel_chat_id = db.Column(db.String(50), nullable=True)
+    channel_message_id = db.Column(db.BigInteger, index=True)
+    discussion_chat_id = db.Column(db.String(50), nullable=True)
+    discussion_message_id = db.Column(db.BigInteger, nullable=True)
+    media_type = db.Column(db.String(20), default='text')
+    message_text = db.Column(db.Text, nullable=True)
+    matched_rules = db.Column(db.Text, default='[]')
+    created_at = db.Column(db.DateTime, default=datetime.now, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='channel_message_stats', lazy=True)
+
 
 class LotteryMessageCount(db.Model):
     """抽奖消息计数 - 跟踪用户在抽奖期间发送的消息数"""

@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<style>
+    .settings-card {
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-card);
+        box-shadow: var(--card-shadow);
+        margin-bottom: 1.5rem;
+    }
+    .table td, .table th {
+        vertical-align: middle;
+    }
+    .keyword-box {
+        max-width: 280px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+</style>
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-share-nodes me-2"></i>频道转发规则</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">根据频道消息关键词，自动转发或复制到指定群组/话题</p>
+        </div>
+        <button class="btn btn-light fw-bold" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-2"></i>新增规则
+        </button>
+    </div>
+</div>
+
+{% call feature_description('channel_forward_rules') %}
+<ul>
+    <li>可按关键词匹配频道消息，自动执行 <strong>复制发送</strong> 或 <strong>原消息转发</strong>。</li>
+    <li>支持转发到群组、频道或论坛话题，留空关键词时会匹配全部频道消息。</li>
+    <li>建议优先使用复制模式，兼容性更好，也便于后续扩展按钮与模板消息。</li>
+</ul>
+{% endcall %}
+
+<div class="settings-card card">
+    <div class="card-header bg-white fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>规则列表
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="rulesTable">
+                <thead>
+                    <tr>
+                        <th>规则名称</th>
+                        <th>关键词</th>
+                        <th>目标聊天</th>
+                        <th>模式</th>
+                        <th>状态</th>
+                        <th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rule in rules %}
+                    <tr data-id="{{ rule.id }}"
+                        data-rule-name="{{ rule.rule_name|e }}"
+                        data-source-keywords="{{ (rule.source_keywords or '')|e }}"
+                        data-target-chat-id="{{ rule.target_chat_id|e }}"
+                        data-target-thread-id="{{ rule.target_thread_id or '' }}"
+                        data-forward-mode="{{ rule.forward_mode }}"
+                        data-is-active="{{ 'true' if rule.is_active else 'false' }}">
+                        <td>{{ rule.rule_name }}</td>
+                        <td class="keyword-box text-muted small">{{ rule.source_keywords or '全部消息' }}</td>
+                        <td>
+                            <div>{{ rule.target_chat_id }}</div>
+                            <small class="text-muted">话题: {{ rule.target_thread_id or '—' }}</small>
+                        </td>
+                        <td>{{ '复制' if rule.forward_mode == 'copy' else '转发' }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">{{ '启用中' if rule.is_active else '已停用' }}</span>
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ rule.id }})"><i class="fa-solid fa-edit"></i></button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteRule({{ rule.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道转发规则</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="ruleModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fa-solid fa-share-nodes me-2"></i><span id="modalTitle">新增规则</span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rule_id">
+                <div class="mb-3">
+                    <label class="form-label">规则名称</label>
+                    <input type="text" class="form-control" id="rule_name" placeholder="例如：促销消息转发">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">匹配关键词</label>
+                    <textarea class="form-control" id="source_keywords" rows="4" placeholder="一行一个关键词，或使用逗号分隔；留空则匹配全部频道消息"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">目标聊天 ID</label>
+                    <input type="text" class="form-control" id="target_chat_id" placeholder="例如：-1001234567890">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">目标话题 ID <span class="text-muted">（可选）</span></label>
+                    <input type="number" class="form-control" id="target_thread_id" placeholder="论坛群话题 ID">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">转发模式</label>
+                    <select class="form-control" id="forward_mode">
+                        <option value="copy">复制发送</option>
+                        <option value="forward">原消息转发</option>
+                    </select>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="is_active" checked>
+                    <label class="form-check-label" for="is_active">启用规则</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveRule()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let ruleModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    ruleModal = new bootstrap.Modal(document.getElementById('ruleModal'));
+});
+
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = '新增规则';
+    document.getElementById('rule_id').value = '';
+    document.getElementById('rule_name').value = '';
+    document.getElementById('source_keywords').value = '';
+    document.getElementById('target_chat_id').value = '';
+    document.getElementById('target_thread_id').value = '';
+    document.getElementById('forward_mode').value = 'copy';
+    document.getElementById('is_active').checked = true;
+    ruleModal.show();
+}
+
+function openEditModal(id) {
+    const row = document.querySelector(`#rulesTable tr[data-id="${id}"]`);
+    if (!row) return;
+    document.getElementById('modalTitle').textContent = '编辑规则';
+    document.getElementById('rule_id').value = id;
+    document.getElementById('rule_name').value = row.dataset.ruleName || '';
+    document.getElementById('source_keywords').value = row.dataset.sourceKeywords || '';
+    document.getElementById('target_chat_id').value = row.dataset.targetChatId || '';
+    document.getElementById('target_thread_id').value = row.dataset.targetThreadId || '';
+    document.getElementById('forward_mode').value = row.dataset.forwardMode || 'copy';
+    document.getElementById('is_active').checked = row.dataset.isActive === 'true';
+    ruleModal.show();
+}
+
+async function saveRule() {
+    const ruleName = document.getElementById('rule_name').value.trim();
+    const targetChatId = document.getElementById('target_chat_id').value.trim();
+    if (!ruleName || !targetChatId) {
+        showToast('请填写规则名称和目标聊天 ID', 'warning');
+        return;
+    }
+
+    const data = {
+        group_id: {{ group.id }},
+        id: document.getElementById('rule_id').value || null,
+        rule_name: ruleName,
+        source_keywords: document.getElementById('source_keywords').value.trim(),
+        target_chat_id: targetChatId,
+        target_thread_id: document.getElementById('target_thread_id').value || null,
+        forward_mode: document.getElementById('forward_mode').value,
+        is_active: document.getElementById('is_active').checked
+    };
+
+    try {
+        const res = await fetch('/core/api/save_channel_forward_rule', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (result.status === 'ok') {
+            ruleModal.hide();
+            showToast('保存成功', 'success');
+            setTimeout(() => location.reload(), 600);
+        } else {
+            showToast(result.msg || '保存失败', 'danger');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('网络错误，请重试', 'danger');
+    }
+}
+
+function deleteRule(id) {
+    showConfirm('确定要删除这条转发规则吗？', async function() {
+        try {
+            const res = await fetch('/core/api/delete_channel_forward_rule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                showToast('删除成功', 'success');
+                setTimeout(() => location.reload(), 600);
+            } else {
+                showToast(result.msg || '删除失败', 'danger');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('网络错误，请重试', 'danger');
+        }
+    });
+}
+</script>
+{% endblock %}

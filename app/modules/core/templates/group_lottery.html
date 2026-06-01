@@ -186,6 +186,11 @@
                     <input type="datetime-local" class="form-control" id="end_time">
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">公告频道ID <span class="text-muted">（可选）</span></label>
+                    <input type="text" class="form-control" id="announce_channel_id" placeholder="例如：-1001234567890">
+                    <div class="form-text">填写后发布抽奖公告时会同时发送到该频道</div>
+                </div>
+                <div class="mb-3">
                     <label class="form-label">状态</label>
                     <select class="form-control" id="status">
                         <option value="pending">待开始</option>
@@ -232,6 +237,7 @@ function showAddModal() {
     document.getElementById('prize_description').value = '';
     document.getElementById('start_time').value = '';
     document.getElementById('end_time').value = '';
+    document.getElementById('announce_channel_id').value = '';
     document.getElementById('status').value = 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -250,6 +256,7 @@ function editLottery(id) {
     document.getElementById('prize_description').value = lottery.prize_description || '';
     document.getElementById('start_time').value = lottery.start_time || '';
     document.getElementById('end_time').value = lottery.end_time || '';
+    document.getElementById('announce_channel_id').value = lottery.announce_channel_id || '';
     document.getElementById('status').value = lottery.status || 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -273,6 +280,7 @@ function saveLottery() {
         prize_description: document.getElementById('prize_description').value,
         start_time: document.getElementById('start_time').value || null,
         end_time: document.getElementById('end_time').value || null,
+        announce_channel_id: document.getElementById('announce_channel_id').value.trim(),
         status: document.getElementById('status').value
     };
     

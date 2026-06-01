@@ -1080,7 +1080,7 @@
                         {# ── Channel-only navigation ── #}
 
                         <!-- Channel Automation (accordion) -->
-                        {% set ch_auto_active = page in ['auto_replies', 'scheduled_messages'] %}
+                        {% set ch_auto_active = page in ['auto_replies', 'scheduled_messages', 'channel_forward_rules', 'channel_templates', 'channel_coupons'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if ch_auto_active %}active-group{% endif %}"
                                     type="button"
@@ -1095,12 +1095,15 @@
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/auto_replies" class="nav-link {% if page == 'auto_replies' %}active{% endif %}"><i class="fa-solid fa-reply"></i> 自动回复</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/scheduled_messages" class="nav-link {% if page == 'scheduled_messages' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时消息</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_forward_rules" class="nav-link {% if page == 'channel_forward_rules' %}active{% endif %}"><i class="fa-solid fa-share-nodes"></i> 转发规则</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_templates" class="nav-link {% if page == 'channel_templates' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i> 消息模板</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_coupons" class="nav-link {% if page == 'channel_coupons' %}active{% endif %}"><i class="fa-solid fa-ticket"></i> 优惠券按钮</a></li>
                                 </ul>
                             </div>
                         </li>
 
                         <!-- Channel Analytics (accordion) -->
-                        {% set ch_analytics_active = page in ['message_statistics'] %}
+                        {% set ch_analytics_active = page in ['message_statistics', 'channel_stats'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if ch_analytics_active %}active-group{% endif %}"
                                     type="button"
@@ -1114,6 +1117,7 @@
                             <div class="collapse {% if ch_analytics_active %}show{% endif %}" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_stats" class="nav-link {% if page == 'channel_stats' %}active{% endif %}"><i class="fa-solid fa-wave-square"></i> 频道统计</a></li>
                                 </ul>
                             </div>
                         </li>

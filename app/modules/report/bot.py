@@ -24,6 +24,7 @@ import json
 import logging
 import asyncio
 import re as _re
+import warnings
 
 from telegram import (
     Update,
@@ -1197,7 +1198,15 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
 
 def make_report_handlers():
     """Return fresh (report_conv_handler, view_reports_handler, audit_callback_handler) instances."""
-    conv = ConversationHandler(
+    # per_message=False (default) is intentional: conversation is tracked per user+chat.
+    # Suppress the PTBUserWarning that fires when CallbackQueryHandler is used in this mode.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*per_message=False.*",
+            category=UserWarning,
+        )
+        conv = ConversationHandler(
         entry_points=[
             MessageHandler(
                 filters.Regex(r'^/start report_\d+') & filters.ChatType.PRIVATE,

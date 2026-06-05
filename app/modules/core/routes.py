@@ -3027,11 +3027,9 @@ def api_send_scheduled_message_now(message_id):
             now = get_beijing_now()
             item.last_sent_at = now
             item.last_message_id = sent_message.message_id
-            # 手动发送后重新计算下次发送时间，保持与开始时间对齐
+            # 手动发送后重新计算下次发送时间，以本次发送时刻为基准
             if item.repeat_interval > 0:
-                item.next_send_at = compute_aligned_next_send_at(
-                    item.start_time, item.repeat_interval, now
-                )
+                item.next_send_at = now + timedelta(minutes=item.repeat_interval)
             else:
                 item.next_send_at = None
             db.session.commit()

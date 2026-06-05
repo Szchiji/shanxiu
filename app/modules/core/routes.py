@@ -6680,16 +6680,24 @@ async def check_scheduled_messages(context):
             # For one-shot messages (repeat_interval=0), also deactivate so the UI
             # reflects the correct state and the scheduler skips them on future runs.
             if sent_message:
-                # Compute next_send_at: align to the original start_time cadence
-                # so the schedule stays locked to user-configured times (e.g.
-                # 21:00 → 00:00 → 03:00) regardless of actual delivery time.
+                # Compute next_send_at: use previous next_send_at as baseline so
+                # that a manual-send cadence (based on the manual send time) is
+                # preserved.  Fall back to start_time alignment only when
+                # next_send_at is unavailable.
                 new_next_send_at = None
                 if msg_data['repeat_interval'] > 0:
-                    new_next_send_at = compute_aligned_next_send_at(
-                        msg_data.get('start_time'),
-                        msg_data['repeat_interval'],
-                        send_time,
-                    )
+                    prev_next = msg_data.get('next_send_at')
+                    if prev_next is not None:
+                        interval_td = timedelta(minutes=msg_data['repeat_interval'])
+                        new_next_send_at = prev_next + interval_td
+                        while new_next_send_at <= send_time:
+                            new_next_send_at += interval_td
+                    else:
+                        new_next_send_at = compute_aligned_next_send_at(
+                            msg_data.get('start_time'),
+                            msg_data['repeat_interval'],
+                            send_time,
+                        )
 
                 def _update_sent(msg_id, sent_msg_id, is_one_shot, next_send_at_val):
                     with global_flask_app.app_context():
@@ -6736,11 +6744,21 @@ async def check_scheduled_messages(context):
                         else:
                             # Advance next_send_at so the scheduler waits for the
                             # next scheduled slot instead of retrying every tick.
-                            new_next = compute_aligned_next_send_at(
-                                scheduled_msg.start_time,
-                                scheduled_msg.repeat_interval,
-                                get_beijing_now(),
-                            )
+                            # Use current next_send_at as baseline to preserve
+                            # manual-send cadence; fall back to start_time.
+                            now_bj = get_beijing_now()
+                            cur_next = scheduled_msg.next_send_at
+                            if cur_next is not None:
+                                interval_td = timedelta(minutes=scheduled_msg.repeat_interval)
+                                new_next = cur_next + interval_td
+                                while new_next <= now_bj:
+                                    new_next += interval_td
+                            else:
+                                new_next = compute_aligned_next_send_at(
+                                    scheduled_msg.start_time,
+                                    scheduled_msg.repeat_interval,
+                                    now_bj,
+                                )
                             scheduled_msg.next_send_at = new_next
                         db.session.commit()
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])

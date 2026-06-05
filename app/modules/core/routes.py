@@ -116,6 +116,29 @@ def get_beijing_today():
     now = datetime.now(BEIJING_TZ)
     return now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def compute_aligned_next_send_at(start_time, repeat_interval_minutes, reference_time):
+    """Compute the next send time aligned to the original start_time cadence.
+
+    Advances from *start_time* by multiples of *repeat_interval_minutes* until
+    the result is strictly after *reference_time*.  This keeps the schedule
+    locked to the user-configured cadence (e.g. every-3-hours starting at
+    21:00 → 00:00, 03:00, 06:00 …) regardless of when the message was
+    actually delivered.
+
+    Falls back to ``reference_time + interval`` when *start_time* is None or
+    *repeat_interval_minutes* is <= 0.
+    """
+    if not repeat_interval_minutes or repeat_interval_minutes <= 0:
+        return None
+    interval_td = timedelta(minutes=repeat_interval_minutes)
+    if start_time is not None:
+        next_at = start_time
+        while next_at <= reference_time:
+            next_at += interval_td
+        return next_at
+    # No start_time available – best-effort: offset from reference_time
+    return reference_time + interval_td
+
 def parse_telegram_message_link(url):
     """
     Parse a t.me message link and return (from_chat_id, message_id) or (None, None).
@@ -1767,6 +1790,15 @@ def api_import_config(gid):
                     auto_pin=sm_data.get('auto_pin', False),
                     is_active=sm_data.get('is_active', True)
                 )
+                # Compute initial next_send_at aligned to start_time cadence
+                if sm.start_time and sm.is_active:
+                    now = get_beijing_now()
+                    if sm.start_time > now:
+                        sm.next_send_at = sm.start_time
+                    elif sm.repeat_interval > 0:
+                        sm.next_send_at = compute_aligned_next_send_at(
+                            sm.start_time, sm.repeat_interval, now
+                        )
                 db.session.add(sm)
         
         # Import points_rules (optional)
@@ -2995,9 +3027,11 @@ def api_send_scheduled_message_now(message_id):
             now = get_beijing_now()
             item.last_sent_at = now
             item.last_message_id = sent_message.message_id
-            # 手动发送后重新计算下次发送时间，使调度器以本次发送时刻为基准
+            # 手动发送后重新计算下次发送时间，保持与开始时间对齐
             if item.repeat_interval > 0:
-                item.next_send_at = now + timedelta(minutes=item.repeat_interval)
+                item.next_send_at = compute_aligned_next_send_at(
+                    item.start_time, item.repeat_interval, now
+                )
             else:
                 item.next_send_at = None
             db.session.commit()
@@ -3431,6 +3465,16 @@ def api_import_scheduled_messages():
                     item.remark = row[8] if len(row) > 8 else None
                     item.is_active = (str(row[9]).strip() == '启用') if len(row) > 9 and row[9] else True
                 
+                # Compute initial next_send_at aligned to start_time cadence
+                if item.start_time and item.is_active:
+                    now_import = get_beijing_now()
+                    if item.start_time > now_import:
+                        item.next_send_at = item.start_time
+                    elif item.repeat_interval > 0:
+                        item.next_send_at = compute_aligned_next_send_at(
+                            item.start_time, item.repeat_interval, now_import
+                        )
+
                 db.session.add(item)
                 imported_count += 1
             except Exception as e:
@@ -6472,6 +6516,7 @@ async def check_scheduled_messages(context):
                             'message_thread_id': msg.message_thread_id,
                             'auto_pin': msg.auto_pin,
                             'repeat_interval': msg.repeat_interval,
+                            'start_time': msg.start_time,  # used to align cadence
                             'last_sent_at': msg.last_sent_at,  # used for atomic claim
                             'next_send_at': msg.next_send_at,  # used to compute next schedule
                         })
@@ -6637,20 +6682,16 @@ async def check_scheduled_messages(context):
             # For one-shot messages (repeat_interval=0), also deactivate so the UI
             # reflects the correct state and the scheduler skips them on future runs.
             if sent_message:
-                # Compute next_send_at: advance from the previously scheduled time so
-                # the original cadence is preserved across crash-recovery restarts.
+                # Compute next_send_at: align to the original start_time cadence
+                # so the schedule stays locked to user-configured times (e.g.
+                # 21:00 → 00:00 → 03:00) regardless of actual delivery time.
                 new_next_send_at = None
                 if msg_data['repeat_interval'] > 0:
-                    interval_td = timedelta(minutes=msg_data['repeat_interval'])
-                    old_next_send_at = msg_data.get('next_send_at')
-                    if old_next_send_at is not None:
-                        # Advance from the old scheduled time until it's in the future
-                        new_next_send_at = old_next_send_at
-                        while new_next_send_at <= send_time:
-                            new_next_send_at += interval_td
-                    else:
-                        # First time or legacy record: schedule from actual send time
-                        new_next_send_at = send_time + interval_td
+                    new_next_send_at = compute_aligned_next_send_at(
+                        msg_data.get('start_time'),
+                        msg_data['repeat_interval'],
+                        send_time,
+                    )
 
                 def _update_sent(msg_id, sent_msg_id, is_one_shot, next_send_at_val):
                     with global_flask_app.app_context():
@@ -6697,9 +6738,11 @@ async def check_scheduled_messages(context):
                         else:
                             # Advance next_send_at so the scheduler waits for the
                             # next scheduled slot instead of retrying every tick.
-                            interval_td = timedelta(minutes=scheduled_msg.repeat_interval)
-                            base = scheduled_msg.last_sent_at or get_beijing_now()
-                            new_next = base + interval_td
+                            new_next = compute_aligned_next_send_at(
+                                scheduled_msg.start_time,
+                                scheduled_msg.repeat_interval,
+                                get_beijing_now(),
+                            )
                             scheduled_msg.next_send_at = new_next
                         db.session.commit()
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])

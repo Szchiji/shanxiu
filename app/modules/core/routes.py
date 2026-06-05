@@ -2747,14 +2747,39 @@ def api_save_scheduled_message():
         item.media_url = d.get('media_url', '').strip() or None
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
+        old_repeat_interval = item.repeat_interval
         item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
         item.delete_previous = d.get('delete_previous', False)
         
         # 解析时间
         start_time_str = d.get('start_time')
         stop_time_str = d.get('stop_time')
-        item.start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
+        old_start_time = item.start_time
+        new_start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
+        item.start_time = new_start_time
         item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
+        
+        # 当开始时间或重复间隔变化时，重新计算下次发送时间
+        if new_start_time != old_start_time or item.repeat_interval != old_repeat_interval:
+            if new_start_time:
+                now = get_beijing_now()
+                if new_start_time > now:
+                    # 开始时间在未来，下次发送时间设为开始时间
+                    item.next_send_at = new_start_time
+                elif item.repeat_interval > 0:
+                    # 开始时间已过且有重复间隔，从开始时间推算下一个发送时间点
+                    interval_td = timedelta(minutes=item.repeat_interval)
+                    next_at = new_start_time
+                    while next_at <= now:
+                        next_at += interval_td
+                    item.next_send_at = next_at
+                else:
+                    # 开始时间已过且不重复，清空下次发送时间
+                    item.next_send_at = None
+            else:
+                item.next_send_at = None
+            # 重置上次发送时间，让调度器重新开始
+            item.last_sent_at = None
         
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))

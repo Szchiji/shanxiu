@@ -746,12 +746,12 @@
                         <div class="row">
                             <div class="col-6">
                                 <label class="form-label fw-bold">开始时间</label>
-                                <input type="datetime-local" class="form-control" id="startTime">
+                                <input type="datetime-local" class="form-control" id="startTime" step="1">
                                 <div class="form-text">留空=立即</div>
                             </div>
                             <div class="col-6">
                                 <label class="form-label fw-bold">停止时间</label>
-                                <input type="datetime-local" class="form-control" id="stopTime">
+                                <input type="datetime-local" class="form-control" id="stopTime" step="1">
                                 <div class="form-text">留空=永不</div>
                             </div>
                         </div>
@@ -1157,6 +1157,7 @@
         if (!dateStr) return '';
         // dateStr comes from server already in Beijing time ("YYYY-MM-DDTHH:MM:SS").
         // Slice directly to avoid browser UTC conversion (which would shift by +8 h).
+        if (dateStr.length >= 19) return dateStr.slice(0, 19);
         if (dateStr.length >= 16) return dateStr.slice(0, 16);
         return '';
     }

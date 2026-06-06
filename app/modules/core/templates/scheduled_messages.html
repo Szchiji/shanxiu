@@ -572,12 +572,14 @@
                         {% elif item.media_type == 'media' %}
                         <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
+                    </td>
+                    <td>
                         {% if item.target_type == 'channel' or item.target_channel_id %}
-                        <div><span class="badge bg-info">频道</span></div>
-                        <small class="text-muted">{{ item.target_channel_id or '-' }}</small>
+                        <span class="badge bg-info">频道</span>
+                        <div><small class="text-muted">{{ item.target_channel_id or '-' }}</small></div>
                         {% else %}
-                        <div><span class="badge bg-secondary">群组</span></div>
-                        <small class="text-muted">默认聊天</small>
+                        <span class="badge bg-secondary">群组</span>
+                        <div><small class="text-muted">默认聊天</small></div>
                         {% endif %}
                     </td>
                     <td>
@@ -616,7 +618,7 @@
                         {% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">
-                        <div class="d-flex gap-1 align-items-end">
+                        <div class="d-flex gap-1 align-items-center">
                             <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                                 <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
                             </button>

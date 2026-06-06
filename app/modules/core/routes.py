@@ -211,10 +211,17 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
 
     sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
 
-    # 如果有按钮，单独发送一条带按钮的消息
-    if reply_markup:
+    # 如果有按钮，单独发送一条带按钮的消息（reply 到媒体组最后一条，使其在频道中显示为关联帖子）
+    if reply_markup and sent_messages:
         btn_text = '👇 点击下方按钮'
-        await bot.send_message(chat_id=chat_id, text=btn_text, reply_markup=reply_markup, **extra_kwargs)
+        btn_kwargs = dict(chat_id=chat_id, text=btn_text, reply_markup=reply_markup,
+                          reply_to_message_id=sent_messages[-1].message_id, **extra_kwargs)
+        try:
+            await bot.send_message(**btn_kwargs)
+        except Exception:
+            # 回退：如果 reply 失败（例如频道不允许），则不带 reply 发送
+            btn_kwargs.pop('reply_to_message_id', None)
+            await bot.send_message(**btn_kwargs)
 
     # 返回最后一条消息（用于 auto_pin 等）
     return sent_messages[-1] if sent_messages else None

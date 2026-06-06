@@ -59,7 +59,7 @@ class AutoReply(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     trigger_keyword = db.Column(db.String(255), nullable=False)  # 触发关键词
-    media_type = db.Column(db.String(20), default='text')  # text, image, video
+    media_type = db.Column(db.String(20), default='text')  # text, image, video, media
     media_url = db.Column(db.Text, nullable=True)  # 多媒体链接（单个，向后兼容）
     media_urls = db.Column(db.Text, default='[]')  # JSON数组，多个多媒体链接
     content = db.Column(db.Text, nullable=True)  # 富文本内容
@@ -78,12 +78,43 @@ class AutoReply(db.Model):
         try:
             urls = json.loads(self.media_urls or '[]')
             if urls:
-                return [u for u in urls if u]
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        if url:
+                            result.append(url)
+                    elif u:
+                        result.append(u)
+                return result
         except (json.JSONDecodeError, TypeError):
             pass
         # 兼容旧数据：从单个 media_url 字段读取
         if self.media_url:
             return [self.media_url]
+        return []
+
+    def get_media_url_with_types(self):
+        """获取多媒体链接及其类型列表，返回 [(url, type), ...]"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        mtype = u.get('type', 'image')
+                        if url:
+                            result.append((url, mtype))
+                    elif u:
+                        # 旧格式：使用 media_type 字段作为类型
+                        result.append((u, self.media_type if self.media_type in ('image', 'video') else 'image'))
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if self.media_url:
+            return [(self.media_url, self.media_type if self.media_type in ('image', 'video') else 'image')]
         return []
 
 
@@ -92,7 +123,7 @@ class ScheduledMessage(db.Model):
     __tablename__ = 'scheduled_messages'
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    media_type = db.Column(db.String(20), default='text')  # text, image, video
+    media_type = db.Column(db.String(20), default='text')  # text, image, video, media
     media_url = db.Column(db.Text, nullable=True)  # 多媒体链接（单个，向后兼容）
     media_urls = db.Column(db.Text, default='[]')  # JSON数组，多个多媒体链接
     content = db.Column(db.Text, nullable=True)  # 富文本内容
@@ -121,12 +152,43 @@ class ScheduledMessage(db.Model):
         try:
             urls = json.loads(self.media_urls or '[]')
             if urls:
-                return [u for u in urls if u]
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        if url:
+                            result.append(url)
+                    elif u:
+                        result.append(u)
+                return result
         except (json.JSONDecodeError, TypeError):
             pass
         # 兼容旧数据：从单个 media_url 字段读取
         if self.media_url:
             return [self.media_url]
+        return []
+
+    def get_media_url_with_types(self):
+        """获取多媒体链接及其类型列表，返回 [(url, type), ...]"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        mtype = u.get('type', 'image')
+                        if url:
+                            result.append((url, mtype))
+                    elif u:
+                        # 旧格式：使用 media_type 字段作为类型
+                        result.append((u, self.media_type if self.media_type in ('image', 'video') else 'image'))
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if self.media_url:
+            return [(self.media_url, self.media_type if self.media_type in ('image', 'video') else 'image')]
         return []
 
 

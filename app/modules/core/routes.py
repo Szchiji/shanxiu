@@ -158,10 +158,15 @@ def parse_telegram_message_link(url):
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
 
-async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None):
+async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None, media_url_types=None):
     """
     发送多个多媒体消息。当只有一个URL时使用单独发送，多个URL时使用 send_media_group。
+    支持混合类型（图片+视频）通过 media_url_types 参数指定每个URL的类型。
     返回发送的最后一条消息对象（用于置顶、删除等）。
+    
+    Args:
+        media_url_types: 可选，每个URL对应的类型列表 ['image', 'video', ...]。
+                         当 media_type='media' 时使用此参数确定每个URL的类型。
     """
     if not media_urls:
         return None
@@ -170,11 +175,20 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
     if message_thread_id:
         extra_kwargs['message_thread_id'] = message_thread_id
 
+    def _get_url_type(index):
+        """获取指定索引的URL类型"""
+        if media_url_types and index < len(media_url_types):
+            return media_url_types[index]
+        if media_type in ('image', 'video'):
+            return media_type
+        return 'image'  # 默认为图片
+
     if len(media_urls) == 1:
         # 单个媒体，使用原始方式发送（支持 reply_markup）
         url = media_urls[0]
+        url_type = _get_url_type(0)
         tg_from_chat, tg_msg_id = parse_telegram_message_link(url)
-        if media_type in ('image', 'video') and tg_from_chat and tg_msg_id:
+        if url_type in ('image', 'video') and tg_from_chat and tg_msg_id:
             copy_kwargs = dict(chat_id=chat_id, from_chat_id=tg_from_chat, message_id=tg_msg_id, reply_markup=reply_markup, **extra_kwargs)
             if content:
                 copy_kwargs['caption'] = content
@@ -182,40 +196,54 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
             try:
                 return await bot.copy_message(**copy_kwargs)
             except Exception:
-                fwd_kwargs = dict(chat_id=chat_id, from_chat_id=tg_from_chat, message_id=tg_msg_id, **extra_kwargs)
-                try:
-                    return await bot.forward_message(**fwd_kwargs)
-                except Exception:
-                    fallback_text = f"{content}\n{url}" if content else url
-                    return await bot.send_message(chat_id=chat_id, text=fallback_text, parse_mode='HTML', reply_markup=reply_markup, **extra_kwargs)
-        elif media_type == 'image':
+                # forward_message 不支持 reply_markup，跳过直接尝试 send_photo/send_video
+                pass
+            # 尝试直接发送媒体（带按钮）
+            try:
+                if url_type == 'image':
+                    return await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+                elif url_type == 'video':
+                    return await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+            except Exception:
+                fallback_text = f"{content}\n{url}" if content else url
+                return await bot.send_message(chat_id=chat_id, text=fallback_text, parse_mode='HTML', reply_markup=reply_markup, **extra_kwargs)
+        elif url_type == 'image':
             return await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
-        elif media_type == 'video':
+        elif url_type == 'video':
             return await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
         return None
 
     # 多个媒体，使用 send_media_group
-    # 注意：send_media_group 不支持 reply_markup，按钮将单独发送
+    # 注意：send_media_group 不支持 reply_markup
+    # 当有按钮时，将内容文本移到按钮消息中，使文本和按钮在同一条消息
     media_items = []
+    # 如果有按钮，不在媒体组上放caption，而是放在后续的按钮消息中
+    use_caption_on_media = not reply_markup
     for i, url in enumerate(media_urls):
-        # 第一个媒体附带 caption
-        caption = content if (i == 0 and content) else None
+        # 第一个媒体附带 caption（仅在没有按钮时）
+        caption = content if (i == 0 and content and use_caption_on_media) else None
         parse_mode = 'HTML' if caption else None
-        if media_type == 'image':
-            media_items.append(InputMediaPhoto(media=url, caption=caption, parse_mode=parse_mode))
-        elif media_type == 'video':
+        url_type = _get_url_type(i)
+        if url_type == 'video':
             media_items.append(InputMediaVideo(media=url, caption=caption, parse_mode=parse_mode))
+        else:
+            media_items.append(InputMediaPhoto(media=url, caption=caption, parse_mode=parse_mode))
 
     if not media_items:
         return None
 
     sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
 
-    # 如果有按钮，单独发送一条带按钮的消息（reply 到媒体组最后一条，使其在频道中显示为关联帖子）
+    # 如果有按钮，发送一条带按钮的消息（包含内容文本，使文字和按钮在同一帖子）
     if reply_markup and sent_messages:
-        btn_text = '👇 点击下方按钮'
+        # 使用实际内容文本，如果没有内容则使用占位符
+        btn_text = content if content else '👇 点击下方按钮'
+        btn_parse_mode = 'HTML' if content else None
         btn_kwargs = dict(chat_id=chat_id, text=btn_text, reply_markup=reply_markup,
                           reply_to_message_id=sent_messages[-1].message_id, **extra_kwargs)
+        if btn_parse_mode:
+            btn_kwargs['parse_mode'] = btn_parse_mode
+            btn_kwargs['link_preview_options'] = LinkPreviewOptions(is_disabled=True)
         try:
             await bot.send_message(**btn_kwargs)
         except Exception:
@@ -2632,11 +2660,27 @@ def api_save_auto_reply():
         # 支持多个多媒体链接
         media_urls_raw = d.get('media_urls', [])
         if isinstance(media_urls_raw, list):
-            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
-            item.media_urls = json.dumps(media_urls_clean)
-            # 同步第一个 URL 到 media_url 以兼容旧逻辑
-            if media_urls_clean:
-                item.media_url = media_urls_clean[0]
+            if item.media_type == 'media':
+                # 混合媒体类型：存储为对象数组
+                media_urls_clean = []
+                for u in media_urls_raw:
+                    if isinstance(u, dict):
+                        url = (u.get('url') or '').strip()
+                        mtype = u.get('type', 'image')
+                        if url:
+                            media_urls_clean.append({'url': url, 'type': mtype})
+                    elif u and str(u).strip():
+                        media_urls_clean.append({'url': str(u).strip(), 'type': 'image'})
+                item.media_urls = json.dumps(media_urls_clean)
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0].get('url') if isinstance(media_urls_clean[0], dict) else media_urls_clean[0]
+            else:
+                # 单一类型：存储为字符串数组
+                media_urls_clean = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
+                item.media_urls = json.dumps(media_urls_clean)
+                # 同步第一个 URL 到 media_url 以兼容旧逻辑
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         item.delete_after = safe_int(d.get('delete_after'), 0)
@@ -2866,10 +2910,26 @@ def api_save_scheduled_message():
         # 支持多个多媒体链接
         media_urls_raw = d.get('media_urls', [])
         if isinstance(media_urls_raw, list):
-            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
-            item.media_urls = json.dumps(media_urls_clean)
-            if media_urls_clean:
-                item.media_url = media_urls_clean[0]
+            if item.media_type == 'media':
+                # 混合媒体类型：存储为对象数组 [{"url": "...", "type": "image|video"}, ...]
+                media_urls_clean = []
+                for u in media_urls_raw:
+                    if isinstance(u, dict):
+                        url = (u.get('url') or '').strip()
+                        mtype = u.get('type', 'image')
+                        if url:
+                            media_urls_clean.append({'url': url, 'type': mtype})
+                    elif u and str(u).strip():
+                        media_urls_clean.append({'url': str(u).strip(), 'type': 'image'})
+                item.media_urls = json.dumps(media_urls_clean)
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0].get('url') if isinstance(media_urls_clean[0], dict) else media_urls_clean[0]
+            else:
+                # 单一类型：存储为字符串数组 ["url1", "url2", ...]
+                media_urls_clean = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
+                item.media_urls = json.dumps(media_urls_clean)
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         old_repeat_interval = item.repeat_interval
@@ -2947,10 +3007,24 @@ def api_send_scheduled_message_now(message_id):
         # 支持多个多媒体链接
         media_urls_raw = d.get('media_urls', [])
         if isinstance(media_urls_raw, list):
-            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
-            item.media_urls = json.dumps(media_urls_clean)
-            if media_urls_clean:
-                item.media_url = media_urls_clean[0]
+            if item.media_type == 'media':
+                media_urls_clean = []
+                for u in media_urls_raw:
+                    if isinstance(u, dict):
+                        url = (u.get('url') or '').strip()
+                        mtype = u.get('type', 'image')
+                        if url:
+                            media_urls_clean.append({'url': url, 'type': mtype})
+                    elif u and str(u).strip():
+                        media_urls_clean.append({'url': str(u).strip(), 'type': 'image'})
+                item.media_urls = json.dumps(media_urls_clean)
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0].get('url') if isinstance(media_urls_clean[0], dict) else media_urls_clean[0]
+            else:
+                media_urls_clean = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
+                item.media_urls = json.dumps(media_urls_clean)
+                if media_urls_clean:
+                    item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
@@ -2997,10 +3071,12 @@ def api_send_scheduled_message_now(message_id):
 
         # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
         chat_id = item.target_channel_id if item.target_type == 'channel' and item.target_channel_id else group.chat_id
+        url_with_types = item.get_media_url_with_types()
         msg_snapshot = {
             'media_type': item.media_type,
             'media_url': item.media_url,
             'media_urls': item.get_media_url_list(),
+            'media_url_types': [t for _, t in url_with_types] if url_with_types else None,
             'content': item.content,
             'links': item.links,
             'delete_previous': item.delete_previous,
@@ -3036,11 +3112,12 @@ def api_send_scheduled_message_now(message_id):
             media_urls = msg_snapshot.get('media_urls', [])
             media_type = msg_snapshot['media_type']
 
-            if media_type in ('image', 'video') and media_urls:
+            if media_type in ('image', 'video', 'media') and media_urls:
                 sent_message = await send_multi_media(
                     ptb_app.bot, chat_id, media_type, media_urls,
                     content=content, reply_markup=reply_markup,
-                    message_thread_id=message_thread_id
+                    message_thread_id=message_thread_id,
+                    media_url_types=msg_snapshot.get('media_url_types')
                 )
             elif content:
                 sent_message = await ptb_app.bot.send_message(
@@ -3129,10 +3206,31 @@ def api_send_preview_to_admin():
     msg_snapshot = {
         'media_type': d.get('media_type', 'text'),
         'media_url': (d.get('media_url') or '').strip() or None,
-        'media_urls': [u.strip() for u in (d.get('media_urls') or []) if u and u.strip()],
         'content': (d.get('content') or '').strip() or None,
         'links': d.get('links', '[]'),
     }
+    # 处理媒体URL和类型
+    media_type = msg_snapshot['media_type']
+    media_urls_raw = d.get('media_urls') or []
+    media_url_types = None
+    if media_type == 'media':
+        # 混合媒体：URL可能是对象数组
+        clean_urls = []
+        clean_types = []
+        for u in media_urls_raw:
+            if isinstance(u, dict):
+                url = (u.get('url') or '').strip()
+                mtype = u.get('type', 'image')
+                if url:
+                    clean_urls.append(url)
+                    clean_types.append(mtype)
+            elif u and str(u).strip():
+                clean_urls.append(str(u).strip())
+                clean_types.append('image')
+        msg_snapshot['media_urls'] = clean_urls
+        media_url_types = clean_types
+    else:
+        msg_snapshot['media_urls'] = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
     # 兼容：如果 media_urls 为空但 media_url 有值
     if not msg_snapshot['media_urls'] and msg_snapshot['media_url']:
         msg_snapshot['media_urls'] = [msg_snapshot['media_url']]
@@ -3152,10 +3250,11 @@ def api_send_preview_to_admin():
         media_urls = msg_snapshot.get('media_urls', [])
         media_type = msg_snapshot['media_type']
 
-        if media_type in ('image', 'video') and media_urls:
+        if media_type in ('image', 'video', 'media') and media_urls:
             sent_msg = await send_multi_media(
                 ptb_app.bot, chat_id, media_type, media_urls,
-                content=content, reply_markup=reply_markup
+                content=content, reply_markup=reply_markup,
+                media_url_types=media_url_types
             )
         elif content:
             sent_msg = await ptb_app.bot.send_message(
@@ -6560,6 +6659,9 @@ async def check_scheduled_messages(context):
                             should_send = elapsed_minutes >= msg.repeat_interval
                     
                     if should_send:
+                        # 获取每个URL的类型信息
+                        url_with_types = msg.get_media_url_with_types()
+                        media_url_types = [t for _, t in url_with_types] if url_with_types else None
                         messages_to_send.append({
                             'id': msg.id,
                             'chat_id': msg.group.chat_id,
@@ -6569,6 +6671,7 @@ async def check_scheduled_messages(context):
                             'media_type': msg.media_type,
                             'media_url': msg.media_url,
                             'media_urls': msg.get_media_url_list(),
+                            'media_url_types': media_url_types,
                             'content': msg.content,
                             'links': msg.links,
                             'delete_previous': msg.delete_previous,
@@ -6670,11 +6773,12 @@ async def check_scheduled_messages(context):
             media_urls = msg_data.get('media_urls', [])
             media_type = msg_data['media_type']
 
-            if media_type in ('image', 'video') and media_urls:
+            if media_type in ('image', 'video', 'media') and media_urls:
                 sent_message = await send_multi_media(
                     bot, chat_id, media_type, media_urls,
                     content=content, reply_markup=reply_markup,
-                    message_thread_id=message_thread_id
+                    message_thread_id=message_thread_id,
+                    media_url_types=msg_data.get('media_url_types')
                 )
             elif content:
                 sent_message = await bot.send_message(
@@ -13568,10 +13672,12 @@ async def on_message(update: Update, context):
                                 content = sanitize_html_for_telegram(points_reply.content or '')
                                 media_urls = points_reply.get_media_url_list()
                                 
-                                if points_reply.media_type in ('image', 'video') and media_urls:
+                                if points_reply.media_type in ('image', 'video', 'media') and media_urls:
+                                    url_with_types = points_reply.get_media_url_with_types()
                                     await send_multi_media(
                                         context.bot, chat.id, points_reply.media_type, media_urls,
-                                        content=content
+                                        content=content,
+                                        media_url_types=[t for _, t in url_with_types] if url_with_types else None
                                     )
                                 elif content:
                                     await msg.reply_html(
@@ -13631,10 +13737,12 @@ async def on_message(update: Update, context):
                             content = sanitize_html_for_telegram(auto_reply.content or '')
                             media_urls = auto_reply.get_media_url_list()
                             
-                            if auto_reply.media_type in ('image', 'video') and media_urls:
+                            if auto_reply.media_type in ('image', 'video', 'media') and media_urls:
+                                url_with_types = auto_reply.get_media_url_with_types()
                                 sent_reply = await send_multi_media(
                                     context.bot, chat.id, auto_reply.media_type, media_urls,
-                                    content=content, reply_markup=reply_markup
+                                    content=content, reply_markup=reply_markup,
+                                    media_url_types=[t for _, t in url_with_types] if url_with_types else None
                                 )
                             elif content:
                                 sent_reply = await msg.reply_html(

@@ -3070,7 +3070,7 @@ def api_send_scheduled_message_now(message_id):
             ptb_app = global_ptb_app
 
         # 快照发送所需数据，避免异步函数中的 ORM 懒加载问题
-        chat_id = item.target_channel_id if item.target_type == 'channel' and item.target_channel_id else group.chat_id
+        chat_id = item.target_channel_id if item.target_channel_id and (item.target_type == 'channel' or not item.target_type) else group.chat_id
         url_with_types = item.get_media_url_with_types()
         msg_snapshot = {
             'media_type': item.media_type,
@@ -3081,7 +3081,7 @@ def api_send_scheduled_message_now(message_id):
             'links': item.links,
             'delete_previous': item.delete_previous,
             'last_message_id': item.last_message_id,
-            'message_thread_id': item.message_thread_id if item.target_type != 'channel' else None,
+            'message_thread_id': item.message_thread_id if not (item.target_type == 'channel' or (not item.target_type and item.target_channel_id)) else None,
             'auto_pin': item.auto_pin,
         }
 
@@ -6731,8 +6731,8 @@ async def check_scheduled_messages(context):
     # 发送消息
     for msg_data in messages_to_send:
         try:
-            chat_id = msg_data['target_channel_id'] if msg_data.get('target_type') == 'channel' and msg_data.get('target_channel_id') else msg_data['chat_id']
-            message_thread_id = None if msg_data.get('target_type') == 'channel' else msg_data.get('message_thread_id')
+            chat_id = msg_data['target_channel_id'] if msg_data.get('target_channel_id') and (msg_data.get('target_type') == 'channel' or not msg_data.get('target_type')) else msg_data['chat_id']
+            message_thread_id = None if (msg_data.get('target_type') == 'channel' or (not msg_data.get('target_type') and msg_data.get('target_channel_id'))) else msg_data.get('message_thread_id')
 
             # Resolve which bot should send to this group
             bot = _get_bot_for_clone(msg_data.get('clone_id'), context.bot)

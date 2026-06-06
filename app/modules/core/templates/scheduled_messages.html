@@ -569,10 +569,9 @@
                         <span class="badge bg-success">图片{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% elif item.media_type == 'video' %}
                         <span class="badge bg-warning text-dark">视频{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
+                        {% elif item.media_type == 'media' %}
+                        <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
-                    </td>
-                    <td>
-                        {% if item.target_type == 'channel' %}
                         <div><span class="badge bg-info">频道</span></div>
                         <small class="text-muted">{{ item.target_channel_id or '-' }}</small>
                         {% else %}
@@ -671,6 +670,9 @@
                             <button type="button" class="media-type-btn btn btn-outline-secondary" data-type="video" onclick="selectMediaType('video')">
                                 <i class="fa-solid fa-video me-1"></i>视频
                             </button>
+                            <button type="button" class="media-type-btn btn btn-outline-secondary" data-type="media" onclick="selectMediaType('media')">
+                                <i class="fa-solid fa-photo-film me-1"></i>图片+视频
+                            </button>
                         </div>
                         <input type="hidden" id="mediaType" value="text">
                     </div>
@@ -680,6 +682,10 @@
                         <label class="form-label fw-bold">多媒体链接</label>
                         <div id="mediaUrlsContainer">
                             <div class="input-group mb-2 media-url-row">
+                                <select class="form-select media-url-type-select" style="max-width: 90px; display: none;">
+                                    <option value="image">图片</option>
+                                    <option value="video">视频</option>
+                                </select>
                                 <input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL">
                                 <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">
                                     <i class="fa-solid fa-times"></i>
@@ -922,14 +928,24 @@
         } else {
             mediaUrlSection.style.display = 'block';
         }
+        
+        // Show/hide per-URL type selectors for 'media' (mixed) type
+        const typeSelects = document.querySelectorAll('#mediaUrlsContainer .media-url-type-select');
+        typeSelects.forEach(sel => {
+            sel.style.display = (type === 'media') ? '' : 'none';
+        });
     }
 
     // 多媒体链接管理
     function addMediaUrl() {
         const container = document.getElementById('mediaUrlsContainer');
+        const mediaType = document.getElementById('mediaType').value;
+        const showTypeSelect = (mediaType === 'media');
         const row = document.createElement('div');
         row.className = 'input-group mb-2 media-url-row';
-        row.innerHTML = '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL">' +
+        row.innerHTML = '<select class="form-select media-url-type-select" style="max-width: 90px;' + (showTypeSelect ? '' : ' display: none;') + '">' +
+            '<option value="image">图片</option><option value="video">视频</option></select>' +
+            '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL">' +
             '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
             '<i class="fa-solid fa-times"></i></button>';
         container.appendChild(row);
@@ -947,25 +963,48 @@
     }
 
     function getMediaUrls() {
-        const inputs = document.querySelectorAll('#mediaUrlsContainer .media-url-input');
+        const mediaType = document.getElementById('mediaType').value;
+        const rows = document.querySelectorAll('#mediaUrlsContainer .media-url-row');
         const urls = [];
-        inputs.forEach(input => {
-            const val = input.value.trim();
-            if (val) urls.push(val);
+        rows.forEach(row => {
+            const input = row.querySelector('.media-url-input');
+            const val = input ? input.value.trim() : '';
+            if (val) {
+                if (mediaType === 'media') {
+                    // 混合类型：返回对象数组
+                    const typeSelect = row.querySelector('.media-url-type-select');
+                    const urlType = typeSelect ? typeSelect.value : 'image';
+                    urls.push({url: val, type: urlType});
+                } else {
+                    urls.push(val);
+                }
+            }
         });
         return urls;
     }
 
     function setMediaUrls(urls) {
         const container = document.getElementById('mediaUrlsContainer');
+        const mediaType = document.getElementById('mediaType').value;
+        const showTypeSelect = (mediaType === 'media');
         container.innerHTML = '';
         if (!urls || urls.length === 0) {
-            urls = [''];
+            urls = showTypeSelect ? [{url: '', type: 'image'}] : [''];
         }
-        urls.forEach(url => {
+        urls.forEach(item => {
+            let url = '', urlType = 'image';
+            if (typeof item === 'object' && item !== null) {
+                url = item.url || '';
+                urlType = item.type || 'image';
+            } else {
+                url = item || '';
+            }
             const row = document.createElement('div');
             row.className = 'input-group mb-2 media-url-row';
-            row.innerHTML = '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL" value="' + (url || '').replace(/"/g, '&quot;') + '">' +
+            row.innerHTML = '<select class="form-select media-url-type-select" style="max-width: 90px;' + (showTypeSelect ? '' : ' display: none;') + '">' +
+                '<option value="image"' + (urlType === 'image' ? ' selected' : '') + '>图片</option>' +
+                '<option value="video"' + (urlType === 'video' ? ' selected' : '') + '>视频</option></select>' +
+                '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL" value="' + (url).replace(/"/g, '&quot;') + '">' +
                 '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
                 '<i class="fa-solid fa-times"></i></button>';
             container.appendChild(row);
@@ -1308,14 +1347,15 @@
     async function previewMessage() {
         const mediaType = document.getElementById('mediaType').value;
         const mediaUrls = getMediaUrls();
-        const content = htmlToTemplate(document.getElementById('editor').innerHTML);
+        // 获取第一个URL字符串用于兼容
+        const firstUrl = mediaUrls.length > 0 ? (typeof mediaUrls[0] === 'object' ? mediaUrls[0].url : mediaUrls[0]) : '';
 
         const payload = {
             group_id: groupId,
             media_type: mediaType,
-            media_url: mediaUrls[0] || '',
+            media_url: firstUrl,
             media_urls: mediaUrls,
-            content: content,
+            content: htmlToTemplate(document.getElementById('editor').innerHTML),
             links: JSON.stringify(currentLinks),
         };
 
@@ -1341,11 +1381,13 @@
         const itemId = document.getElementById('itemId').value;
         
         const mediaUrls = getMediaUrls();
+        // 获取第一个URL字符串用于兼容
+        const firstUrl = mediaUrls.length > 0 ? (typeof mediaUrls[0] === 'object' ? mediaUrls[0].url : mediaUrls[0]) : '';
         const data = {
             group_id: groupId,
             id: itemId ? parseInt(itemId) : null,
             media_type: document.getElementById('mediaType').value,
-            media_url: mediaUrls[0] || '',
+            media_url: firstUrl,
             media_urls: mediaUrls,
             content: htmlToTemplate(document.getElementById('editor').innerHTML),
             links: JSON.stringify(currentLinks.filter(l => l.text && l.url)),
@@ -1392,10 +1434,11 @@
         if (!confirm('确定要立即发送此定时消息吗？')) return;
 
         const sendMediaUrls = getMediaUrls();
+        const sendFirstUrl = sendMediaUrls.length > 0 ? (typeof sendMediaUrls[0] === 'object' ? sendMediaUrls[0].url : sendMediaUrls[0]) : '';
         const data = {
             group_id: groupId,
             media_type: document.getElementById('mediaType').value,
-            media_url: sendMediaUrls[0] || '',
+            media_url: sendFirstUrl,
             media_urls: sendMediaUrls,
             content: htmlToTemplate(document.getElementById('editor').innerHTML),
             links: JSON.stringify(currentLinks.filter(l => l.text && l.url)),

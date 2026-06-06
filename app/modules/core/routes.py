@@ -13,7 +13,7 @@ from app.services import sanitize_html_for_telegram
 from app.services.points_service import clamp_award_to_daily_cap
 from app.utils import encrypt_token, decrypt_token
 from app import bot_clone_manager
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_, cast, String, func, case
@@ -157,6 +157,67 @@ def parse_telegram_message_link(url):
     if m:
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
+
+async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None):
+    """
+    发送多个多媒体消息。当只有一个URL时使用单独发送，多个URL时使用 send_media_group。
+    返回发送的最后一条消息对象（用于置顶、删除等）。
+    """
+    if not media_urls:
+        return None
+
+    extra_kwargs = {}
+    if message_thread_id:
+        extra_kwargs['message_thread_id'] = message_thread_id
+
+    if len(media_urls) == 1:
+        # 单个媒体，使用原始方式发送（支持 reply_markup）
+        url = media_urls[0]
+        tg_from_chat, tg_msg_id = parse_telegram_message_link(url)
+        if media_type in ('image', 'video') and tg_from_chat and tg_msg_id:
+            copy_kwargs = dict(chat_id=chat_id, from_chat_id=tg_from_chat, message_id=tg_msg_id, reply_markup=reply_markup, **extra_kwargs)
+            if content:
+                copy_kwargs['caption'] = content
+                copy_kwargs['parse_mode'] = 'HTML'
+            try:
+                return await bot.copy_message(**copy_kwargs)
+            except Exception:
+                fwd_kwargs = dict(chat_id=chat_id, from_chat_id=tg_from_chat, message_id=tg_msg_id, **extra_kwargs)
+                try:
+                    return await bot.forward_message(**fwd_kwargs)
+                except Exception:
+                    fallback_text = f"{content}\n{url}" if content else url
+                    return await bot.send_message(chat_id=chat_id, text=fallback_text, parse_mode='HTML', reply_markup=reply_markup, **extra_kwargs)
+        elif media_type == 'image':
+            return await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+        elif media_type == 'video':
+            return await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+        return None
+
+    # 多个媒体，使用 send_media_group
+    # 注意：send_media_group 不支持 reply_markup，按钮将单独发送
+    media_items = []
+    for i, url in enumerate(media_urls):
+        # 第一个媒体附带 caption
+        caption = content if (i == 0 and content) else None
+        parse_mode = 'HTML' if caption else None
+        if media_type == 'image':
+            media_items.append(InputMediaPhoto(media=url, caption=caption, parse_mode=parse_mode))
+        elif media_type == 'video':
+            media_items.append(InputMediaVideo(media=url, caption=caption, parse_mode=parse_mode))
+
+    if not media_items:
+        return None
+
+    sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+
+    # 如果有按钮，单独发送一条带按钮的消息
+    if reply_markup:
+        btn_text = '👇 点击下方按钮'
+        await bot.send_message(chat_id=chat_id, text=btn_text, reply_markup=reply_markup, **extra_kwargs)
+
+    # 返回最后一条消息（用于 auto_pin 等）
+    return sent_messages[-1] if sent_messages else None
 
 def build_inline_keyboard_from_links(links):
     """
@@ -2561,6 +2622,14 @@ def api_save_auto_reply():
         item.trigger_keyword = trigger_keyword
         item.media_type = d.get('media_type', 'text')
         item.media_url = d.get('media_url', '').strip() or None
+        # 支持多个多媒体链接
+        media_urls_raw = d.get('media_urls', [])
+        if isinstance(media_urls_raw, list):
+            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
+            item.media_urls = json.dumps(media_urls_clean)
+            # 同步第一个 URL 到 media_url 以兼容旧逻辑
+            if media_urls_clean:
+                item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         item.delete_after = safe_int(d.get('delete_after'), 0)
@@ -2645,7 +2714,9 @@ def api_export_auto_replies(group_id):
         for row_num, ar in enumerate(auto_replies, 2):
             ws.cell(row=row_num, column=1, value=ar.trigger_keyword)
             ws.cell(row=row_num, column=2, value=ar.media_type or 'text')
-            ws.cell(row=row_num, column=3, value=ar.media_url or '')
+            # 导出多媒体链接：多个URL用换行分隔
+            media_url_list = ar.get_media_url_list()
+            ws.cell(row=row_num, column=3, value='\n'.join(media_url_list) if media_url_list else '')
             ws.cell(row=row_num, column=4, value=ar.content or '')
             ws.cell(row=row_num, column=5, value=ar.links or '[]')
             ws.cell(row=row_num, column=6, value=ar.delete_after or 0)
@@ -2723,7 +2794,15 @@ def api_import_auto_replies():
                 item = AutoReply(group_id=group_id)
                 item.trigger_keyword = row[0] if row[0] else ''
                 item.media_type = row[1] if len(row) > 1 and row[1] else 'text'
-                item.media_url = row[2] if len(row) > 2 else None
+                # 导入多媒体链接：支持换行分隔的多个URL
+                raw_media = str(row[2]).strip() if len(row) > 2 and row[2] else ''
+                if raw_media:
+                    url_list = [u.strip() for u in raw_media.split('\n') if u.strip()]
+                    item.media_urls = json.dumps(url_list)
+                    item.media_url = url_list[0] if url_list else None
+                else:
+                    item.media_url = None
+                    item.media_urls = '[]'
                 item.content = row[3] if len(row) > 3 else None
                 item.links = row[4] if len(row) > 4 and row[4] else '[]'
                 item.delete_after = int(row[5]) if len(row) > 5 and row[5] else 0
@@ -2777,6 +2856,13 @@ def api_save_scheduled_message():
         
         item.media_type = d.get('media_type', 'text')
         item.media_url = d.get('media_url', '').strip() or None
+        # 支持多个多媒体链接
+        media_urls_raw = d.get('media_urls', [])
+        if isinstance(media_urls_raw, list):
+            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
+            item.media_urls = json.dumps(media_urls_clean)
+            if media_urls_clean:
+                item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         old_repeat_interval = item.repeat_interval
@@ -2851,6 +2937,13 @@ def api_send_scheduled_message_now(message_id):
         # 更新消息内容（与保存逻辑相同）
         item.media_type = d.get('media_type', 'text')
         item.media_url = d.get('media_url', '').strip() or None
+        # 支持多个多媒体链接
+        media_urls_raw = d.get('media_urls', [])
+        if isinstance(media_urls_raw, list):
+            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
+            item.media_urls = json.dumps(media_urls_clean)
+            if media_urls_clean:
+                item.media_url = media_urls_clean[0]
         item.content = d.get('content', '').strip() or None
         item.links = d.get('links', '[]')
         item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
@@ -2900,6 +2993,7 @@ def api_send_scheduled_message_now(message_id):
         msg_snapshot = {
             'media_type': item.media_type,
             'media_url': item.media_url,
+            'media_urls': item.get_media_url_list(),
             'content': item.content,
             'links': item.links,
             'delete_previous': item.delete_previous,
@@ -2932,65 +3026,14 @@ def api_send_scheduled_message_now(message_id):
             content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
 
             sent_message = None
-            media_url = msg_snapshot['media_url']
-            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
-            if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
-                # t.me link: try copy_message (no "Forwarded from" header) first;
-                # fall back to forward_message, then to a text message with link preview
-                # if the bot doesn't have access to the source channel.
-                copy_kwargs = dict(
-                    chat_id=chat_id,
-                    from_chat_id=tg_from_chat,
-                    message_id=tg_msg_id,
-                    reply_markup=reply_markup
-                )
-                if message_thread_id:
-                    copy_kwargs['message_thread_id'] = message_thread_id
-                if content:
-                    copy_kwargs['caption'] = content
-                    copy_kwargs['parse_mode'] = 'HTML'
-                try:
-                    sent_message = await ptb_app.bot.copy_message(**copy_kwargs)
-                except Exception as copy_err:
-                    print(f"⚠️ copy_message 失败，尝试 forward_message: {copy_err}", flush=True)
-                    # Fallback 1: forward_message (shows "Forwarded from" header)
-                    fwd_kwargs = dict(
-                        chat_id=chat_id,
-                        from_chat_id=tg_from_chat,
-                        message_id=tg_msg_id,
-                    )
-                    if message_thread_id:
-                        fwd_kwargs['message_thread_id'] = message_thread_id
-                    try:
-                        sent_message = await ptb_app.bot.forward_message(**fwd_kwargs)
-                    except Exception as fwd_err:
-                        print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
-                        # Fallback 2: send link as text with preview
-                        fallback_text = f"{content}\n{media_url}" if content else media_url
-                        sent_message = await ptb_app.bot.send_message(
-                            chat_id=chat_id,
-                            text=fallback_text,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup,
-                            **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                        )
-            elif msg_snapshot['media_type'] == 'image' and media_url:
-                sent_message = await ptb_app.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=media_url,
-                    caption=content if content else None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup,
-                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                )
-            elif msg_snapshot['media_type'] == 'video' and media_url:
-                sent_message = await ptb_app.bot.send_video(
-                    chat_id=chat_id,
-                    video=media_url,
-                    caption=content if content else None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup,
-                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
+            media_urls = msg_snapshot.get('media_urls', [])
+            media_type = msg_snapshot['media_type']
+
+            if media_type in ('image', 'video') and media_urls:
+                sent_message = await send_multi_media(
+                    ptb_app.bot, chat_id, media_type, media_urls,
+                    content=content, reply_markup=reply_markup,
+                    message_thread_id=message_thread_id
                 )
             elif content:
                 sent_message = await ptb_app.bot.send_message(
@@ -3079,9 +3122,13 @@ def api_send_preview_to_admin():
     msg_snapshot = {
         'media_type': d.get('media_type', 'text'),
         'media_url': (d.get('media_url') or '').strip() or None,
+        'media_urls': [u.strip() for u in (d.get('media_urls') or []) if u and u.strip()],
         'content': (d.get('content') or '').strip() or None,
         'links': d.get('links', '[]'),
     }
+    # 兼容：如果 media_urls 为空但 media_url 有值
+    if not msg_snapshot['media_urls'] and msg_snapshot['media_url']:
+        msg_snapshot['media_urls'] = [msg_snapshot['media_url']]
     chat_id = admin_tg_id
 
     async def _send_preview():
@@ -3094,52 +3141,14 @@ def api_send_preview_to_admin():
         reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
         content = sanitize_html_for_telegram(msg_snapshot['content'] or '')
 
-        media_url = msg_snapshot['media_url']
-        tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
         sent_msg = None
-        if msg_snapshot['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
-            copy_kwargs = dict(
-                chat_id=chat_id,
-                from_chat_id=tg_from_chat,
-                message_id=tg_msg_id,
-                reply_markup=reply_markup,
-            )
-            if content:
-                copy_kwargs['caption'] = content
-                copy_kwargs['parse_mode'] = 'HTML'
-            try:
-                sent_msg = await ptb_app.bot.copy_message(**copy_kwargs)
-            except Exception:
-                try:
-                    sent_msg = await ptb_app.bot.forward_message(
-                        chat_id=chat_id,
-                        from_chat_id=tg_from_chat,
-                        message_id=tg_msg_id,
-                    )
-                except Exception:
-                    fallback_text = f"{content}\n{media_url}" if content else media_url
-                    sent_msg = await ptb_app.bot.send_message(
-                        chat_id=chat_id,
-                        text=fallback_text,
-                        parse_mode='HTML',
-                        reply_markup=reply_markup,
-                        link_preview_options=LinkPreviewOptions(is_disabled=True),
-                    )
-        elif msg_snapshot['media_type'] == 'image' and media_url:
-            sent_msg = await ptb_app.bot.send_photo(
-                chat_id=chat_id,
-                photo=media_url,
-                caption=content if content else None,
-                parse_mode='HTML' if content else None,
-                reply_markup=reply_markup,
-            )
-        elif msg_snapshot['media_type'] == 'video' and media_url:
-            sent_msg = await ptb_app.bot.send_video(
-                chat_id=chat_id,
-                video=media_url,
-                caption=content if content else None,
-                parse_mode='HTML' if content else None,
-                reply_markup=reply_markup,
+        media_urls = msg_snapshot.get('media_urls', [])
+        media_type = msg_snapshot['media_type']
+
+        if media_type in ('image', 'video') and media_urls:
+            sent_msg = await send_multi_media(
+                ptb_app.bot, chat_id, media_type, media_urls,
+                content=content, reply_markup=reply_markup
             )
         elif content:
             sent_msg = await ptb_app.bot.send_message(
@@ -3321,7 +3330,9 @@ def api_export_scheduled_messages(group_id):
             ws.cell(row=row_num, column=3, value=sm.stop_time.strftime('%Y-%m-%d %H:%M:%S') if sm.stop_time else '')
             ws.cell(row=row_num, column=4, value=format_repeat_interval(sm.repeat_interval))
             ws.cell(row=row_num, column=5, value=sm.media_type or 'text')
-            ws.cell(row=row_num, column=6, value=sm.media_url or '')
+            # 导出多媒体链接：多个URL用换行分隔
+            media_url_list = sm.get_media_url_list()
+            ws.cell(row=row_num, column=6, value='\n'.join(media_url_list) if media_url_list else '')
             ws.cell(row=row_num, column=7, value=sm.content or '')
             ws.cell(row=row_num, column=8, value=sm.links or '[]')
             ws.cell(row=row_num, column=9, value='不分页')
@@ -3447,7 +3458,15 @@ def api_import_scheduled_messages():
                     item.stop_time = _parse_dt(row[2] if len(row) > 2 else None)
                     item.repeat_interval = parse_repeat_interval(row[3] if len(row) > 3 else None)
                     item.media_type = str(row[4]).strip() if len(row) > 4 and row[4] else 'text'
-                    item.media_url = str(row[5]).strip() if len(row) > 5 and row[5] else None
+                    # 导入多媒体链接：支持换行分隔的多个URL
+                    raw_media = str(row[5]).strip() if len(row) > 5 and row[5] else ''
+                    if raw_media:
+                        url_list = [u.strip() for u in raw_media.split('\n') if u.strip()]
+                        item.media_urls = json.dumps(url_list)
+                        item.media_url = url_list[0] if url_list else None
+                    else:
+                        item.media_url = None
+                        item.media_urls = '[]'
                     item.content = row[6] if len(row) > 6 else None
                     item.links = str(row[7]).strip() if len(row) > 7 and row[7] else '[]'
                     # column 8: 按钮分页 — skip
@@ -3460,7 +3479,15 @@ def api_import_scheduled_messages():
                     # 0:消息类型, 1:多媒体链接, 2:消息内容, 3:链接按钮, 4:间隔(分钟),
                     # 5:删除上一条, 6:开始时间, 7:停止时间, 8:备注, 9:状态
                     item.media_type = str(row[0]).strip() if row[0] else 'text'
-                    item.media_url = row[1] if len(row) > 1 else None
+                    # 导入多媒体链接：支持换行分隔的多个URL
+                    raw_media_old = str(row[1]).strip() if len(row) > 1 and row[1] else ''
+                    if raw_media_old:
+                        url_list_old = [u.strip() for u in raw_media_old.split('\n') if u.strip()]
+                        item.media_urls = json.dumps(url_list_old)
+                        item.media_url = url_list_old[0] if url_list_old else None
+                    else:
+                        item.media_url = None
+                        item.media_urls = '[]'
                     item.content = row[2] if len(row) > 2 else None
                     item.links = str(row[3]).strip() if len(row) > 3 and row[3] else '[]'
                     item.repeat_interval = 0
@@ -3913,6 +3940,13 @@ def api_save_points_auto_reply():
         reply.content = d.get('content')
         reply.media_type = d.get('media_type', 'text')
         reply.media_url = d.get('media_url')
+        # 支持多个多媒体链接
+        media_urls_raw = d.get('media_urls', [])
+        if isinstance(media_urls_raw, list):
+            media_urls_clean = [u.strip() for u in media_urls_raw if u and u.strip()]
+            reply.media_urls = json.dumps(media_urls_clean)
+            if media_urls_clean:
+                reply.media_url = media_urls_clean[0]
         reply.is_active = d.get('is_active', True)
         
         db.session.commit()
@@ -6527,6 +6561,7 @@ async def check_scheduled_messages(context):
                             'clone_id': msg.group.clone_id,  # which bot to use
                             'media_type': msg.media_type,
                             'media_url': msg.media_url,
+                            'media_urls': msg.get_media_url_list(),
                             'content': msg.content,
                             'links': msg.links,
                             'delete_previous': msg.delete_previous,
@@ -6625,66 +6660,14 @@ async def check_scheduled_messages(context):
             # 发送消息
             sent_message = None
             content = sanitize_html_for_telegram(msg_data['content'] or '')
-            media_url = msg_data['media_url']
-            tg_from_chat, tg_msg_id = parse_telegram_message_link(media_url)
+            media_urls = msg_data.get('media_urls', [])
+            media_type = msg_data['media_type']
 
-            if msg_data['media_type'] in ('image', 'video') and tg_from_chat and tg_msg_id:
-                # t.me link: try copy_message (no "Forwarded from" header) first;
-                # fall back to forward_message, then to a text message with link preview
-                # if the bot doesn't have access to the source channel.
-                copy_kwargs = dict(
-                    chat_id=chat_id,
-                    from_chat_id=tg_from_chat,
-                    message_id=tg_msg_id,
-                    reply_markup=reply_markup
-                )
-                if message_thread_id:
-                    copy_kwargs['message_thread_id'] = message_thread_id
-                if content:
-                    copy_kwargs['caption'] = content
-                    copy_kwargs['parse_mode'] = 'HTML'
-                try:
-                    sent_message = await bot.copy_message(**copy_kwargs)
-                except Exception as copy_err:
-                    print(f"⚠️ copy_message 失败，尝试 forward_message: {copy_err}", flush=True)
-                    # Fallback 1: forward_message (shows "Forwarded from" header)
-                    fwd_kwargs = dict(
-                        chat_id=chat_id,
-                        from_chat_id=tg_from_chat,
-                        message_id=tg_msg_id,
-                    )
-                    if message_thread_id:
-                        fwd_kwargs['message_thread_id'] = message_thread_id
-                    try:
-                        sent_message = await bot.forward_message(**fwd_kwargs)
-                    except Exception as fwd_err:
-                        print(f"⚠️ forward_message 也失败，降级为纯文本发送: {fwd_err}", flush=True)
-                        # Fallback 2: send link as text with preview so recipients can open it
-                        fallback_text = f"{content}\n{media_url}" if content else media_url
-                        sent_message = await bot.send_message(
-                            chat_id=chat_id,
-                            text=fallback_text,
-                            parse_mode='HTML',
-                            reply_markup=reply_markup,
-                            **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                        )
-            elif msg_data['media_type'] == 'image' and media_url:
-                sent_message = await bot.send_photo(
-                    chat_id=chat_id,
-                    photo=media_url,
-                    caption=content if content else None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup,
-                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                )
-            elif msg_data['media_type'] == 'video' and media_url:
-                sent_message = await bot.send_video(
-                    chat_id=chat_id,
-                    video=media_url,
-                    caption=content if content else None,
-                    parse_mode='HTML' if content else None,
-                    reply_markup=reply_markup,
-                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
+            if media_type in ('image', 'video') and media_urls:
+                sent_message = await send_multi_media(
+                    bot, chat_id, media_type, media_urls,
+                    content=content, reply_markup=reply_markup,
+                    message_thread_id=message_thread_id
                 )
             elif content:
                 sent_message = await bot.send_message(
@@ -13576,18 +13559,12 @@ async def on_message(update: Update, context):
                                 
                                 # Send the content only after successful commit
                                 content = sanitize_html_for_telegram(points_reply.content or '')
+                                media_urls = points_reply.get_media_url_list()
                                 
-                                if points_reply.media_type == 'image' and points_reply.media_url:
-                                    await msg.reply_photo(
-                                        photo=points_reply.media_url,
-                                        caption=content,
-                                        parse_mode='HTML'
-                                    )
-                                elif points_reply.media_type == 'video' and points_reply.media_url:
-                                    await msg.reply_video(
-                                        video=points_reply.media_url,
-                                        caption=content,
-                                        parse_mode='HTML'
+                                if points_reply.media_type in ('image', 'video') and media_urls:
+                                    await send_multi_media(
+                                        context.bot, chat.id, points_reply.media_type, media_urls,
+                                        content=content
                                     )
                                 elif content:
                                     await msg.reply_html(
@@ -13645,20 +13622,12 @@ async def on_message(update: Update, context):
                             # 发送回复
                             sent_reply = None
                             content = sanitize_html_for_telegram(auto_reply.content or '')
+                            media_urls = auto_reply.get_media_url_list()
                             
-                            if auto_reply.media_type == 'image' and auto_reply.media_url:
-                                sent_reply = await msg.reply_photo(
-                                    photo=auto_reply.media_url,
-                                    caption=content,
-                                    parse_mode='HTML',
-                                    reply_markup=reply_markup
-                                )
-                            elif auto_reply.media_type == 'video' and auto_reply.media_url:
-                                sent_reply = await msg.reply_video(
-                                    video=auto_reply.media_url,
-                                    caption=content,
-                                    parse_mode='HTML',
-                                    reply_markup=reply_markup
+                            if auto_reply.media_type in ('image', 'video') and media_urls:
+                                sent_reply = await send_multi_media(
+                                    context.bot, chat.id, auto_reply.media_type, media_urls,
+                                    content=content, reply_markup=reply_markup
                                 )
                             elif content:
                                 sent_reply = await msg.reply_html(

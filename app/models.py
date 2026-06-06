@@ -60,7 +60,8 @@ class AutoReply(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     trigger_keyword = db.Column(db.String(255), nullable=False)  # 触发关键词
     media_type = db.Column(db.String(20), default='text')  # text, image, video
-    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
+    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接（单个，向后兼容）
+    media_urls = db.Column(db.Text, default='[]')  # JSON数组，多个多媒体链接
     content = db.Column(db.Text, nullable=True)  # 富文本内容
     links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
     delete_after = db.Column(db.Integer, default=0)  # 删除上一条消息的时间(秒)，0表示不删除
@@ -71,6 +72,20 @@ class AutoReply(db.Model):
     
     group = db.relationship('BotGroup', backref='auto_replies', lazy=True)
 
+    def get_media_url_list(self):
+        """获取多媒体链接列表，兼容旧数据"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                return [u for u in urls if u]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # 兼容旧数据：从单个 media_url 字段读取
+        if self.media_url:
+            return [self.media_url]
+        return []
+
 
 class ScheduledMessage(db.Model):
     """定时消息"""
@@ -78,7 +93,8 @@ class ScheduledMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     media_type = db.Column(db.String(20), default='text')  # text, image, video
-    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接
+    media_url = db.Column(db.Text, nullable=True)  # 多媒体链接（单个，向后兼容）
+    media_urls = db.Column(db.Text, default='[]')  # JSON数组，多个多媒体链接
     content = db.Column(db.Text, nullable=True)  # 富文本内容
     links = db.Column(db.Text, default='[]')  # JSON格式的链接数组
     repeat_interval = db.Column(db.Integer, default=0)  # 重复间隔(分钟)，0表示不重复
@@ -98,6 +114,20 @@ class ScheduledMessage(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     group = db.relationship('BotGroup', backref='scheduled_messages', lazy=True)
+
+    def get_media_url_list(self):
+        """获取多媒体链接列表，兼容旧数据"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                return [u for u in urls if u]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # 兼容旧数据：从单个 media_url 字段读取
+        if self.media_url:
+            return [self.media_url]
+        return []
 
 
 class StartMessage(db.Model):
@@ -280,11 +310,25 @@ class PointsAutoReply(db.Model):
     content = db.Column(db.Text, nullable=True)
     media_type = db.Column(db.String(20), default='text')
     media_url = db.Column(db.Text, nullable=True)
+    media_urls = db.Column(db.Text, default='[]')  # JSON数组，多个多媒体链接
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     group = db.relationship('BotGroup', backref='points_auto_reply', lazy=True)
+
+    def get_media_url_list(self):
+        """获取多媒体链接列表，兼容旧数据"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                return [u for u in urls if u]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if self.media_url:
+            return [self.media_url]
+        return []
 
 
 class PointsAuction(db.Model):

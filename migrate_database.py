@@ -36,6 +36,8 @@ def run_migrations():
         "ALTER TABLE auto_replies ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
         "ALTER TABLE auto_replies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE auto_replies ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        # Auto replies: multiple media URLs
+        "ALTER TABLE auto_replies ADD COLUMN IF NOT EXISTS media_urls TEXT DEFAULT '[]'",
         # Scheduled messages table columns
         "ALTER TABLE scheduled_messages ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
         "CREATE INDEX IF NOT EXISTS ix_scheduled_messages_group_id ON scheduled_messages(group_id)",
@@ -58,6 +60,10 @@ def run_migrations():
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS next_send_at TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         "ALTER TABLE scheduled_messages ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        # Scheduled messages: multiple media URLs
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS media_urls TEXT DEFAULT '[]'",
+        # Points auto reply: multiple media URLs
+        "ALTER TABLE points_auto_reply ADD COLUMN IF NOT EXISTS media_urls TEXT DEFAULT '[]'",
         # Start messages table columns
         "ALTER TABLE start_messages ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
         "CREATE INDEX IF NOT EXISTS ix_start_messages_group_id ON start_messages(group_id)",

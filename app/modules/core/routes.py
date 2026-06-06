@@ -232,13 +232,15 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
         return None
 
     # 多个媒体，使用 send_media_group
-    # 注意：send_media_group 本身不支持 reply_markup，
-    # 但发送后可以通过 editMessageReplyMarkup 把按钮附加到最后一条媒体消息上，
-    # 使按钮与媒体组保持在同一个相册内，避免产生独立的按钮文本消息。
+    # 注意：send_media_group 本身不支持 reply_markup，且 editMessageReplyMarkup
+    # 对媒体组消息也不可靠。有按钮时通过发送跟随文字消息来携带按钮，同时
+    # 不在媒体项中嵌入 caption，避免内容在相册和跟随消息中重复显示。
+    # 无按钮时 caption 正常放在第一条媒体项上。
+    has_buttons = bool(reply_markup)
     media_items = []
     for i, url in enumerate(media_urls):
-        # 第一个媒体始终附带 caption（无论有无按钮）
-        caption = content if (i == 0 and content) else None
+        # 有按钮时不在媒体项中嵌入 caption（caption 通过跟随消息发送）
+        caption = content if (i == 0 and content and not has_buttons) else None
         parse_mode = 'HTML' if caption else None
         url_type = _get_url_type(i)
         if url_type == 'video':
@@ -255,20 +257,30 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
     if collected_ids is not None and sent_messages:
         collected_ids.extend(msg.message_id for msg in sent_messages)
 
-    # 如果有按钮，通过 editMessageReplyMarkup 将按钮附加到最后一条媒体消息上，
-    # 使按钮直接显示在相册内，同时避免产生孤立的按钮文本消息（否则删除上一条时会遗漏）。
+    last_sent = sent_messages[-1] if sent_messages else None
+
+    # 如果有按钮，发送跟随文字消息携带内容+按钮
+    # sendMediaGroup 不支持内联键盘，通过跟随消息来携带按钮是最可靠的方式
     if reply_markup and sent_messages:
+        # 有内容时用内容作为跟随消息文字，无内容时用零宽空格（不显示多余文字）
+        follow_text = content if content else '\u200b'
         try:
-            await bot.edit_message_reply_markup(
+            follow_msg = await bot.send_message(
                 chat_id=chat_id,
-                message_id=sent_messages[-1].message_id,
+                text=follow_text,
+                parse_mode='HTML' if content else None,
                 reply_markup=reply_markup,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                **extra_kwargs
             )
-        except Exception:
-            pass
+            if collected_ids is not None and follow_msg:
+                collected_ids.append(follow_msg.message_id)
+            last_sent = follow_msg
+        except Exception as e:
+            print(f"⚠️ 无法发送媒体组按钮跟随消息: {e}", flush=True)
 
     # 返回最后一条消息（用于 auto_pin、last_message_id 存储等）
-    return sent_messages[-1] if sent_messages else None
+    return last_sent
 
 def build_inline_keyboard_from_links(links):
     """
@@ -6858,14 +6870,18 @@ async def check_scheduled_messages(context):
 
                 def _update_sent(msg_id, sent_msg_id, sent_ids, is_one_shot, next_send_at_val):
                     with global_flask_app.app_context():
-                        scheduled_msg = ScheduledMessage.query.get(msg_id)
-                        if scheduled_msg and scheduled_msg.is_active:
-                            scheduled_msg.last_message_id = sent_msg_id
-                            scheduled_msg.last_message_ids = json.dumps(sent_ids) if sent_ids else None
-                            scheduled_msg.next_send_at = next_send_at_val
-                            if is_one_shot:
-                                scheduled_msg.is_active = False
-                            db.session.commit()
+                        try:
+                            scheduled_msg = ScheduledMessage.query.get(msg_id)
+                            if scheduled_msg and scheduled_msg.is_active:
+                                scheduled_msg.last_message_id = sent_msg_id
+                                scheduled_msg.last_message_ids = json.dumps(sent_ids) if sent_ids else None
+                                scheduled_msg.next_send_at = next_send_at_val
+                                if is_one_shot:
+                                    scheduled_msg.is_active = False
+                                db.session.commit()
+                        except Exception as e:
+                            db.session.rollback()
+                            print(f"⚠️ _update_sent 保存失败 (msg_id={msg_id}): {e}", flush=True)
                 
                 await asyncio.get_running_loop().run_in_executor(
                     None, _update_sent, msg_data['id'], sent_message.message_id, all_sent_ids,

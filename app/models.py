@@ -385,15 +385,42 @@ class PointsAutoReply(db.Model):
         try:
             urls = json.loads(self.media_urls or '[]')
             if urls:
-                return [u for u in urls if u]
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        if url:
+                            result.append(url)
+                    elif u:
+                        result.append(u)
+                return result
         except (json.JSONDecodeError, TypeError):
             pass
         if self.media_url:
             return [self.media_url]
         return []
 
-
-class PointsAuction(db.Model):
+    def get_media_url_with_types(self):
+        """获取多媒体链接及其类型列表，返回 [(url, type), ...]"""
+        import json
+        try:
+            urls = json.loads(self.media_urls or '[]')
+            if urls:
+                result = []
+                for u in urls:
+                    if isinstance(u, dict):
+                        url = u.get('url', '')
+                        mtype = u.get('type', 'image')
+                        if url:
+                            result.append((url, mtype))
+                    elif u:
+                        result.append((u, self.media_type if self.media_type in ('image', 'video') else 'image'))
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if self.media_url:
+            return [(self.media_url, self.media_type if self.media_type in ('image', 'video') else 'image')]
+        return []
     """积分竞拍"""
     __tablename__ = 'points_auction'
     id = db.Column(db.Integer, primary_key=True)

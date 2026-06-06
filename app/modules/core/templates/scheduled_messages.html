@@ -572,6 +572,7 @@
                         {% elif item.media_type == 'media' %}
                         <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
+                        {% if item.target_type == 'channel' or item.target_channel_id %}
                         <div><span class="badge bg-info">频道</span></div>
                         <small class="text-muted">{{ item.target_channel_id or '-' }}</small>
                         {% else %}

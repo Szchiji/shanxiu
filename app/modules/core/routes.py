@@ -214,14 +214,13 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
         return None
 
     # 多个媒体，使用 send_media_group
-    # 注意：send_media_group 不支持 reply_markup
-    # 当有按钮时，将内容文本移到按钮消息中，使文本和按钮在同一条消息
+    # 注意：send_media_group 本身不支持 reply_markup，
+    # 但发送后可以通过 editMessageReplyMarkup 把按钮附加到最后一条媒体消息上，
+    # 使按钮与媒体组保持在同一个相册内，避免产生独立的按钮文本消息。
     media_items = []
-    # 如果有按钮，不在媒体组上放caption，而是放在后续的按钮消息中
-    use_caption_on_media = not reply_markup
     for i, url in enumerate(media_urls):
-        # 第一个媒体附带 caption（仅在没有按钮时）
-        caption = content if (i == 0 and content and use_caption_on_media) else None
+        # 第一个媒体始终附带 caption（无论有无按钮）
+        caption = content if (i == 0 and content) else None
         parse_mode = 'HTML' if caption else None
         url_type = _get_url_type(i)
         if url_type == 'video':
@@ -234,24 +233,19 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
 
     sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
 
-    # 如果有按钮，发送一条带按钮的消息（包含内容文本，使文字和按钮在同一帖子）
+    # 如果有按钮，通过 editMessageReplyMarkup 将按钮附加到最后一条媒体消息上，
+    # 使按钮直接显示在相册内，同时避免产生孤立的按钮文本消息（否则删除上一条时会遗漏）。
     if reply_markup and sent_messages:
-        # 使用实际内容文本，如果没有内容则使用占位符
-        btn_text = content if content else '👇 点击下方按钮'
-        btn_parse_mode = 'HTML' if content else None
-        btn_kwargs = dict(chat_id=chat_id, text=btn_text, reply_markup=reply_markup,
-                          reply_to_message_id=sent_messages[-1].message_id, **extra_kwargs)
-        if btn_parse_mode:
-            btn_kwargs['parse_mode'] = btn_parse_mode
-            btn_kwargs['link_preview_options'] = LinkPreviewOptions(is_disabled=True)
         try:
-            await bot.send_message(**btn_kwargs)
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=sent_messages[-1].message_id,
+                reply_markup=reply_markup,
+            )
         except Exception:
-            # 回退：如果 reply 失败（例如频道不允许），则不带 reply 发送
-            btn_kwargs.pop('reply_to_message_id', None)
-            await bot.send_message(**btn_kwargs)
+            pass
 
-    # 返回最后一条消息（用于 auto_pin 等）
+    # 返回最后一条消息（用于 auto_pin、last_message_id 存储等）
     return sent_messages[-1] if sent_messages else None
 
 def build_inline_keyboard_from_links(links):

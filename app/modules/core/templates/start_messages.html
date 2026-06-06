@@ -725,6 +725,14 @@
         
         try {
             currentLinks = JSON.parse(item.links || '[]');
+            // Normalize old-format links that may be missing 'row' or 'order' fields.
+            // Without these fields, renderLinks would fail silently (NaN key lookup).
+            currentLinks = currentLinks.map((link, index) => ({
+                row: (link.row !== undefined && link.row !== null) ? link.row : 0,
+                order: (link.order !== undefined && link.order !== null) ? link.order : index,
+                text: link.text || '',
+                url: link.url || ''
+            }));
         } catch (e) {
             currentLinks = [];
         }

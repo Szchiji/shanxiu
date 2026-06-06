@@ -3191,9 +3191,19 @@ def api_toggle_scheduled_message():
         err = _api_check_group_access(item.group)
         if err: return err
         item.is_active = not item.is_active
-        # 重新启用时重置上次发送时间，使其立即触发发送
+        # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
         if item.is_active:
-            item.last_sent_at = None
+            now = get_beijing_now()
+            if item.repeat_interval and item.repeat_interval > 0:
+                item.next_send_at = compute_aligned_next_send_at(
+                    item.start_time, item.repeat_interval, now
+                )
+            else:
+                # 不重复的消息：如果开始时间在未来则等到那时发送，否则立即发送
+                if item.start_time and item.start_time > now:
+                    item.next_send_at = item.start_time
+                else:
+                    item.last_sent_at = None
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3243,7 +3253,17 @@ def api_batch_scheduled_messages():
                 db.session.delete(item)
             elif action == 'enable':
                 item.is_active = True
-                item.last_sent_at = None  # 重置上次发送时间，使其立即触发发送
+                # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
+                now = get_beijing_now()
+                if item.repeat_interval and item.repeat_interval > 0:
+                    item.next_send_at = compute_aligned_next_send_at(
+                        item.start_time, item.repeat_interval, now
+                    )
+                else:
+                    if item.start_time and item.start_time > now:
+                        item.next_send_at = item.start_time
+                    else:
+                        item.last_sent_at = None
             elif action == 'pause':
                 item.is_active = False
             processed += 1

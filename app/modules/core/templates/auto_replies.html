@@ -455,6 +455,7 @@
                     data-trigger-keyword="{{ item.trigger_keyword|e }}"
                     data-media-type="{{ item.media_type }}"
                     data-media-url="{{ item.media_url or '' }}"
+                    data-media-urls="{{ item.media_urls or '[]' }}"
                     data-content="{{ item.content or ''|e }}"
                     data-links="{{ item.links or '[]'|e }}"
                     data-delete-after="{{ item.delete_after or 0 }}"
@@ -463,12 +464,13 @@
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
                     <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
                     <td>
+                        {% set media_count = item.get_media_url_list()|length %}
                         {% if item.media_type == 'text' %}
                         <span class="badge bg-primary">文本</span>
                         {% elif item.media_type == 'image' %}
-                        <span class="badge bg-success">图片</span>
+                        <span class="badge bg-success">图片{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% elif item.media_type == 'video' %}
-                        <span class="badge bg-warning text-dark">视频</span>
+                        <span class="badge bg-warning text-dark">视频{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
                     </td>
                     <td>{{ item.remark or '-' }}</td>
@@ -551,8 +553,18 @@
                     <!-- 多媒体链接 -->
                     <div class="mb-3" id="mediaUrlSection" style="display: none;">
                         <label class="form-label fw-bold">多媒体链接</label>
-                        <input type="url" class="form-control" id="mediaUrl" placeholder="请输入图片或视频URL">
-                        <div class="form-text">支持直接链接</div>
+                        <div id="mediaUrlsContainer">
+                            <div class="input-group mb-2 media-url-row">
+                                <input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL">
+                                <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">
+                                    <i class="fa-solid fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="addMediaUrl()">
+                            <i class="fa-solid fa-plus me-1"></i>添加更多
+                        </button>
+                        <div class="form-text">支持直接链接，可添加多个图片或视频</div>
                     </div>
                     
                     <!-- 富文本编辑器 -->
@@ -718,6 +730,53 @@
         } else {
             mediaUrlSection.style.display = 'block';
         }
+    }
+
+    // 多媒体链接管理
+    function addMediaUrl() {
+        const container = document.getElementById('mediaUrlsContainer');
+        const row = document.createElement('div');
+        row.className = 'input-group mb-2 media-url-row';
+        row.innerHTML = '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL">' +
+            '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
+            '<i class="fa-solid fa-times"></i></button>';
+        container.appendChild(row);
+    }
+
+    function removeMediaUrl(btn) {
+        const container = document.getElementById('mediaUrlsContainer');
+        const rows = container.querySelectorAll('.media-url-row');
+        if (rows.length > 1) {
+            btn.closest('.media-url-row').remove();
+        } else {
+            rows[0].querySelector('.media-url-input').value = '';
+        }
+    }
+
+    function getMediaUrls() {
+        const inputs = document.querySelectorAll('#mediaUrlsContainer .media-url-input');
+        const urls = [];
+        inputs.forEach(input => {
+            const val = input.value.trim();
+            if (val) urls.push(val);
+        });
+        return urls;
+    }
+
+    function setMediaUrls(urls) {
+        const container = document.getElementById('mediaUrlsContainer');
+        container.innerHTML = '';
+        if (!urls || urls.length === 0) {
+            urls = [''];
+        }
+        urls.forEach(url => {
+            const row = document.createElement('div');
+            row.className = 'input-group mb-2 media-url-row';
+            row.innerHTML = '<input type="url" class="form-control media-url-input" placeholder="请输入图片或视频URL" value="' + (url || '').replace(/"/g, '&quot;') + '">' +
+                '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
+                '<i class="fa-solid fa-times"></i></button>';
+            container.appendChild(row);
+        });
     }
     
     // Rich text editor commands
@@ -966,7 +1025,7 @@
         document.getElementById('itemId').value = '';
         document.getElementById('triggerKeyword').value = '';
         selectMediaType('text');
-        document.getElementById('mediaUrl').value = '';
+        setMediaUrls(['']);
         document.getElementById('editor').innerHTML = '';
         document.getElementById('deleteAfter').value = '0';
         document.getElementById('remark').value = '';
@@ -990,6 +1049,7 @@
             trigger_keyword: row.dataset.triggerKeyword || '',
             media_type: row.dataset.mediaType || 'text',
             media_url: row.dataset.mediaUrl || '',
+            media_urls: row.dataset.mediaUrls || '[]',
             content: row.dataset.content || '',
             links: row.dataset.links || '[]',
             delete_after: row.dataset.deleteAfter || 0,
@@ -1000,7 +1060,13 @@
         document.getElementById('itemId').value = item.id;
         document.getElementById('triggerKeyword').value = item.trigger_keyword;
         selectMediaType(item.media_type);
-        document.getElementById('mediaUrl').value = item.media_url;
+        // 设置多媒体链接
+        let mediaUrlList = [];
+        try { mediaUrlList = JSON.parse(item.media_urls); } catch(e) {}
+        if (!mediaUrlList || mediaUrlList.length === 0) {
+            mediaUrlList = item.media_url ? [item.media_url] : [''];
+        }
+        setMediaUrls(mediaUrlList);
         document.getElementById('editor').innerHTML = templateToHtml(item.content);
         document.getElementById('deleteAfter').value = item.delete_after;
         document.getElementById('remark').value = item.remark;
@@ -1020,13 +1086,14 @@
     // Preview
     async function previewMessage() {
         const mediaType = document.getElementById('mediaType').value;
-        const mediaUrl = document.getElementById('mediaUrl').value;
+        const mediaUrls = getMediaUrls();
         const content = htmlToTemplate(document.getElementById('editor').innerHTML);
 
         const payload = {
             group_id: groupId,
             media_type: mediaType,
-            media_url: mediaUrl,
+            media_url: mediaUrls[0] || '',
+            media_urls: mediaUrls,
             content: content,
             links: JSON.stringify(currentLinks),
         };
@@ -1057,12 +1124,14 @@
             return alert('请输入触发关键词');
         }
         
+        const saveMediaUrls = getMediaUrls();
         const data = {
             group_id: groupId,
             id: itemId ? parseInt(itemId) : null,
             trigger_keyword: triggerKeyword,
             media_type: document.getElementById('mediaType').value,
-            media_url: document.getElementById('mediaUrl').value.trim(),
+            media_url: saveMediaUrls[0] || '',
+            media_urls: saveMediaUrls,
             content: htmlToTemplate(document.getElementById('editor').innerHTML),
             links: JSON.stringify(currentLinks.filter(l => l.text && l.url)),
             delete_after: parseInt(document.getElementById('deleteAfter').value) || 0,

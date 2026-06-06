@@ -118,7 +118,18 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">媒体URL（图片/视频）</label>
-                    <input type="text" class="form-control" id="media_url" placeholder="留空表示仅文本">
+                    <div id="mediaUrlsContainer">
+                        <div class="input-group mb-2 media-url-row">
+                            <input type="text" class="form-control media-url-input" placeholder="留空表示仅文本">
+                            <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">
+                                <i class="fa-solid fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="addMediaUrl()">
+                        <i class="fa-solid fa-plus me-1"></i>添加更多
+                    </button>
+                    <small class="form-text text-muted d-block mt-1">可添加多个图片或视频URL</small>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">回复内容</label>
@@ -144,13 +155,60 @@ document.addEventListener('DOMContentLoaded', function() {
     replyModal = new bootstrap.Modal(document.getElementById('replyModal'));
 });
 
+// 多媒体链接管理
+function addMediaUrl() {
+    const container = document.getElementById('mediaUrlsContainer');
+    const row = document.createElement('div');
+    row.className = 'input-group mb-2 media-url-row';
+    row.innerHTML = '<input type="text" class="form-control media-url-input" placeholder="留空表示仅文本">' +
+        '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
+        '<i class="fa-solid fa-times"></i></button>';
+    container.appendChild(row);
+}
+
+function removeMediaUrl(btn) {
+    const container = document.getElementById('mediaUrlsContainer');
+    const rows = container.querySelectorAll('.media-url-row');
+    if (rows.length > 1) {
+        btn.closest('.media-url-row').remove();
+    } else {
+        rows[0].querySelector('.media-url-input').value = '';
+    }
+}
+
+function getMediaUrls() {
+    const inputs = document.querySelectorAll('#mediaUrlsContainer .media-url-input');
+    const urls = [];
+    inputs.forEach(input => {
+        const val = input.value.trim();
+        if (val) urls.push(val);
+    });
+    return urls;
+}
+
+function setMediaUrls(urls) {
+    const container = document.getElementById('mediaUrlsContainer');
+    container.innerHTML = '';
+    if (!urls || urls.length === 0) {
+        urls = [''];
+    }
+    urls.forEach(url => {
+        const row = document.createElement('div');
+        row.className = 'input-group mb-2 media-url-row';
+        row.innerHTML = '<input type="text" class="form-control media-url-input" placeholder="留空表示仅文本" value="' + (url || '').replace(/"/g, '&quot;') + '">' +
+            '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeMediaUrl(this)" title="删除">' +
+            '<i class="fa-solid fa-times"></i></button>';
+        container.appendChild(row);
+    });
+}
+
 function showAddModal() {
     document.getElementById('modalTitle').textContent = '添加回复';
     document.getElementById('reply_id').value = '';
     document.getElementById('trigger_keyword').value = '';
     document.getElementById('points_cost').value = '0';
     document.getElementById('media_type').value = 'text';
-    document.getElementById('media_url').value = '';
+    setMediaUrls(['']);
     document.getElementById('content').value = '';
     document.getElementById('is_active').checked = true;
     replyModal.show();
@@ -162,20 +220,28 @@ function editReply(id, reply) {
     document.getElementById('trigger_keyword').value = reply.trigger_keyword || '';
     document.getElementById('points_cost').value = reply.points_cost || 0;
     document.getElementById('media_type').value = reply.media_type || 'text';
-    document.getElementById('media_url').value = reply.media_url || '';
+    // 设置多媒体链接
+    let mediaUrlList = [];
+    try { mediaUrlList = JSON.parse(reply.media_urls || '[]'); } catch(e) {}
+    if (!mediaUrlList || mediaUrlList.length === 0) {
+        mediaUrlList = reply.media_url ? [reply.media_url] : [''];
+    }
+    setMediaUrls(mediaUrlList);
     document.getElementById('content').value = reply.content || '';
     document.getElementById('is_active').checked = reply.is_active;
     replyModal.show();
 }
 
 function saveReply() {
+    const mediaUrls = getMediaUrls();
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('reply_id').value || null,
         trigger_keyword: document.getElementById('trigger_keyword').value,
         points_cost: parseInt(document.getElementById('points_cost').value) || 0,
         media_type: document.getElementById('media_type').value,
-        media_url: document.getElementById('media_url').value,
+        media_url: mediaUrls[0] || '',
+        media_urls: mediaUrls,
         content: document.getElementById('content').value,
         is_active: document.getElementById('is_active').checked
     };

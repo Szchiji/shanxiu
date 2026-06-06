@@ -158,7 +158,7 @@ def parse_telegram_message_link(url):
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
 
-async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None, media_url_types=None):
+async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None, media_url_types=None, collected_ids=None):
     """
     发送多个多媒体消息。当只有一个URL时使用单独发送，多个URL时使用 send_media_group。
     支持混合类型（图片+视频）通过 media_url_types 参数指定每个URL的类型。
@@ -167,6 +167,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
     Args:
         media_url_types: 可选，每个URL对应的类型列表 ['image', 'video', ...]。
                          当 media_type='media' 时使用此参数确定每个URL的类型。
+        collected_ids: 可选，传入一个列表，函数会将本次发送的所有消息ID追加到其中（用于 delete_previous 删除整组消息）。
     """
     if not media_urls:
         return None
@@ -194,23 +195,40 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                 copy_kwargs['caption'] = content
                 copy_kwargs['parse_mode'] = 'HTML'
             try:
-                return await bot.copy_message(**copy_kwargs)
+                msg = await bot.copy_message(**copy_kwargs)
+                if collected_ids is not None and msg:
+                    collected_ids.append(msg.message_id)
+                return msg
             except Exception:
                 # forward_message 不支持 reply_markup，跳过直接尝试 send_photo/send_video
                 pass
             # 尝试直接发送媒体（带按钮）
             try:
                 if url_type == 'image':
-                    return await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+                    msg = await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
                 elif url_type == 'video':
-                    return await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+                    msg = await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+                else:
+                    msg = None
+                if collected_ids is not None and msg:
+                    collected_ids.append(msg.message_id)
+                return msg
             except Exception:
                 fallback_text = f"{content}\n{url}" if content else url
-                return await bot.send_message(chat_id=chat_id, text=fallback_text, parse_mode='HTML', reply_markup=reply_markup, **extra_kwargs)
+                msg = await bot.send_message(chat_id=chat_id, text=fallback_text, parse_mode='HTML', reply_markup=reply_markup, **extra_kwargs)
+                if collected_ids is not None and msg:
+                    collected_ids.append(msg.message_id)
+                return msg
         elif url_type == 'image':
-            return await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+            msg = await bot.send_photo(chat_id=chat_id, photo=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+            if collected_ids is not None and msg:
+                collected_ids.append(msg.message_id)
+            return msg
         elif url_type == 'video':
-            return await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+            msg = await bot.send_video(chat_id=chat_id, video=url, caption=content if content else None, parse_mode='HTML' if content else None, reply_markup=reply_markup, **extra_kwargs)
+            if collected_ids is not None and msg:
+                collected_ids.append(msg.message_id)
+            return msg
         return None
 
     # 多个媒体，使用 send_media_group
@@ -232,6 +250,10 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
         return None
 
     sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+
+    # 收集所有已发送消息的ID（用于 delete_previous 整组删除）
+    if collected_ids is not None and sent_messages:
+        collected_ids.extend(msg.message_id for msg in sent_messages)
 
     # 如果有按钮，通过 editMessageReplyMarkup 将按钮附加到最后一条媒体消息上，
     # 使按钮直接显示在相册内，同时避免产生孤立的按钮文本消息（否则删除上一条时会遗漏）。
@@ -3075,21 +3097,30 @@ def api_send_scheduled_message_now(message_id):
             'links': item.links,
             'delete_previous': item.delete_previous,
             'last_message_id': item.last_message_id,
+            'last_message_ids': item.last_message_ids,
             'message_thread_id': item.message_thread_id if not (item.target_type == 'channel' or (not item.target_type and item.target_channel_id)) else None,
             'auto_pin': item.auto_pin,
         }
 
+        collected_ids = []
+
         async def _send_now():
             message_thread_id = msg_snapshot.get('message_thread_id')
-            # 如需删除上一条消息
-            if msg_snapshot['delete_previous'] and msg_snapshot['last_message_id']:
-                try:
-                    await ptb_app.bot.delete_message(
-                        chat_id=chat_id,
-                        message_id=msg_snapshot['last_message_id']
-                    )
-                except Exception:
-                    pass
+            # 如需删除上一条消息（支持媒体组多条消息整体删除）
+            if msg_snapshot['delete_previous'] and (msg_snapshot['last_message_id'] or msg_snapshot.get('last_message_ids')):
+                ids_to_delete = []
+                if msg_snapshot.get('last_message_ids'):
+                    try:
+                        ids_to_delete = json.loads(msg_snapshot['last_message_ids'])
+                    except Exception:
+                        pass
+                if not ids_to_delete and msg_snapshot['last_message_id']:
+                    ids_to_delete = [msg_snapshot['last_message_id']]
+                for mid in ids_to_delete:
+                    try:
+                        await ptb_app.bot.delete_message(chat_id=chat_id, message_id=mid)
+                    except Exception:
+                        pass
 
             # 构建内联键盘
             buttons = []
@@ -3111,7 +3142,8 @@ def api_send_scheduled_message_now(message_id):
                     ptb_app.bot, chat_id, media_type, media_urls,
                     content=content, reply_markup=reply_markup,
                     message_thread_id=message_thread_id,
-                    media_url_types=msg_snapshot.get('media_url_types')
+                    media_url_types=msg_snapshot.get('media_url_types'),
+                    collected_ids=collected_ids
                 )
             elif content:
                 sent_message = await ptb_app.bot.send_message(
@@ -3122,6 +3154,8 @@ def api_send_scheduled_message_now(message_id):
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
+                if sent_message:
+                    collected_ids.append(sent_message.message_id)
             # 自动置顶
             if sent_message and msg_snapshot.get('auto_pin'):
                 try:
@@ -3148,6 +3182,7 @@ def api_send_scheduled_message_now(message_id):
             now = get_beijing_now()
             item.last_sent_at = now
             item.last_message_id = sent_message.message_id
+            item.last_message_ids = json.dumps(collected_ids) if collected_ids else None
             # 手动发送后重新计算下次发送时间，以本次发送时刻为基准
             if item.repeat_interval > 0:
                 item.next_send_at = now + timedelta(minutes=item.repeat_interval)
@@ -6670,6 +6705,7 @@ async def check_scheduled_messages(context):
                             'links': msg.links,
                             'delete_previous': msg.delete_previous,
                             'last_message_id': msg.last_message_id,
+                            'last_message_ids': msg.last_message_ids,
                             'message_thread_id': msg.message_thread_id,
                             'auto_pin': msg.auto_pin,
                             'repeat_interval': msg.repeat_interval,
@@ -6744,12 +6780,21 @@ async def check_scheduled_messages(context):
                 print(f"⏭️ 跳过消息 {msg_data['id']}：已被其他调度器实例处理或已停用", flush=True)
                 continue
             
-            # 如果需要删除上一条消息
-            if msg_data['delete_previous'] and msg_data['last_message_id']:
-                try:
-                    await bot.delete_message(chat_id=chat_id, message_id=msg_data['last_message_id'])
-                except Exception as e:
-                    print(f"Failed to delete previous message: {e}")
+            # 如果需要删除上一条消息（支持媒体组多条消息整体删除）
+            if msg_data['delete_previous'] and (msg_data['last_message_id'] or msg_data.get('last_message_ids')):
+                ids_to_delete = []
+                if msg_data.get('last_message_ids'):
+                    try:
+                        ids_to_delete = json.loads(msg_data['last_message_ids'])
+                    except Exception:
+                        pass
+                if not ids_to_delete and msg_data['last_message_id']:
+                    ids_to_delete = [msg_data['last_message_id']]
+                for mid in ids_to_delete:
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=mid)
+                    except Exception as e:
+                        print(f"Failed to delete previous message {mid}: {e}")
             
             # 构建按钮
             buttons = []
@@ -6763,6 +6808,7 @@ async def check_scheduled_messages(context):
             
             # 发送消息
             sent_message = None
+            all_sent_ids = []
             content = sanitize_html_for_telegram(msg_data['content'] or '')
             media_urls = msg_data.get('media_urls', [])
             media_type = msg_data['media_type']
@@ -6772,7 +6818,8 @@ async def check_scheduled_messages(context):
                     bot, chat_id, media_type, media_urls,
                     content=content, reply_markup=reply_markup,
                     message_thread_id=message_thread_id,
-                    media_url_types=msg_data.get('media_url_types')
+                    media_url_types=msg_data.get('media_url_types'),
+                    collected_ids=all_sent_ids
                 )
             elif content:
                 sent_message = await bot.send_message(
@@ -6783,6 +6830,8 @@ async def check_scheduled_messages(context):
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                     **({'message_thread_id': message_thread_id} if message_thread_id else {})
                 )
+                if sent_message:
+                    all_sent_ids.append(sent_message.message_id)
             
             # 更新消息ID；last_sent_at was already set by the atomic claim above.
             # For one-shot messages (repeat_interval=0), also deactivate so the UI
@@ -6807,18 +6856,19 @@ async def check_scheduled_messages(context):
                             send_time,
                         )
 
-                def _update_sent(msg_id, sent_msg_id, is_one_shot, next_send_at_val):
+                def _update_sent(msg_id, sent_msg_id, sent_ids, is_one_shot, next_send_at_val):
                     with global_flask_app.app_context():
                         scheduled_msg = ScheduledMessage.query.get(msg_id)
                         if scheduled_msg and scheduled_msg.is_active:
                             scheduled_msg.last_message_id = sent_msg_id
+                            scheduled_msg.last_message_ids = json.dumps(sent_ids) if sent_ids else None
                             scheduled_msg.next_send_at = next_send_at_val
                             if is_one_shot:
                                 scheduled_msg.is_active = False
                             db.session.commit()
                 
                 await asyncio.get_running_loop().run_in_executor(
-                    None, _update_sent, msg_data['id'], sent_message.message_id,
+                    None, _update_sent, msg_data['id'], sent_message.message_id, all_sent_ids,
                     msg_data['repeat_interval'] == 0, new_next_send_at
                 )
 

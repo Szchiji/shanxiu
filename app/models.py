@@ -131,6 +131,7 @@ class ScheduledMessage(db.Model):
     repeat_interval = db.Column(db.Integer, default=0)  # 重复间隔(分钟)，0表示不重复
     delete_previous = db.Column(db.Boolean, default=False)  # 是否删除上一条
     last_message_id = db.Column(db.BigInteger, nullable=True)  # 上一条消息ID，用于删除
+    last_message_ids = db.Column(db.Text, nullable=True)  # JSON数组，上一次发送的所有消息ID（媒体组含多条）
     start_time = db.Column(db.DateTime, nullable=True)  # 开始时间
     stop_time = db.Column(db.DateTime, nullable=True)  # 停止时间
     remark = db.Column(db.Text, nullable=True)  # 备注

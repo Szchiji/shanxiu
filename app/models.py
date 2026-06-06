@@ -421,6 +421,9 @@ class PointsAutoReply(db.Model):
         if self.media_url:
             return [(self.media_url, self.media_type if self.media_type in ('image', 'video') else 'image')]
         return []
+
+
+class PointsAuction(db.Model):
     """积分竞拍"""
     __tablename__ = 'points_auction'
     id = db.Column(db.Integer, primary_key=True)

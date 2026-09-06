@@ -675,6 +675,48 @@
             white-space: nowrap;
         }
 
+        /*
+         * List text fields — same idea as 定时消息「备注」:
+         * show a short single-line preview, full text stays in edit modal / title tooltip.
+         * Do NOT force every cell to nowrap (dates / 目标 stacks may wrap like 定时消息).
+         */
+        .table-container .list-text-preview,
+        .table-container .remark-cell,
+        .table-container .message-preview,
+        .table-container .template-preview,
+        .table-container .keyword-box,
+        .table-container .keyword-cell,
+        .table-container .content-preview {
+            display: inline-block;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+            word-break: normal;
+        }
+
+        @media (min-width: 768px) {
+            .table-container .list-text-preview,
+            .table-container .message-preview,
+            .table-container .template-preview,
+            .table-container .keyword-box,
+            .table-container .content-preview {
+                max-width: 240px;
+            }
+        }
+
+        /* Compact metadata stack (badge + sub line), same as 定时消息「目标」 */
+        .table-container .list-meta-stack {
+            line-height: 1.25;
+        }
+
+        .table-container .list-meta-stack > small,
+        .table-container .list-meta-stack .text-muted {
+            display: block;
+            font-size: 0.75rem;
+        }
+
         .action-btn {
             transition: all 0.3s ease;
             border-radius: 6px;

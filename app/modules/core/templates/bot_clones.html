@@ -53,11 +53,11 @@
             <tbody>
                 {% for clone in clones %}
                 <tr>
-                    <td class="ps-3 ps-md-4">
+                    <td class="ps-3 ps-md-4 list-meta-stack">
                         <div class="fw-semibold">{{ clone.clone_name }}</div>
-                        {% if clone.description %}<small class="text-muted">{{ clone.description }}</small>{% endif %}
+                        {% if clone.description %}<small class="text-muted list-text-preview" title="{{ clone.description|e }}">{{ clone.description }}</small>{% endif %}
                         {% if railway_domain %}
-                        <div><small class="text-muted">Webhook: <code>https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}</code></small></div>
+                        <small class="text-muted list-text-preview" title="https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}">Webhook · {{ clone.id }}</small>
                         {% endif %}
                     </td>
                     <td class="hide-mobile">{{ clone.id }}</td>

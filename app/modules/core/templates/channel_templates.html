@@ -4,22 +4,16 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .template-preview {
-        max-width: 320px;
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-</style>
+<style></style>
 
 <div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-layer-group me-2"></i>频道消息模板</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">频道消息命中关键词后，自动回复预设模板内容</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="openAddModal()">
-            <i class="fa-solid fa-plus me-2"></i>新增模板
+        <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-1 me-md-2"></i>新增模板
         </button>
     </div>
 </div>
@@ -33,23 +27,22 @@
 {% endcall %}
 
 <div class="table-container">
-    <div class="list-section-header">
-        <i class="fa-solid fa-list text-primary"></i>模板列表
-    </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="templatesTable">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4">模板名称</th>
+                    <th class="ps-3 ps-md-4">ID</th>
+                    <th>名称</th>
                     <th>关键词</th>
-                    <th class="hide-mobile">内容</th>
                     <th>类型</th>
+                    <th class="hide-mobile">备注</th>
                     <th>状态</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in templates %}
+                {% set preview = item.content or item.media_url or '' %}
                 <tr data-id="{{ item.id }}"
                     data-template-name="{{ item.template_name|e }}"
                     data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
@@ -59,12 +52,23 @@
                     data-links="{{ (item.links or '[]')|e }}"
                     data-send-as-reply="{{ 'true' if item.send_as_reply else 'false' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4 fw-semibold">{{ item.template_name }}</td>
-                    <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
-                    <td class="template-preview text-muted small hide-mobile">{{ item.content or item.media_url or '无内容' }}</td>
-                    <td>{{ item.media_type }}</td>
+                    <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
+                    <td class="fw-semibold">{{ item.template_name }}</td>
+                    <td><span class="list-text-preview text-muted" title="{{ (item.trigger_keywords or '全部消息')|e }}">{{ item.trigger_keywords or '全部消息' }}</span></td>
                     <td>
-                        <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
+                        {% if item.media_type == 'text' %}
+                        <span class="badge bg-primary">文本</span>
+                        {% elif item.media_type == 'image' %}
+                        <span class="badge bg-success">图片</span>
+                        {% elif item.media_type == 'video' %}
+                        <span class="badge bg-warning text-dark">视频</span>
+                        {% else %}
+                        <span class="badge bg-info">{{ item.media_type }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="hide-mobile"><span class="list-text-preview remark-cell text-muted" title="{{ preview|e }}">{% if preview %}{{ preview[:40] }}{% if preview|length > 40 %}...{% endif %}{% else %}-{% endif %}</span></td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用' if item.is_active else '暂停' }}</span>
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center justify-content-end">
@@ -74,7 +78,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="list-empty-cell">暂无频道消息模板</td></tr>
+                <tr><td colspan="7" class="list-empty-cell">暂无频道消息模板</td></tr>
                 {% endfor %}
             </tbody>
         </table>

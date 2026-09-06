@@ -46,7 +46,7 @@
             <tbody>
                 {% for f in filters %}
                 <tr>
-                    <td class="ps-3 ps-md-4"><code>{{ f.keyword }}</code></td>
+                    <td class="ps-3 ps-md-4"><code class="list-text-preview" title="{{ f.keyword|e }}">{{ f.keyword }}</code></td>
                     <td>
                         <span class="badge {% if f.filter_type == 'blacklist' %}bg-danger{% else %}bg-success{% endif %}">
                             {{ '黑名单' if f.filter_type == 'blacklist' else '白名单' }}

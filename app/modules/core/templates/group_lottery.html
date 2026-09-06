@@ -64,9 +64,9 @@
             <tbody>
                 {% for lottery in lotteries %}
                 <tr>
-                    <td class="ps-3 ps-md-4">
+                    <td class="ps-3 ps-md-4 list-meta-stack">
                         <div class="fw-semibold">{{ lottery.lottery_name }}</div>
-                        <small class="text-muted">{{ lottery.prize_description or '暂无奖品描述' }}</small>
+                        <small class="text-muted list-text-preview" title="{{ (lottery.prize_description or '暂无奖品描述')|e }}">{{ lottery.prize_description or '暂无奖品描述' }}</small>
                     </td>
                     <td>
                         {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else '随机抽奖') }}
@@ -80,11 +80,9 @@
                         {{ lottery.top_n_winners }}人
                         {% endif %}
                     </td>
-                    <td class="hide-mobile">
-                        <div class="small text-muted">
-                            {% if lottery.start_time %}起 {{ lottery.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
-                            {% if lottery.end_time %}<br>止 {{ lottery.end_time.strftime('%m-%d %H:%M') }}{% endif %}
-                        </div>
+                    <td class="hide-mobile list-meta-stack">
+                        <small class="text-muted">{% if lottery.start_time %}起 {{ lottery.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}</small>
+                        {% if lottery.end_time %}<small class="text-muted">止 {{ lottery.end_time.strftime('%m-%d %H:%M') }}</small>{% endif %}
                     </td>
                     <td>
                         <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }}">

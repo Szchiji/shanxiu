@@ -4,22 +4,16 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .keyword-box {
-        max-width: 280px;
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-</style>
+<style></style>
 
 <div class="page-header">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-share-nodes me-2"></i>频道转发规则</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">根据频道消息关键词，自动转发或复制到指定群组/话题</p>
         </div>
-        <button class="btn btn-light fw-bold" onclick="openAddModal()">
-            <i class="fa-solid fa-plus me-2"></i>新增规则
+        <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
+            <i class="fa-solid fa-plus me-1 me-md-2"></i>新增规则
         </button>
     </div>
 </div>
@@ -33,16 +27,14 @@
 {% endcall %}
 
 <div class="table-container">
-    <div class="list-section-header">
-        <i class="fa-solid fa-list text-primary"></i>规则列表
-    </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="rulesTable">
             <thead>
                 <tr>
-                    <th class="ps-3 ps-md-4">规则名称</th>
+                    <th class="ps-3 ps-md-4">ID</th>
+                    <th>名称</th>
                     <th>关键词</th>
-                    <th class="hide-mobile">目标聊天</th>
+                    <th>目标</th>
                     <th>模式</th>
                     <th>状态</th>
                     <th class="text-end pe-3 pe-md-4">操作</th>
@@ -57,15 +49,23 @@
                     data-target-thread-id="{{ rule.target_thread_id or '' }}"
                     data-forward-mode="{{ rule.forward_mode }}"
                     data-is-active="{{ 'true' if rule.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4 fw-semibold">{{ rule.rule_name }}</td>
-                    <td class="keyword-box text-muted small">{{ rule.source_keywords or '全部消息' }}</td>
-                    <td class="hide-mobile">
-                        <div>{{ rule.target_chat_id }}</div>
-                        <small class="text-muted">话题: {{ rule.target_thread_id or '—' }}</small>
+                    <td class="ps-3 ps-md-4 fw-bold">{{ rule.id }}</td>
+                    <td class="fw-semibold">{{ rule.rule_name }}</td>
+                    <td><span class="keyword-box list-text-preview text-muted" title="{{ (rule.source_keywords or '全部消息')|e }}">{{ rule.source_keywords or '全部消息' }}</span></td>
+                    <td class="list-meta-stack">
+                        <span class="badge bg-secondary">目标</span>
+                        <div><small class="text-muted">{{ rule.target_chat_id }}</small></div>
+                        {% if rule.target_thread_id %}<div><small class="text-muted">话题 {{ rule.target_thread_id }}</small></div>{% endif %}
                     </td>
-                    <td>{{ '复制' if rule.forward_mode == 'copy' else '转发' }}</td>
                     <td>
-                        <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">{{ '启用中' if rule.is_active else '已停用' }}</span>
+                        {% if rule.forward_mode == 'copy' %}
+                        <span class="badge bg-info">复制</span>
+                        {% else %}
+                        <span class="badge bg-primary">转发</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">{{ '启用' if rule.is_active else '暂停' }}</span>
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center justify-content-end">
@@ -75,7 +75,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="list-empty-cell">暂无频道转发规则</td></tr>
+                <tr><td colspan="7" class="list-empty-cell">暂无频道转发规则</td></tr>
                 {% endfor %}
             </tbody>
         </table>

@@ -150,7 +150,7 @@
                                 {{ '+' if log.points_change > 0 else '' }}{{ log.points_change }}
                             </td>
                             <td class="hide-mobile">{{ log.balance_after }}</td>
-                            <td class="text-muted text-truncate" title="{{ (log.reason or '无说明')|e }}">{{ log.reason or '无说明' }}</td>
+                            <td class="text-muted">{{ log.reason or '无说明' }}</td>
                             <td class="text-end pe-3 pe-md-4 text-muted small">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                         </tr>
                         {% else %}

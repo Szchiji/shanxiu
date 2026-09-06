@@ -100,8 +100,9 @@
             <tbody>
                 {% for item in items %}
                 <tr>
-                    <td class="ps-3 ps-md-4 list-cell-text" title="{{ item.item_name|e }}{% if item.item_description %} — {{ item.item_description|e }}{% endif %}">
-                        <span class="fw-semibold">{{ item.item_name }}</span>{% if item.item_description %}<span class="text-muted"> · {{ item.item_description }}</span>{% endif %}
+                    <td class="ps-3 ps-md-4">
+                        <div class="fw-semibold">{{ item.item_name }}</div>
+                        {% if item.item_description %}<small class="text-muted">{{ item.item_description }}</small>{% endif %}
                     </td>
                     <td>{{ item.points_cost }}</td>
                     <td class="hide-mobile">

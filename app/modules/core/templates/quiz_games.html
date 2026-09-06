@@ -51,7 +51,7 @@
             <tbody>
                 {% for q in quizzes %}
                 <tr>
-                    <td class="ps-3 ps-md-4 fw-semibold text-truncate" title="{{ q.question|e }}">{{ q.question }}</td>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ q.question }}</td>
                     <td class="hide-mobile"><span class="badge bg-info">{{ q.difficulty }}</span></td>
                     <td>{{ q.points_reward }} 积分</td>
                     <td class="hide-mobile">{% if q.category %}<span class="badge bg-warning">{{ q.category }}</span>{% else %}-{% endif %}</td>

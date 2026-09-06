@@ -139,8 +139,9 @@
                     <tbody>
                         {% for item in items %}
                         <tr>
-                            <td class="ps-3 ps-md-4 list-cell-text" title="{{ item.item_name|e }}{% if item.item_description %} — {{ item.item_description|e }}{% endif %}">
-                                <span class="fw-semibold">{{ item.item_name }}</span>{% if item.item_description %}<span class="text-muted"> · {{ item.item_description }}</span>{% endif %}
+                            <td class="ps-3 ps-md-4">
+                                <div class="fw-semibold">{{ item.item_name }}</div>
+                                {% if item.item_description %}<small class="text-muted">{{ item.item_description }}</small>{% endif %}
                             </td>
                             <td>{{ item.points_cost }}</td>
                             <td class="hide-mobile">
@@ -286,14 +287,19 @@
                     <tbody>
                         {% for auction in auctions %}
                         <tr>
-                            <td class="ps-3 ps-md-4 list-cell-text" title="{{ auction.item_name|e }} — {{ (auction.item_description or '暂无描述')|e }}">
-                                <span class="fw-semibold">{{ auction.item_name }}</span><span class="text-muted"> · {{ auction.item_description or '暂无描述' }}</span>
+                            <td class="ps-3 ps-md-4">
+                                <div class="fw-semibold">{{ auction.item_name }}</div>
+                                <small class="text-muted">{{ auction.item_description or '暂无描述' }}</small>
                             </td>
-                            <td class="text-truncate" title="起拍 {{ auction.starting_price }} · 当前 {{ auction.current_bid or '未出价' }}">
-                                {{ auction.starting_price }} <span class="text-muted">/ 当前 {{ auction.current_bid or '未出价' }}</span>
+                            <td>
+                                <div>{{ auction.starting_price }}</div>
+                                <small class="text-muted">当前 {{ auction.current_bid or '未出价' }}</small>
                             </td>
-                            <td class="hide-mobile text-muted small text-truncate" title="{% if auction.auction_start %}起 {{ auction.auction_start.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}{% if auction.auction_end %} 止 {{ auction.auction_end.strftime('%m-%d %H:%M') }}{% endif %}">
-                                {% if auction.auction_start %}起 {{ auction.auction_start.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}{% if auction.auction_end %} · 止 {{ auction.auction_end.strftime('%m-%d %H:%M') }}{% endif %}
+                            <td class="hide-mobile">
+                                <div class="small text-muted">
+                                    {% if auction.auction_start %}起 {{ auction.auction_start.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
+                                    {% if auction.auction_end %}<br>止 {{ auction.auction_end.strftime('%m-%d %H:%M') }}{% endif %}
+                                </div>
                             </td>
                             <td>
                                 <span class="badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }}">

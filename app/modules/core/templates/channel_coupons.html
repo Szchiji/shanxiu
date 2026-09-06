@@ -53,13 +53,13 @@
                     data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
                     data-sort-order="{{ item.sort_order or 0 }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4 fw-semibold text-truncate" title="{{ item.coupon_name|e }}">{{ item.coupon_name }}</td>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ item.coupon_name }}</td>
                     <td>{{ item.coupon_code or '—' }}</td>
                     <td class="hide-mobile">
                         <div>{{ item.button_text or '—' }}</div>
                         <small class="text-muted">{{ item.button_url or '无链接' }}</small>
                     </td>
-                    <td class="text-muted small hide-mobile text-truncate" title="{{ (item.trigger_keywords or '全部消息')|e }}">{{ item.trigger_keywords or '全部消息' }}</td>
+                    <td class="text-muted small hide-mobile">{{ item.trigger_keywords or '全部消息' }}</td>
                     <td>{{ item.sort_order or 0 }}</td>
                     <td>
                         <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>

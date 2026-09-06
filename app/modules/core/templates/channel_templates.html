@@ -7,9 +7,8 @@
 <style>
     .template-preview {
         max-width: 320px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        white-space: pre-wrap;
+        word-break: break-word;
     }
 </style>
 
@@ -60,9 +59,9 @@
                     data-links="{{ (item.links or '[]')|e }}"
                     data-send-as-reply="{{ 'true' if item.send_as_reply else 'false' }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                    <td class="ps-3 ps-md-4 fw-semibold text-truncate" title="{{ item.template_name|e }}">{{ item.template_name }}</td>
-                    <td class="text-muted small text-truncate" title="{{ (item.trigger_keywords or '全部消息')|e }}">{{ item.trigger_keywords or '全部消息' }}</td>
-                    <td class="template-preview text-muted small hide-mobile" title="{{ (item.content or item.media_url or '无内容')|e }}">{{ item.content or item.media_url or '无内容' }}</td>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ item.template_name }}</td>
+                    <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
+                    <td class="template-preview text-muted small hide-mobile">{{ item.content or item.media_url or '无内容' }}</td>
                     <td>{{ item.media_type }}</td>
                     <td>
                         <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>

@@ -144,15 +144,19 @@
             <tbody>
                 {% for member in members %}
                 <tr>
-                    <td class="ps-3 ps-md-4" title="{{ (member.first_name or '')|e }} {{ (member.last_name or '')|e }}{% if member.username %} @{{ member.username|e }}{% endif %}">
+                    <td class="ps-3 ps-md-4">
                         <div class="d-flex align-items-center gap-2">
                             <div class="user-avatar" data-uid="{{ member.user_id }}">
                                 {{ ((member.first_name or member.username or '#')[:1])|upper }}
                             </div>
-                            <div class="list-cell-text">
-                                <span class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</span>
-                                {% if member.username %}<span class="text-muted small"> · @{{ member.username }}</span>{% endif %}
-                                {% if member.is_bot %}<span class="badge bg-info ms-1">🤖</span>{% endif %}
+                            <div>
+                                <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
+                                {% if member.username %}
+                                <small class="text-muted">@{{ member.username }}</small>
+                                {% endif %}
+                                {% if member.is_bot %}
+                                <span class="badge bg-info ms-1">🤖</span>
+                                {% endif %}
                             </div>
                         </div>
                     </td>

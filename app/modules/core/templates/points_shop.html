@@ -102,7 +102,17 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-store me-2"></i>积分商城</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">管理积分兑换商品与竞拍活动</p>
         </div>
-        <div id="tab-actions"></div>
+        <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch m-0 text-white">
+                <input class="form-check-input" type="checkbox" role="switch" id="points_shop_enabled"
+                       {% if conf.get('points_shop_enabled', True) %}checked{% endif %}
+                       onchange="togglePointsShop(this.checked)">
+                <label class="form-check-label fw-semibold" for="points_shop_enabled" id="points_shop_enabled_label">
+                    {{ '已启用' if conf.get('points_shop_enabled', True) else '已关闭' }}
+                </label>
+            </div>
+            <div id="tab-actions"></div>
+        </div>
     </div>
 </div>
 
@@ -503,6 +513,34 @@ document.addEventListener('DOMContentLoaded', function () {
         history.replaceState(null, '', window.location.pathname + '#auction');
     });
 });
+
+function togglePointsShop(enabled) {
+    const label = document.getElementById('points_shop_enabled_label');
+    const switchEl = document.getElementById('points_shop_enabled');
+    switchEl.disabled = true;
+    fetch('/core/api/save_points_shop_enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: GROUP_ID, points_shop_enabled: enabled})
+    })
+    .then(r => r.json())
+    .then(res => {
+        switchEl.disabled = false;
+        if (res.status === 'ok') {
+            label.textContent = enabled ? '已启用' : '已关闭';
+            showToast(enabled ? '✅ 积分商城已启用' : '✅ 积分商城已关闭（群成员无法兑换/竞拍）', 'success');
+        } else {
+            switchEl.checked = !enabled;
+            alert('❌ ' + (res.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        switchEl.disabled = false;
+        switchEl.checked = !enabled;
+        showToast('网络错误', 'error');
+    });
+}
 
 function setTabActions(tab) {
     const el = document.getElementById('tab-actions');

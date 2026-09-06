@@ -182,6 +182,35 @@
             padding: 1.5rem !important;
         }
     }
+
+    /* Batch bar — same pattern as 定时消息 */
+    .batch-bar {
+        background: rgba(59, 130, 246, 0.08);
+        border: 1px solid rgba(59, 130, 246, 0.28);
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        margin-bottom: 1rem;
+        display: none;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .batch-bar.visible {
+        display: flex;
+    }
+    .batch-bar .selected-count {
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-right: 0.5rem;
+    }
+
+    .user-name-cell {
+        min-width: 120px;
+        max-width: 200px;
+    }
+    .profile-cell {
+        max-width: 120px;
+    }
 </style>
 
 <div class="page-header">
@@ -204,43 +233,43 @@
     </div>
 </div>
 
-<div class="mb-3">
-    <div class="search-box">
-        <div class="d-flex align-items-center flex-wrap gap-2">
-            <i class="fa-solid fa-search text-muted ms-2"></i>
-            <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索用户...">
-            <button class="btn btn-primary btn-sm" onclick="searchUsers()">
-                <i class="fa-solid fa-search me-1"></i>搜索
-            </button>
-            <button class="btn btn-outline-secondary btn-sm" onclick="clearSearch()">
-                <i class="fa-solid fa-times me-1"></i>清除
-            </button>
-        </div>
+<!-- Search Box -->
+<div class="search-box">
+    <div class="d-flex align-items-center flex-wrap gap-2">
+        <i class="fa-solid fa-search text-muted ms-2"></i>
+        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索用户名 / TG ID / 资料...">
+        <button class="btn btn-primary btn-sm" onclick="searchUsers()">
+            <i class="fa-solid fa-search me-1"></i>搜索
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="clearSearch()">
+            <i class="fa-solid fa-times me-1"></i>清除
+        </button>
     </div>
 </div>
 
+<!-- Batch Action Bar (same pattern as 定时消息) -->
+<div class="batch-bar" id="bulkToolbar">
+    <span class="selected-count" id="bulkCount">已选 0 个</span>
+    <button class="btn btn-danger btn-sm" onclick="bulkDelete()">
+        <i class="fa-solid fa-trash me-1"></i>批量删除
+    </button>
+    <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="clearBulkSelection()">
+        <i class="fa-solid fa-times me-1"></i>取消选择
+    </button>
+</div>
+
 <div class="table-container">
-    <!-- Bulk action toolbar (hidden until rows selected) -->
-    <div id="bulkToolbar" class="d-none px-3 py-2 d-flex align-items-center gap-2 flex-wrap"
-         style="background:rgba(59,130,246,0.07);border-bottom:1px solid var(--border-color);">
-        <span id="bulkCount" class="text-muted small fw-semibold"></span>
-        <button class="btn btn-sm btn-danger" onclick="bulkDelete()">
-            <i class="fa-solid fa-trash me-1"></i>批量删除
-        </button>
-        <button class="btn btn-sm btn-secondary ms-auto" onclick="clearBulkSelection()">
-            <i class="fa-solid fa-times me-1"></i>取消选择
-        </button>
-    </div>
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
-                    <th class="ps-3" style="width:40px;">
+                    <th class="ps-3 ps-md-4" style="width:36px;">
                         <input type="checkbox" id="selectAll" class="form-check-input" title="全选">
                     </th>
-                    <th class="ps-2">用户</th>
+                    <th>ID</th>
+                    <th>用户</th>
                     {% for f in fields %}
-                    <th>{{ f.label }}</th>
+                    <th class="{% if not loop.first %}hide-mobile{% endif %}">{{ f.label }}</th>
                     {% endfor %}
                     <th>状态</th>
                     <th>过期时间</th>
@@ -250,48 +279,66 @@
             <tbody id="userTable">
                 {% for user in users %}
                 <tr>
-                    <td class="ps-3">
-                        <input type="checkbox" class="form-check-input row-select" value="{{ user.id }}" data-tgid="{{ user.tg_id }}">
+                    <td class="ps-3 ps-md-4">
+                        <input type="checkbox" class="form-check-input row-select" value="{{ user.id }}" data-tgid="{{ user.tg_id }}" onchange="updateBulkToolbar()">
                     </td>
-                    <td class="ps-2">
+                    <td class="fw-bold text-nowrap">{{ user.tg_id }}</td>
+                    <td class="user-name-cell">
                         <div class="d-flex align-items-center gap-2">
                             <div class="user-avatar" data-uid="{{ user.tg_id }}">
-                                {{ (user.tg_display_name[:1] or '#')|upper }}
+                                {{ (user.tg_display_name[:1] if user.tg_display_name else '#')|upper }}
                             </div>
-                            <div>
-                                {% if user.tg_display_name %}
-                                <div class="fw-bold" style="font-size:0.9rem;">{{ user.tg_display_name }}</div>
-                                {% endif %}
+                            <div class="list-meta-stack" style="min-width:0;">
+                                <div class="fw-semibold list-text-preview" title="{{ (user.tg_display_name or user.tg_username or user.tg_id)|e }}">
+                                    {{ user.tg_display_name or user.tg_username or ('用户 ' ~ user.tg_id) }}
+                                </div>
                                 {% if user.tg_username %}
-                                <small class="text-muted">@{{ user.tg_username }}</small>
+                                <small class="text-muted list-text-preview" title="@{{ user.tg_username|e }}">@{{ user.tg_username }}</small>
                                 {% endif %}
-                                <small class="text-muted d-block" style="font-size:0.75rem;">ID: {{ user.tg_id }}</small>
                             </div>
                         </div>
                     </td>
-                    {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
+                    {% for field in fields %}
+                    {% set pval = user.profile_dict.get(field.key, '') %}
+                    <td class="profile-cell {% if not loop.first %}hide-mobile{% endif %}">
+                        <span class="list-text-preview" title="{{ pval|e }}">{% if pval %}{{ pval }}{% else %}<span class="text-muted">-</span>{% endif %}</span>
+                    </td>
+                    {% endfor %}
                     <td>
                         {% if user.is_banned %}
-                        <span class="badge-status badge bg-danger">🚫 封禁</span>
+                        <span class="badge-status badge bg-danger">封禁</span>
                         {% elif user.expiration_date %}
-                        <span class="badge-status badge bg-success">✅ 正常</span>
+                        <span class="badge-status badge bg-success">正常</span>
                         {% else %}
-                        <span class="badge-status badge bg-info">♾ 永久</span>
+                        <span class="badge-status badge bg-info">永久</span>
                         {% endif %}
                     </td>
-                    <td>{{ user.expiration_date }}</td>
-                    <td class="text-end pe-3 pe-md-4">
-                        <div class="d-flex gap-1 align-items-end">
+                    <td class="text-nowrap">
+                        {% if user.expiration_date %}
+                        {{ user.expiration_date.strftime('%m-%d %H:%M:%S') }}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
                             <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
                                 <i class="fa-solid fa-bell"></i>
                             </button>
                             <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ user.tg_display_name or user.tg_id }}')" title="删除">
+                            <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ (user.tg_display_name or user.tg_id)|e }}')" title="删除">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr id="emptyRow">
+                    <td colspan="{{ 6 + (fields|length) }}" class="text-center py-4 py-md-5 text-muted list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
+                        暂无认证用户，点击上方按钮添加
                     </td>
                 </tr>
                 {% endfor %}
@@ -320,24 +367,29 @@
         return serverDatetime.replace(' ', 'T').substring(0, 16);
     }
 
-    // ── Bulk selection logic ──────────────────────────────────────────
+    // ── Bulk selection logic (same UX as 定时消息 batch bar) ──────────
     function updateBulkToolbar() {
         const checked = document.querySelectorAll('.row-select:checked');
         const toolbar = document.getElementById('bulkToolbar');
         const countEl = document.getElementById('bulkCount');
         if (checked.length > 0) {
-            toolbar.classList.remove('d-none');
-            toolbar.classList.add('d-flex');
-            countEl.textContent = '已选 ' + checked.length + ' 个用户';
+            toolbar.classList.add('visible');
+            countEl.textContent = '已选 ' + checked.length + ' 个';
         } else {
-            toolbar.classList.add('d-none');
-            toolbar.classList.remove('d-flex');
+            toolbar.classList.remove('visible');
+            countEl.textContent = '已选 0 个';
+        }
+        const all = document.querySelectorAll('.row-select');
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll && all.length) {
+            selectAll.checked = checked.length === all.length;
         }
     }
 
     function clearBulkSelection() {
         document.querySelectorAll('.row-select').forEach(cb => { cb.checked = false; });
-        document.getElementById('selectAll').checked = false;
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) selectAll.checked = false;
         updateBulkToolbar();
     }
 

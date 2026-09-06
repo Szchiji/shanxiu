@@ -4,29 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .levels-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        box-shadow: var(--card-shadow);
-        transition: all 0.3s ease;
-        margin-bottom: 1.5rem;
-    }
-    
-    .level-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    
-    .level-item:last-child {
-        border-bottom: none;
-    }
-    
-    .level-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -49,42 +27,47 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="levels-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-layer-group me-2 text-primary"></i>等级列表
-            </div>
-            <div class="card-body p-0">
-                {% if levels %}
-                    {% for level in levels %}
-                    <div class="level-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">
-                                    {% if level.badge_emoji %}{{ level.badge_emoji }} {% endif %}{{ level.level_name }}
-                                </h6>
-                                <small class="text-muted">所需积分: {{ level.required_points }}</small>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-primary" onclick='editLevel({{ level.id }}, {{ level|tojson }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteLevel({{ level.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-layer-group text-primary"></i>等级列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">等级</th>
+                    <th>所需积分</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for level in levels %}
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-semibold">
+                        {% if level.badge_emoji %}{{ level.badge_emoji }} {% endif %}{{ level.level_name }}
+                    </td>
+                    <td>{{ level.required_points }}</td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick='editLevel({{ level.id }}, {{ level|tojson }})'>
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteLevel({{ level.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无等级设置</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="3" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无等级设置
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

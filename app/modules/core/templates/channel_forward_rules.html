@@ -5,16 +5,6 @@
 {{ loading_spinner() }}
 
 <style>
-    .settings-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-card);
-        box-shadow: var(--card-shadow);
-        margin-bottom: 1.5rem;
-    }
-    .table td, .table th {
-        vertical-align: middle;
-    }
     .keyword-box {
         max-width: 280px;
         white-space: pre-wrap;
@@ -42,53 +32,53 @@
 </ul>
 {% endcall %}
 
-<div class="settings-card card">
-    <div class="card-header bg-white fw-bold py-3">
-        <i class="fa-solid fa-list me-2 text-primary"></i>规则列表
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>规则列表
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0" id="rulesTable">
-                <thead>
-                    <tr>
-                        <th>规则名称</th>
-                        <th>关键词</th>
-                        <th>目标聊天</th>
-                        <th>模式</th>
-                        <th>状态</th>
-                        <th class="text-end">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for rule in rules %}
-                    <tr data-id="{{ rule.id }}"
-                        data-rule-name="{{ rule.rule_name|e }}"
-                        data-source-keywords="{{ (rule.source_keywords or '')|e }}"
-                        data-target-chat-id="{{ rule.target_chat_id|e }}"
-                        data-target-thread-id="{{ rule.target_thread_id or '' }}"
-                        data-forward-mode="{{ rule.forward_mode }}"
-                        data-is-active="{{ 'true' if rule.is_active else 'false' }}">
-                        <td>{{ rule.rule_name }}</td>
-                        <td class="keyword-box text-muted small">{{ rule.source_keywords or '全部消息' }}</td>
-                        <td>
-                            <div>{{ rule.target_chat_id }}</div>
-                            <small class="text-muted">话题: {{ rule.target_thread_id or '—' }}</small>
-                        </td>
-                        <td>{{ '复制' if rule.forward_mode == 'copy' else '转发' }}</td>
-                        <td>
-                            <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">{{ '启用中' if rule.is_active else '已停用' }}</span>
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ rule.id }})"><i class="fa-solid fa-edit"></i></button>
-                            <button class="btn btn-sm btn-danger" onclick="deleteRule({{ rule.id }})"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道转发规则</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="rulesTable">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">规则名称</th>
+                    <th>关键词</th>
+                    <th class="hide-mobile">目标聊天</th>
+                    <th>模式</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                <tr data-id="{{ rule.id }}"
+                    data-rule-name="{{ rule.rule_name|e }}"
+                    data-source-keywords="{{ (rule.source_keywords or '')|e }}"
+                    data-target-chat-id="{{ rule.target_chat_id|e }}"
+                    data-target-thread-id="{{ rule.target_thread_id or '' }}"
+                    data-forward-mode="{{ rule.forward_mode }}"
+                    data-is-active="{{ 'true' if rule.is_active else 'false' }}">
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ rule.rule_name }}</td>
+                    <td class="keyword-box text-muted small">{{ rule.source_keywords or '全部消息' }}</td>
+                    <td class="hide-mobile">
+                        <div>{{ rule.target_chat_id }}</div>
+                        <small class="text-muted">话题: {{ rule.target_thread_id or '—' }}</small>
+                    </td>
+                    <td>{{ '复制' if rule.forward_mode == 'copy' else '转发' }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">{{ '启用中' if rule.is_active else '已停用' }}</span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="openEditModal({{ rule.id }})"><i class="fa-solid fa-pen"></i></button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteRule({{ rule.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="list-empty-cell">暂无频道转发规则</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

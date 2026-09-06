@@ -160,49 +160,45 @@
             </div>
         </div>
 
-        <div class="settings-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-history me-2 text-danger"></i>最近红包记录
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-history text-danger"></i>最近红包记录
             </div>
-            <div class="card-body">
-                {% if packets %}
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>发送者ID</th>
-                                    <th>类型</th>
-                                    <th>总积分</th>
-                                    <th>数量</th>
-                                    <th>已领/剩余</th>
-                                    <th>状态</th>
-                                    <th>发送时间</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for p in packets %}
-                                <tr>
-                                    <td>{{ p.creator_id }}</td>
-                                    <td>{{ '拼手气' if p.packet_type == 'random' else '普通' }}</td>
-                                    <td>{{ p.total_points }}</td>
-                                    <td>{{ p.packet_count }}</td>
-                                    <td>{{ p.packet_count - p.remaining_count }} / {{ p.remaining_count }}</td>
-                                    <td>
-                                        <span class="badge bg-{{ 'success' if p.status == 'active' else ('warning' if p.status == 'expired' else 'secondary') }}">
-                                            {{ {'active': '进行中', 'expired': '已过期', 'claimed': '已领完'}[p.status] }}
-                                        </span>
-                                    </td>
-                                    <td>{{ p.created_at.strftime('%m-%d %H:%M:%S') }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="alert alert-secondary mb-0">
-                        <i class="fa-solid fa-info-circle me-2"></i>暂无红包记录
-                    </div>
-                {% endif %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">发送者ID</th>
+                            <th>类型</th>
+                            <th>总积分</th>
+                            <th class="hide-mobile">数量</th>
+                            <th>已领/剩余</th>
+                            <th>状态</th>
+                            <th class="text-end pe-3 pe-md-4">发送时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in packets %}
+                        <tr>
+                            <td class="ps-3 ps-md-4">{{ p.creator_id }}</td>
+                            <td>{{ '拼手气' if p.packet_type == 'random' else '普通' }}</td>
+                            <td>{{ p.total_points }}</td>
+                            <td class="hide-mobile">{{ p.packet_count }}</td>
+                            <td>{{ p.packet_count - p.remaining_count }} / {{ p.remaining_count }}</td>
+                            <td>
+                                <span class="badge bg-{{ 'success' if p.status == 'active' else ('warning' if p.status == 'expired' else 'secondary') }}">
+                                    {{ {'active': '进行中', 'expired': '已过期', 'claimed': '已领完'}[p.status] }}
+                                </span>
+                            </td>
+                            <td class="text-end pe-3 pe-md-4">{{ p.created_at.strftime('%m-%d %H:%M:%S') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="list-empty-cell">暂无红包记录</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

@@ -4,29 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .replies-card {
-        border-radius: 10px;
-        border: none;
-        box-shadow: var(--card-shadow);
-        transition: all 0.3s ease;
-        margin-bottom: 1.5rem;
-    }
-    
-    .reply-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    
-    .reply-item:last-child {
-        border-bottom: none;
-    }
-    
-    .reply-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -49,43 +27,53 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="replies-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list me-2 text-primary"></i>回复列表
-            </div>
-            <div class="card-body p-0">
-                {% if replies %}
-                    {% for reply in replies %}
-                    <div class="reply-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">关键词: {{ reply.trigger_keyword }}</h6>
-                                <small class="text-muted">消耗积分: {{ reply.points_cost }} | 类型: {{ reply.media_type }}</small>
-                                <span class="badge {{ 'bg-success' if reply.is_active else 'bg-secondary' }} ms-2">
-                                    {{ '启用' if reply.is_active else '禁用' }}
-                                </span>
-                            </div>
-                            <div>
-                                <button class="btn btn-sm btn-primary" onclick='editReply({{ reply.id }}, {{ reply|tojson }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteReply({{ reply.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>回复列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">关键词</th>
+                    <th>消耗积分</th>
+                    <th class="hide-mobile">类型</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reply in replies %}
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ reply.trigger_keyword }}</td>
+                    <td>{{ reply.points_cost }}</td>
+                    <td class="hide-mobile"><span class="badge bg-info">{{ reply.media_type }}</span></td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if reply.is_active else 'bg-secondary' }}">
+                            {{ '启用' if reply.is_active else '禁用' }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick='editReply({{ reply.id }}, {{ reply|tojson }})'>
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteReply({{ reply.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无积分自动回复</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="5" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无积分自动回复
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

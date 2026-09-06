@@ -5,45 +5,6 @@
 {{ loading_spinner() }}
 
 <style>
-    .lotteries-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-card);
-        margin-bottom: 1.5rem;
-    }
-    
-    .lottery-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1.25rem;
-        transition: background-color 0.2s;
-    }
-    
-    .lottery-item:last-child {
-        border-bottom: none;
-    }
-    
-    .lottery-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-    
-    .lottery-item h6 {
-        color: var(--text-primary);
-    }
-    
-    .lottery-item p {
-        color: var(--text-muted);
-    }
-    
-    .lottery-item small {
-        color: var(--text-muted);
-    }
-    
-    .card-header {
-        background: var(--bg-card);
-        border-bottom: 1px solid var(--border-color);
-        color: var(--text-primary);
-    }
-    
     .modal-body input, .modal-body select, .modal-body textarea {
         background: var(--bg-secondary);
         border: 1px solid var(--border-color);
@@ -84,62 +45,76 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="lotteries-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list me-2 text-primary"></i>抽奖列表
-            </div>
-            <div class="card-body p-0">
-                {% if lotteries %}
-                    {% for lottery in lotteries %}
-                    <div class="lottery-item">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ lottery.lottery_name }}</h6>
-                                <p class="text-muted mb-2 small">{{ lottery.prize_description or '暂无奖品描述' }}</p>
-                                <div class="d-flex gap-3 flex-wrap">
-                                    <small class="text-muted">类型: {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else '随机抽奖') }}</small>
-                                    {% if lottery.lottery_type == 'message_count' %}
-                                    <small class="text-muted">最少发言: {{ lottery.min_messages }}</small>
-                                    {% elif lottery.lottery_type == 'message_rank' %}
-                                    <small class="text-muted">获奖人数: 前{{ lottery.top_n_winners }}名</small>
-                                    {% else %}
-                                    <small class="text-muted">获奖人数: {{ lottery.top_n_winners }}名</small>
-                                    {% endif %}
-                                    {% if lottery.start_time %}
-                                    <small class="text-muted">开始: {{ lottery.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
-                                    {% if lottery.end_time %}
-                                    <small class="text-muted">结束: {{ lottery.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
-                                </div>
-                                <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }} mt-2">
-                                    {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else '已结束') }}
-                                </span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status == 'ended' %}disabled title="已结束"{% endif %}>
-                                    <i class="fa-solid fa-bullhorn"></i>
-                                </button>
-                                <button class="btn btn-sm btn-primary" onclick="editLottery({{ lottery.id }})">
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteLottery({{ lottery.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>抽奖列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">名称</th>
+                    <th>类型</th>
+                    <th class="hide-mobile">规则</th>
+                    <th class="hide-mobile">时间</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lottery in lotteries %}
+                <tr>
+                    <td class="ps-3 ps-md-4">
+                        <div class="fw-semibold">{{ lottery.lottery_name }}</div>
+                        <small class="text-muted">{{ lottery.prize_description or '暂无奖品描述' }}</small>
+                    </td>
+                    <td>
+                        {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else '随机抽奖') }}
+                    </td>
+                    <td class="hide-mobile">
+                        {% if lottery.lottery_type == 'message_count' %}
+                        最少发言 {{ lottery.min_messages }}
+                        {% elif lottery.lottery_type == 'message_rank' %}
+                        前{{ lottery.top_n_winners }}名
+                        {% else %}
+                        {{ lottery.top_n_winners }}人
+                        {% endif %}
+                    </td>
+                    <td class="hide-mobile">
+                        <div class="small text-muted">
+                            {% if lottery.start_time %}起 {{ lottery.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
+                            {% if lottery.end_time %}<br>止 {{ lottery.end_time.strftime('%m-%d %H:%M') }}{% endif %}
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }}">
+                            {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else '已结束') }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status == 'ended' %}disabled title="已结束"{% else %}title="发布公告"{% endif %}>
+                                <i class="fa-solid fa-bullhorn"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editLottery({{ lottery.id }})">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteLottery({{ lottery.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无抽奖活动</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="6" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无抽奖活动
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

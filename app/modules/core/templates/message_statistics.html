@@ -10,13 +10,6 @@
         padding: 1.5rem;
         background: var(--bg-card);
     }
-    
-    .stat-item {
-        padding: 0.75rem 1rem;
-        border-radius: 8px;
-        background: var(--bg-card-hover);
-        margin-bottom: 0.75rem;
-    }
 
     .chart-container {
         position: relative;
@@ -59,71 +52,67 @@
         </div>
         {% endif %}
 
-        <div class="stats-card">
-            <h5 class="fw-bold mb-3"><i class="fa-solid fa-calendar-days me-2"></i>每日消息统计</h5>
-            {% if stats %}
-                {% for s in stats %}
-                <div class="stat-item">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <strong style="color:var(--text-primary);">{{ s.date.strftime('%Y-%m-%d %A') }}</strong>
-                        </div>
-                        <div class="text-end">
-                            <span class="badge bg-primary me-2">
-                                <i class="fa-solid fa-message me-1"></i>{{ s.total_messages }} 条消息
-                            </span>
-                            <span class="badge bg-success">
-                                <i class="fa-solid fa-users me-1"></i>{{ s.active_users }} 活跃用户
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                {% endfor %}
-            {% else %}
-                <div class="alert alert-info">
-                    <i class="fa-solid fa-info-circle me-2"></i>暂无统计数据
-                </div>
-            {% endif %}
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-calendar-days text-primary"></i>每日消息统计
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">日期</th>
+                            <th>消息数</th>
+                            <th class="text-end pe-3 pe-md-4">活跃用户</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in stats %}
+                        <tr>
+                            <td class="ps-3 ps-md-4 fw-semibold">{{ s.date.strftime('%Y-%m-%d %A') }}</td>
+                            <td>{{ s.total_messages }}</td>
+                            <td class="text-end pe-3 pe-md-4">{{ s.active_users }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="list-empty-cell">暂无统计数据</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <div class="stats-card">
-            <h5 class="fw-bold mb-3"><i class="fa-solid fa-ranking-star me-2"></i>活跃用户排行</h5>
-            {% if top_users %}
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>排名</th>
-                                <th>用户ID</th>
-                                <th>消息数</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for user in top_users %}
-                            <tr>
-                                <td>
-                                    {% if loop.index == 1 %}🥇
-                                    {% elif loop.index == 2 %}🥈
-                                    {% elif loop.index == 3 %}🥉
-                                    {% else %}{{ loop.index }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <a href="tg://user?id={{ user.user_id }}" target="_blank">
-                                        {{ user.user_id }}
-                                    </a>
-                                </td>
-                                <td><strong>{{ user.total_messages }}</strong> 条</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <div class="alert alert-info">
-                    <i class="fa-solid fa-info-circle me-2"></i>暂无用户数据
-                </div>
-            {% endif %}
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-ranking-star text-primary"></i>活跃用户排行
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">排名</th>
+                            <th>用户ID</th>
+                            <th class="text-end pe-3 pe-md-4">消息数</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in top_users %}
+                        <tr>
+                            <td class="ps-3 ps-md-4">
+                                {% if loop.index == 1 %}🥇
+                                {% elif loop.index == 2 %}🥈
+                                {% elif loop.index == 3 %}🥉
+                                {% else %}{{ loop.index }}{% endif %}
+                            </td>
+                            <td>
+                                <a href="tg://user?id={{ user.user_id }}" target="_blank">{{ user.user_id }}</a>
+                            </td>
+                            <td class="text-end pe-3 pe-md-4"><strong>{{ user.total_messages }}</strong></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="list-empty-cell">暂无用户数据</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>

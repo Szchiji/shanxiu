@@ -123,90 +123,90 @@
 </div>
 
 <!-- 成员列表 -->
-<div class="card">
-    <div class="card-header bg-white fw-bold py-3">
-        <i class="fa-solid fa-list me-2 text-primary"></i>成员列表
-        <span class="badge bg-secondary ms-2">共 {{ pagination.total }} 人</span>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>成员列表
+        <span class="badge bg-secondary ms-auto">共 {{ pagination.total }} 人</span>
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead>
-                    <tr>
-                        <th>用户</th>
-                        <th>用户ID</th>
-                        <th>身份</th>
-                        <th>积分</th>
-                        <th>认证</th>
-                        <th>进群时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for member in members %}
-                    <tr>
-                        <td>
-                            <div class="d-flex align-items-center gap-2">
-                                <div class="user-avatar" data-uid="{{ member.user_id }}">
-                                    {{ ((member.first_name or member.username or '#')[:1])|upper }}
-                                </div>
-                                <div>
-                                    <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
-                                    {% if member.username %}
-                                    <small class="text-muted">@{{ member.username }}</small>
-                                    {% endif %}
-                                    {% if member.is_bot %}
-                                    <span class="badge bg-info ms-1">🤖</span>
-                                    {% endif %}
-                                </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">用户</th>
+                    <th class="hide-mobile">用户ID</th>
+                    <th>身份</th>
+                    <th>积分</th>
+                    <th class="hide-mobile">认证</th>
+                    <th class="hide-mobile">进群时间</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for member in members %}
+                <tr>
+                    <td class="ps-3 ps-md-4">
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="user-avatar" data-uid="{{ member.user_id }}">
+                                {{ ((member.first_name or member.username or '#')[:1])|upper }}
                             </div>
-                        </td>
-                        <td><code>{{ member.user_id }}</code></td>
-                        <td>
-                            {% if member.status == 'creator' %}
-                            <span class="badge bg-danger">👑 群主</span>
-                            {% elif member.status == 'administrator' %}
-                            <span class="badge bg-warning text-dark">⚡ 管理员</span>
-                            {% else %}
-                            <span class="badge bg-secondary">成员</span>
-                            {% endif %}
-                        </td>
-                        <td>💰 {{ member_info.get(member.user_id, {}).get('points', 0) }}</td>
-                        <td>
-                            {% if member_info.get(member.user_id, {}).get('is_verified', False) %}
-                            <span class="verified-badge">✅ 已认证</span>
-                            {% else %}
-                            <span class="unverified-badge">❌ 未认证</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <small class="text-muted">{{ member.joined_at.strftime('%m-%d %H:%M:%S') if member.joined_at else '-' }}</small>
-                        </td>
-                        <td>
-                            <button class="btn btn-sm btn-primary" onclick="showAdjustPointsModal({{ member.user_id }}, '{{ member.first_name }}')">
-                                <i class="fa-solid fa-coins me-1"></i>调整积分
+                            <div>
+                                <div class="fw-bold">{{ member.first_name or '' }} {{ member.last_name or '' }}</div>
+                                {% if member.username %}
+                                <small class="text-muted">@{{ member.username }}</small>
+                                {% endif %}
+                                {% if member.is_bot %}
+                                <span class="badge bg-info ms-1">🤖</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </td>
+                    <td class="hide-mobile"><code>{{ member.user_id }}</code></td>
+                    <td>
+                        {% if member.status == 'creator' %}
+                        <span class="badge bg-danger">👑 群主</span>
+                        {% elif member.status == 'administrator' %}
+                        <span class="badge bg-warning text-dark">⚡ 管理员</span>
+                        {% else %}
+                        <span class="badge bg-secondary">成员</span>
+                        {% endif %}
+                    </td>
+                    <td>💰 {{ member_info.get(member.user_id, {}).get('points', 0) }}</td>
+                    <td class="hide-mobile">
+                        {% if member_info.get(member.user_id, {}).get('is_verified', False) %}
+                        <span class="verified-badge">✅ 已认证</span>
+                        {% else %}
+                        <span class="unverified-badge">❌ 未认证</span>
+                        {% endif %}
+                    </td>
+                    <td class="hide-mobile">
+                        <small class="text-muted">{{ member.joined_at.strftime('%m-%d %H:%M:%S') if member.joined_at else '-' }}</small>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="调整积分" onclick="showAdjustPointsModal({{ member.user_id }}, '{{ member.first_name }}')">
+                                <i class="fa-solid fa-coins"></i>
                             </button>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-center py-5">
-                            <i class="fa-solid fa-users-slash fa-3x text-muted mb-3"></i>
-                            <p class="text-muted mb-2">暂无成员数据</p>
-                            <button class="btn btn-primary btn-sm" onclick="syncMembers()">
-                                <i class="fa-solid fa-sync me-1"></i>立即同步
-                            </button>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="list-empty-cell">
+                        <i class="fa-solid fa-users-slash fa-2x mb-2 d-block opacity-50"></i>
+                        <p class="mb-2">暂无成员数据</p>
+                        <button class="btn btn-primary btn-sm" onclick="syncMembers()">
+                            <i class="fa-solid fa-sync me-1"></i>立即同步
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     
     <!-- 分页 -->
     {% if pagination.pages > 1 %}
-    <div class="card-footer">
+    <div class="p-3 border-top">
         <nav>
             <ul class="pagination justify-content-center mb-0">
                 {% if pagination.has_prev %}

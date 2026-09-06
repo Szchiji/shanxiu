@@ -1,22 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import feature_description %}
 {% block content %}
-<style>
-    .changes-card {
-        border-radius: 10px;
-        border: none;
-        box-shadow: var(--card-shadow);
-    }
-    
-    .change-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 0.75rem 1rem;
-    }
-    
-    .change-item:last-child {
-        border-bottom: none;
-    }
-</style>
+
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -35,36 +20,38 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="changes-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list-ul me-2 text-primary"></i>最近100条改名记录
-            </div>
-            <div class="card-body p-0">
-                {% if changes %}
-                    {% for change in changes %}
-                    <div class="change-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="flex-grow-1">
-                                <span class="fw-bold">用户ID: {{ change.user_id }}</span>
-                                <span class="mx-2">|</span>
-                                <span class="text-muted">{{ change.old_name or '(无名称)' }}</span>
-                                <i class="fa-solid fa-arrow-right mx-2"></i>
-                                <span class="text-primary">{{ change.new_name or '(无名称)' }}</span>
-                            </div>
-                            <small class="text-muted">{{ change.changed_at.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                        </div>
-                    </div>
-                    {% endfor %}
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list-ul text-primary"></i>最近100条改名记录
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">用户ID</th>
+                    <th>旧名称</th>
+                    <th>新名称</th>
+                    <th class="text-end pe-3 pe-md-4">时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for change in changes %}
+                <tr>
+                    <td class="ps-3 ps-md-4"><code>{{ change.user_id }}</code></td>
+                    <td class="text-muted">{{ change.old_name or '(无名称)' }}</td>
+                    <td class="text-primary">{{ change.new_name or '(无名称)' }}</td>
+                    <td class="text-end pe-3 pe-md-4 text-muted">{{ change.changed_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无改名记录</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="4" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无改名记录
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

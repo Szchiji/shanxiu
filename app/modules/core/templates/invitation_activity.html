@@ -24,15 +24,6 @@
         cursor: pointer;
     }
     
-    .leaderboard-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.75rem 1rem;
-        border-bottom: 1px solid var(--border-color);
-        transition: background-color 0.2s;
-    }
-    
     .leaderboard-item:last-child {
         border-bottom: none;
     }
@@ -40,23 +31,6 @@
     .leaderboard-item:hover {
         background-color: var(--bg-card-hover);
     }
-    
-    .rank-badge {
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 0.85rem;
-        margin-right: 1rem;
-    }
-    
-    .rank-1 { background: linear-gradient(135deg, #ffd700, #ffb800); color: white; }
-    .rank-2 { background: linear-gradient(135deg, #c0c0c0, #a0a0a0); color: white; }
-    .rank-3 { background: linear-gradient(135deg, #cd7f32, #b5651d); color: white; }
-    .rank-other { background: var(--bg-card-hover); color: var(--text-muted); }
     
     .stats-badge {
         display: inline-block;
@@ -67,12 +41,6 @@
         font-weight: bold;
         font-size: 1.2rem;
         margin: 0 0.5rem;
-    }
-    
-    .recent-invitation {
-        padding: 0.5rem 1rem;
-        border-bottom: 1px solid var(--border-color);
-        font-size: 0.9rem;
     }
     
     .recent-invitation:last-child {
@@ -180,63 +148,67 @@
     
     <div class="col-lg-6">
         <!-- Invitation Leaderboard -->
-        <div class="settings-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-trophy me-2 text-warning"></i>邀请排行榜 TOP 10
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-trophy text-warning"></i>邀请排行榜 TOP 10
             </div>
-            <div class="card-body p-0">
-                {% if leaderboard %}
-                    {% for inviter_id, invite_count, total_points in leaderboard %}
-                    <div class="leaderboard-item">
-                        <div class="d-flex align-items-center">
-                            <div class="rank-badge {{ 'rank-' ~ loop.index if loop.index <= 3 else 'rank-other' }}">
-                                {{ loop.index }}
-                            </div>
-                            <div>
-                                <div class="fw-bold">用户 {{ inviter_id }}</div>
-                                <small class="text-muted">邀请 {{ invite_count }} 人</small>
-                            </div>
-                        </div>
-                        <div class="text-end">
-                            <span class="badge bg-primary">{{ total_points or 0 }} 积分</span>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无邀请记录</p>
-                    </div>
-                {% endif %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">排名</th>
+                            <th>用户</th>
+                            <th>邀请人数</th>
+                            <th class="text-end pe-3 pe-md-4">积分</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for inviter_id, invite_count, total_points in leaderboard %}
+                        <tr>
+                            <td class="ps-3 ps-md-4">
+                                {% if loop.index == 1 %}🥇
+                                {% elif loop.index == 2 %}🥈
+                                {% elif loop.index == 3 %}🥉
+                                {% else %}{{ loop.index }}{% endif %}
+                            </td>
+                            <td>用户 {{ inviter_id }}</td>
+                            <td>{{ invite_count }}</td>
+                            <td class="text-end pe-3 pe-md-4"><span class="badge bg-primary">{{ total_points or 0 }}</span></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="list-empty-cell">暂无邀请记录</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
         
         <!-- Recent Invitations -->
-        <div class="settings-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-clock-rotate-left me-2 text-info"></i>最近邀请记录
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-clock-rotate-left text-info"></i>最近邀请记录
             </div>
-            <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
-                {% if recent_invitations %}
-                    {% for record in recent_invitations %}
-                    <div class="recent-invitation">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <i class="fa-solid fa-user-plus text-success me-2"></i>
-                                <span class="fw-bold">{{ record.inviter_id }}</span>
-                                <span class="text-muted">邀请了</span>
-                                <span class="fw-bold">{{ record.invited_name or record.invited_id }}</span>
-                            </div>
-                            <small class="text-muted">{{ record.created_at.strftime('%m-%d %H:%M:%S') }}</small>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center py-4">
-                        <i class="fa-solid fa-inbox fa-2x text-muted mb-2"></i>
-                        <p class="text-muted mb-0">暂无邀请记录</p>
-                    </div>
-                {% endif %}
+            <div class="table-responsive" style="max-height: 320px; overflow-y: auto;">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">邀请人</th>
+                            <th>被邀请人</th>
+                            <th class="text-end pe-3 pe-md-4">时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in recent_invitations %}
+                        <tr>
+                            <td class="ps-3 ps-md-4">{{ record.inviter_id }}</td>
+                            <td>{{ record.invited_name or record.invited_id }}</td>
+                            <td class="text-end pe-3 pe-md-4 text-muted">{{ record.created_at.strftime('%m-%d %H:%M:%S') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="list-empty-cell">暂无邀请记录</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

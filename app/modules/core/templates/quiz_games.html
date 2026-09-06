@@ -4,14 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .quiz-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -34,44 +27,60 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-md-10 mx-auto">
-        <div class="alert alert-info">
-            <i class="fa-solid fa-lightbulb me-2"></i>
-            <strong>使用方法：</strong>在群内使用命令 /quiz 随机抽取题目开始答题
-        </div>
+<div class="alert alert-info">
+    <i class="fa-solid fa-lightbulb me-2"></i>
+    <strong>使用方法：</strong>在群内使用命令 /quiz 随机抽取题目开始答题
+</div>
 
-        {% if quizzes %}
-            {% for q in quizzes %}
-            <div class="quiz-card">
-                <div class="d-flex justify-content-between">
-                    <div class="flex-grow-1">
-                        <h6 class="fw-bold">{{ q.question }}</h6>
-                        <div class="text-muted small">
-                            <span class="badge bg-{{ 'success' if q.is_active else 'secondary' }}">
-                                {{ '已启用' if q.is_active else '已禁用' }}
-                            </span>
-                            <span class="badge bg-info">{{ q.difficulty }}</span>
-                            <span class="badge bg-primary">{{ q.points_reward }}积分</span>
-                            {% if q.category %}<span class="badge bg-warning">{{ q.category }}</span>{% endif %}
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>题目列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">问题</th>
+                    <th class="hide-mobile">难度</th>
+                    <th>奖励</th>
+                    <th class="hide-mobile">分类</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for q in quizzes %}
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ q.question }}</td>
+                    <td class="hide-mobile"><span class="badge bg-info">{{ q.difficulty }}</span></td>
+                    <td>{{ q.points_reward }} 积分</td>
+                    <td class="hide-mobile">{% if q.category %}<span class="badge bg-warning">{{ q.category }}</span>{% else %}-{% endif %}</td>
+                    <td>
+                        <span class="badge bg-{{ 'success' if q.is_active else 'secondary' }}">
+                            {{ '已启用' if q.is_active else '已禁用' }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editQuiz({{ q.id }})">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteQuiz({{ q.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
-                    </div>
-                    <div class="d-flex gap-1">
-                        <button class="btn btn-sm btn-outline-primary" onclick="editQuiz({{ q.id }})">
-                            <i class="fa-solid fa-edit"></i>
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteQuiz({{ q.id }})">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="alert alert-secondary">
-                <i class="fa-solid fa-info-circle me-2"></i>暂无题目，点击上方按钮添加。
-            </div>
-        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无题目，点击上方按钮添加
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

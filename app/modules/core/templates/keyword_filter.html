@@ -4,25 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .filter-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        padding: 1rem;
-        margin-bottom: 1rem;
-        transition: all 0.3s;
-    }
-    
-    .filter-card:hover {
-        border-color: rgba(59, 130, 246, 0.35);
-        box-shadow: var(--hover-shadow);
-    }
-    
-    .badge-filter-type {
-        font-size: 0.85rem;
-        padding: 0.4rem 0.8rem;
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -45,48 +27,59 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-md-10 mx-auto">
-        {% if filters %}
-            <div id="filtersList">
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>过滤规则
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="filtersList">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">关键词</th>
+                    <th>类型</th>
+                    <th class="hide-mobile">匹配</th>
+                    <th class="hide-mobile">动作</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
                 {% for f in filters %}
-                <div class="filter-card">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="flex-grow-1">
-                            <h5 class="mb-2">
-                                <span class="badge badge-filter-type 
-                                    {% if f.filter_type == 'blacklist' %}bg-danger{% else %}bg-success{% endif %}">
-                                    {{ '黑名单' if f.filter_type == 'blacklist' else '白名单' }}
-                                </span>
-                                <code class="ms-2">{{ f.keyword }}</code>
-                            </h5>
-                            <div class="text-muted small">
-                                <span class="me-3"><i class="fa-solid fa-search me-1"></i>
-                                    匹配方式: {{ {'contains': '包含', 'exact': '精确', 'regex': '正则'}[f.match_type] }}</span>
-                                <span class="me-3"><i class="fa-solid fa-bolt me-1"></i>
-                                    动作: {{ {'delete': '删除', 'warn': '警告', 'mute': '禁言', 'kick': '踢出', 'ban': '封禁'}[f.action] }}</span>
-                                <span class="badge {{ 'bg-success' if f.is_active else 'bg-secondary' }}">
-                                    {{ '已启用' if f.is_active else '已禁用' }}
-                                </span>
-                            </div>
-                        </div>
-                        <div class="d-flex gap-1">
-                            <button class="btn btn-sm btn-outline-primary" onclick="editFilter({{ f.id }})">
-                                <i class="fa-solid fa-edit"></i>
+                <tr>
+                    <td class="ps-3 ps-md-4"><code>{{ f.keyword }}</code></td>
+                    <td>
+                        <span class="badge {% if f.filter_type == 'blacklist' %}bg-danger{% else %}bg-success{% endif %}">
+                            {{ '黑名单' if f.filter_type == 'blacklist' else '白名单' }}
+                        </span>
+                    </td>
+                    <td class="hide-mobile">{{ {'contains': '包含', 'exact': '精确', 'regex': '正则'}[f.match_type] }}</td>
+                    <td class="hide-mobile">{{ {'delete': '删除', 'warn': '警告', 'mute': '禁言', 'kick': '踢出', 'ban': '封禁'}[f.action] }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if f.is_active else 'bg-secondary' }}">
+                            {{ '已启用' if f.is_active else '已禁用' }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editFilter({{ f.id }})">
+                                <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteFilter({{ f.id }})">
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteFilter({{ f.id }})">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </div>
-                    </div>
-                </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无关键词过滤规则，点击上方按钮添加
+                    </td>
+                </tr>
                 {% endfor %}
-            </div>
-        {% else %}
-            <div class="alert alert-info">
-                <i class="fa-solid fa-info-circle me-2"></i>暂无关键词过滤规则，点击上方按钮添加。
-            </div>
-        {% endif %}
+            </tbody>
+        </table>
     </div>
 </div>
 

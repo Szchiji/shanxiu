@@ -4,18 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .settings-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-card);
-        box-shadow: var(--card-shadow);
-        margin-bottom: 1.5rem;
-    }
-    .table td, .table th {
-        vertical-align: middle;
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -37,56 +26,56 @@
 </ul>
 {% endcall %}
 
-<div class="settings-card card">
-    <div class="card-header bg-white fw-bold py-3">
-        <i class="fa-solid fa-list me-2 text-primary"></i>优惠券列表
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>优惠券列表
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0" id="couponsTable">
-                <thead>
-                    <tr>
-                        <th>名称</th>
-                        <th>券码</th>
-                        <th>按钮</th>
-                        <th>关键词</th>
-                        <th>排序</th>
-                        <th>状态</th>
-                        <th class="text-end">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in coupons %}
-                    <tr data-id="{{ item.id }}"
-                        data-coupon-name="{{ item.coupon_name|e }}"
-                        data-coupon-code="{{ (item.coupon_code or '')|e }}"
-                        data-button-text="{{ (item.button_text or '')|e }}"
-                        data-button-url="{{ (item.button_url or '')|e }}"
-                        data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
-                        data-sort-order="{{ item.sort_order or 0 }}"
-                        data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                        <td>{{ item.coupon_name }}</td>
-                        <td>{{ item.coupon_code or '—' }}</td>
-                        <td>
-                            <div>{{ item.button_text or '—' }}</div>
-                            <small class="text-muted">{{ item.button_url or '无链接' }}</small>
-                        </td>
-                        <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
-                        <td>{{ item.sort_order or 0 }}</td>
-                        <td>
-                            <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-edit"></i></button>
-                            <button class="btn btn-sm btn-danger" onclick="deleteCoupon({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="7" class="text-center text-muted py-5">暂无频道优惠券</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="couponsTable">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">名称</th>
+                    <th>券码</th>
+                    <th class="hide-mobile">按钮</th>
+                    <th class="hide-mobile">关键词</th>
+                    <th>排序</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in coupons %}
+                <tr data-id="{{ item.id }}"
+                    data-coupon-name="{{ item.coupon_name|e }}"
+                    data-coupon-code="{{ (item.coupon_code or '')|e }}"
+                    data-button-text="{{ (item.button_text or '')|e }}"
+                    data-button-url="{{ (item.button_url or '')|e }}"
+                    data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
+                    data-sort-order="{{ item.sort_order or 0 }}"
+                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ item.coupon_name }}</td>
+                    <td>{{ item.coupon_code or '—' }}</td>
+                    <td class="hide-mobile">
+                        <div>{{ item.button_text or '—' }}</div>
+                        <small class="text-muted">{{ item.button_url or '无链接' }}</small>
+                    </td>
+                    <td class="text-muted small hide-mobile">{{ item.trigger_keywords or '全部消息' }}</td>
+                    <td>{{ item.sort_order or 0 }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-pen"></i></button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteCoupon({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="list-empty-cell">暂无频道优惠券</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

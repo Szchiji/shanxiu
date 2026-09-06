@@ -84,45 +84,43 @@
     </div>
 </div>
 
-<div class="table-card card">
-    <div class="card-header bg-white fw-bold py-3">
-        <i class="fa-solid fa-clock-rotate-left me-2 text-primary"></i>最近 100 条处理记录
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-clock-rotate-left text-primary"></i>最近 100 条处理记录
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead>
-                    <tr>
-                        <th>时间</th>
-                        <th>频道消息</th>
-                        <th>讨论消息</th>
-                        <th>类型</th>
-                        <th>内容</th>
-                        <th>命中规则</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in stats_entries %}
-                    <tr>
-                        <td>{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else '—' }}</td>
-                        <td>
-                            <div>{{ item.channel_chat_id or '—' }}</div>
-                            <small class="text-muted">消息ID: {{ item.channel_message_id or '—' }}</small>
-                        </td>
-                        <td>
-                            <div>{{ item.discussion_chat_id or '—' }}</div>
-                            <small class="text-muted">消息ID: {{ item.discussion_message_id or '—' }}</small>
-                        </td>
-                        <td>{{ item.media_type or 'text' }}</td>
-                        <td class="message-preview text-muted small">{{ item.message_text or '—' }}</td>
-                        <td class="text-muted small">{{ item.matched_rules or '[]' }}</td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道统计数据</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">时间</th>
+                    <th class="hide-mobile">频道消息</th>
+                    <th class="hide-mobile">讨论消息</th>
+                    <th>类型</th>
+                    <th>内容</th>
+                    <th class="text-end pe-3 pe-md-4">命中规则</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in stats_entries %}
+                <tr>
+                    <td class="ps-3 ps-md-4">{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else '—' }}</td>
+                    <td class="hide-mobile">
+                        <div>{{ item.channel_chat_id or '—' }}</div>
+                        <small class="text-muted">消息ID: {{ item.channel_message_id or '—' }}</small>
+                    </td>
+                    <td class="hide-mobile">
+                        <div>{{ item.discussion_chat_id or '—' }}</div>
+                        <small class="text-muted">消息ID: {{ item.discussion_message_id or '—' }}</small>
+                    </td>
+                    <td>{{ item.media_type or 'text' }}</td>
+                    <td class="message-preview text-muted small">{{ item.message_text or '—' }}</td>
+                    <td class="text-end pe-3 pe-md-4 text-muted small">{{ item.matched_rules or '[]' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="list-empty-cell">暂无频道统计数据</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

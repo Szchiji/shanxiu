@@ -4,29 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .rules-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        box-shadow: var(--card-shadow);
-        transition: all 0.3s ease;
-        margin-bottom: 1.5rem;
-    }
-    
-    .rule-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    
-    .rule-item:last-child {
-        border-bottom: none;
-    }
-    
-    .rule-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -49,43 +27,56 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="rules-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list-check me-2 text-primary"></i>规则列表
-            </div>
-            <div class="card-body p-0">
-                {% if rules %}
-                    {% for rule in rules %}
-                    <div class="rule-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h6 class="mb-1">{{ rule.rule_name }}</h6>
-                                <small class="text-muted">类型: {{ rule.rule_type }} | 积分: +{{ rule.points_amount }}{% if rule.max_daily_points %} | 每日上限: {{ rule.max_daily_points }}{% endif %}</small>
-                                <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }} ms-2">
-                                    {{ '启用' if rule.is_active else '禁用' }}
-                                </span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-primary" onclick="editRule({{ rule.id }}, '{{ rule.rule_name }}', '{{ rule.rule_type }}', {{ rule.points_amount }}, {{ 'true' if rule.is_active else 'false' }}, {{ rule.max_daily_points or 'null' }})">
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteRule({{ rule.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list-check text-primary"></i>规则列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">名称</th>
+                    <th>类型</th>
+                    <th>积分</th>
+                    <th class="hide-mobile">每日上限</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in rules %}
+                <tr>
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ rule.rule_name }}</td>
+                    <td><span class="badge bg-info">{{ rule.rule_type }}</span></td>
+                    <td>+{{ rule.points_amount }}</td>
+                    <td class="hide-mobile">{{ rule.max_daily_points if rule.max_daily_points else '不限' }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if rule.is_active else 'bg-secondary' }}">
+                            {{ '启用' if rule.is_active else '禁用' }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑"
+                                onclick="editRule({{ rule.id }}, '{{ rule.rule_name }}', '{{ rule.rule_type }}', {{ rule.points_amount }}, {{ 'true' if rule.is_active else 'false' }}, {{ rule.max_daily_points or 'null' }})">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteRule({{ rule.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无积分规则</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="6" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无积分规则
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

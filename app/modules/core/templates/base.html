@@ -618,6 +618,102 @@
             --bs-table-bg: var(--bg-card);
             --bs-table-border-color: var(--border-color);
         }
+
+        /* Unified list container — same look/row height as 定时消息 */
+        .table-container {
+            background: var(--bg-card);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--border-color);
+            margin-bottom: 1.5rem;
+        }
+
+        .table-container > .list-section-header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.85rem 1rem;
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .table-container > .list-section-header {
+                padding: 0.85rem 1.25rem;
+            }
+        }
+
+        .table-container .table {
+            margin-bottom: 0;
+            font-size: 0.85rem;
+        }
+
+        @media (min-width: 768px) {
+            .table-container .table {
+                font-size: 0.95rem;
+            }
+        }
+
+        .table-container .table thead th,
+        .table-container .table tbody td {
+            padding: 0.5rem 0.75rem;
+            vertical-align: middle;
+        }
+
+        @media (min-width: 768px) {
+            .table-container .table thead th,
+            .table-container .table tbody td {
+                padding: 0.75rem 1rem;
+            }
+        }
+
+        .table-container .table thead th {
+            white-space: nowrap;
+        }
+
+        .action-btn {
+            transition: all 0.3s ease;
+            border-radius: 6px;
+            padding: 0.25rem 0.4rem;
+            font-size: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            min-height: 28px;
+            line-height: 1;
+        }
+
+        @media (min-width: 768px) {
+            .action-btn {
+                padding: 0.35rem 0.6rem;
+                font-size: 0.9rem;
+                min-width: 32px;
+                min-height: 32px;
+            }
+        }
+
+        @media (max-width: 767px) {
+            .hide-mobile {
+                display: none !important;
+            }
+        }
+
+        .list-empty-cell {
+            text-align: center;
+            padding: 1.5rem 1rem !important;
+            color: var(--text-muted);
+        }
+
+        @media (min-width: 768px) {
+            .list-empty-cell {
+                padding: 2.5rem 1rem !important;
+            }
+        }
         
         /* Badges */
         .badge {

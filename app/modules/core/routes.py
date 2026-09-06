@@ -4792,7 +4792,8 @@ def api_save_points_shop_enabled():
         return jsonify({'status': 'ok', 'points_shop_enabled': conf['points_shop_enabled']})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'msg': str(e)})
+        logging.error("save_points_shop_enabled error: %s", e)
+        return jsonify({'status': 'error', 'msg': '保存失败，请重试'})
 
 
 @core_bp.route('/api/save_auction_channel', methods=['POST'])

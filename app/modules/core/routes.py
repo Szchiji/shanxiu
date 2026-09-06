@@ -4773,6 +4773,29 @@ def api_save_exchange_channel():
         return jsonify({'status':'error','msg':str(e)})
 
 
+@core_bp.route('/api/save_points_shop_enabled', methods=['POST'])
+def api_save_points_shop_enabled():
+    """保存积分商城总开关（兑换 + 竞拍）"""
+    if not session.get('logged_in'): return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json
+    if not d or 'group_id' not in d: return jsonify({'status': 'error', 'msg': 'Missing group_id'})
+
+    try:
+        group = BotGroup.query.get(d['group_id'])
+        if not group: return jsonify({'status': 'error', 'msg': 'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
+        conf = get_group_conf(group)
+        conf['points_shop_enabled'] = bool(d.get('points_shop_enabled', True))
+        group.config = json.dumps(conf, ensure_ascii=False)
+        db.session.commit()
+        return jsonify({'status': 'ok', 'points_shop_enabled': conf['points_shop_enabled']})
+    except Exception as e:
+        db.session.rollback()
+        logging.error("save_points_shop_enabled error: %s", e)
+        return jsonify({'status': 'error', 'msg': '保存失败，请重试'})
+
+
 @core_bp.route('/api/save_auction_channel', methods=['POST'])
 def api_save_auction_channel():
     """保存积分竞拍频道推送配置"""
@@ -11087,6 +11110,8 @@ async def cmd_bid(update: Update, context):
                 group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return "error", "群组未找到"
+                if not get_group_conf(group).get('points_shop_enabled', True):
+                    return "error", "积分商城已关闭"
                 
                 # Get auction with row-level lock
                 auction = PointsAuction.query.filter_by(
@@ -11215,16 +11240,21 @@ async def cmd_auction(update: Update, context):
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
-                return []
+                return None, "群组未找到"
+            if not get_group_conf(group).get('points_shop_enabled', True):
+                return None, "积分商城已关闭"
             
             auctions = PointsAuction.query.filter_by(
                 group_id=group.id,
                 status='active'
             ).order_by(PointsAuction.auction_end).all()
             
-            return auctions
+            return auctions, None
     
-    auctions = await asyncio.get_running_loop().run_in_executor(None, _get_auctions)
+    auctions, err = await asyncio.get_running_loop().run_in_executor(None, _get_auctions)
+    if err:
+        await update.message.reply_text(f"❌ {err}")
+        return
     
     if not auctions:
         await update.message.reply_text("📭 当前没有进行中的竞拍")
@@ -13547,7 +13577,12 @@ async def on_message(update: Update, context):
             if chat.type in ['group', 'supergroup']:
                 _exchange_cmd = conf.get('exchange_command_word', '兑换').strip()
                 _exchange_list_cmds = {_exchange_cmd, '兑换', '兑换列表', '积分兑换'}
-                if txt in _exchange_list_cmds:
+                _is_exchange_list = txt in _exchange_list_cmds
+                _is_exchange_item = txt.startswith('兑换 ') and len(txt) > 3
+                if (_is_exchange_list or _is_exchange_item) and not conf.get('points_shop_enabled', True):
+                    await msg.reply_html("❌ 积分商城已关闭")
+                    return
+                if conf.get('points_shop_enabled', True) and _is_exchange_list:
                     # Show available exchange items with inline buttons (reuse catalog builder)
                     catalog_text, catalog_buttons = _build_exchange_catalog_sync(group.id)
                     if catalog_buttons:
@@ -13559,7 +13594,7 @@ async def on_message(update: Update, context):
                         await msg.reply_html(catalog_text)
                     return
 
-                if txt.startswith('兑换 ') and len(txt) > 3:
+                if conf.get('points_shop_enabled', True) and _is_exchange_item:
                     item_id_str = txt[3:].strip()
                     if item_id_str.isdigit():
                         item_id = int(item_id_str)
@@ -13638,6 +13673,9 @@ async def on_message(update: Update, context):
             if chat.type in ['group', 'supergroup']:
                 _auction_cmd = conf.get('auction_command_word', '竞拍').strip()
                 if _auction_cmd and txt == _auction_cmd:
+                    if not conf.get('points_shop_enabled', True):
+                        await msg.reply_html("❌ 积分商城已关闭")
+                        return
                     auctions = PointsAuction.query.filter_by(
                         group_id=group.id, status='active'
                     ).order_by(PointsAuction.auction_end).all()
@@ -13996,6 +14034,10 @@ async def exchange_item_callback(update: Update, context):
 
     def _do_exchange():
         with global_flask_app.app_context():
+            grp = BotGroup.query.get(group_id)
+            if grp and not get_group_conf(grp).get('points_shop_enabled', True):
+                return None, "❌ 积分商城已关闭"
+
             item = PointsExchangeItem.query.filter_by(
                 id=item_id, group_id=group_id, is_active=True
             ).first()
@@ -14032,10 +14074,7 @@ async def exchange_item_callback(update: Update, context):
 
             # Snapshot announcement info and channel before commit
             announcement_msg_id = item.announcement_msg_id
-            channel_id = ''
-            grp = BotGroup.query.get(group_id)
-            if grp:
-                channel_id = get_group_conf(grp).get('exchange_channel_id', '').strip()
+            channel_id = get_group_conf(grp).get('exchange_channel_id', '').strip() if grp else ''
 
             db.session.add(PointsExchangeRecord(
                 group_id=group_id,

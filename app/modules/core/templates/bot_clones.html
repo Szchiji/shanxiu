@@ -4,29 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .clones-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        box-shadow: var(--card-shadow);
-        transition: all 0.3s ease;
-        margin-bottom: 1.5rem;
-    }
-    
-    .clone-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    
-    .clone-item:last-child {
-        border-bottom: none;
-    }
-    
-    .clone-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-</style>
+<style></style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -56,59 +34,72 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="clones-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list me-2 text-primary"></i>克隆列表
-            </div>
-            <div class="card-body p-0">
-                {% if clones %}
-                    {% for clone in clones %}
-                    <div class="clone-item">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ clone.clone_name }}</h6>
-                                <small class="text-muted">
-                                    <span class="fw-semibold text-secondary">克隆ID: {{ clone.id }}</span> | 
-                                    Token: ●●●●●●●●●●●●●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }} | 
-                                    {% if clone.owner_user_id %}拥有者ID: {{ clone.owner_user_id }} | {% endif %}
-                                    {% if clone.expiration_date %}有效期: {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}永久有效{% endif %}
-                                    {% if clone.description %}<br>描述: {{ clone.description }}{% endif %}
-                                    {% if railway_domain %}<br>Webhook URL: <code>https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}</code>{% endif %}
-                                </small>
-                                <span class="badge {{ 'bg-success' if clone.is_active else 'bg-secondary' }} ms-2">
-                                    {{ '启用' if clone.is_active else '禁用' }}
-                                </span>
-                                {% if clone.expiration_date and clone.expiration_date < beijing_now %}
-                                <span class="badge bg-danger ms-1">已过期</span>
-                                {% endif %}
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-info text-white" onclick="enterCloneBackend({{ clone.id }})" title="进入后台">
-                                    <i class="fa-solid fa-arrow-right-to-bracket"></i> 进入后台
-                                </button>
-                                <button class="btn btn-sm btn-{{ 'warning' if clone.is_active else 'success' }}" onclick="toggleClone({{ clone.id }})" title="切换状态">
-                                    <i class="fa-solid fa-{{ 'pause' if clone.is_active else 'play' }}"></i>
-                                </button>
-                                <button class="btn btn-sm btn-primary" onclick='editClone({{ clone.id }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteClone({{ clone.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>克隆列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">名称</th>
+                    <th class="hide-mobile">ID</th>
+                    <th class="hide-mobile">Token</th>
+                    <th class="hide-mobile">有效期</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for clone in clones %}
+                <tr>
+                    <td class="ps-3 ps-md-4">
+                        <div class="fw-semibold">{{ clone.clone_name }}</div>
+                        {% if clone.description %}<small class="text-muted">{{ clone.description }}</small>{% endif %}
+                        {% if railway_domain %}
+                        <div><small class="text-muted">Webhook: <code>https://{{ railway_domain }}/core/clone_webhook/{{ clone.id }}</code></small></div>
+                        {% endif %}
+                    </td>
+                    <td class="hide-mobile">{{ clone.id }}</td>
+                    <td class="hide-mobile"><code>●●●●{{ clone.bot_token[-5:] if clone.bot_token|length > 5 else '' }}</code></td>
+                    <td class="hide-mobile">
+                        {% if clone.expiration_date %}
+                            {{ clone.expiration_date.strftime('%Y-%m-%d %H:%M') }}
+                            {% if clone.expiration_date < beijing_now %}<span class="badge bg-danger ms-1">已过期</span>{% endif %}
+                        {% else %}永久有效{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if clone.is_active else 'bg-secondary' }}">
+                            {{ '启用' if clone.is_active else '禁用' }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end flex-wrap">
+                            <button class="action-btn btn btn-sm btn-info text-white" onclick="enterCloneBackend({{ clone.id }})" title="进入后台">
+                                <i class="fa-solid fa-arrow-right-to-bracket"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-{{ 'warning' if clone.is_active else 'success' }}" onclick="toggleClone({{ clone.id }})" title="切换状态">
+                                <i class="fa-solid fa-{{ 'pause' if clone.is_active else 'play' }}"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick='editClone({{ clone.id }})'>
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteClone({{ clone.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-robot fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无克隆机器人</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="6" class="list-empty-cell">
+                        <i class="fa-solid fa-robot fa-2x mb-2 d-block opacity-50"></i>
+                        暂无克隆机器人
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

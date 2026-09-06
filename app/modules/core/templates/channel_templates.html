@@ -5,13 +5,6 @@
 {{ loading_spinner() }}
 
 <style>
-    .settings-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-card);
-        box-shadow: var(--card-shadow);
-        margin-bottom: 1.5rem;
-    }
     .template-preview {
         max-width: 320px;
         white-space: pre-wrap;
@@ -39,52 +32,52 @@
 </ul>
 {% endcall %}
 
-<div class="settings-card card">
-    <div class="card-header bg-white fw-bold py-3">
-        <i class="fa-solid fa-list me-2 text-primary"></i>模板列表
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>模板列表
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0" id="templatesTable">
-                <thead>
-                    <tr>
-                        <th>模板名称</th>
-                        <th>关键词</th>
-                        <th>内容</th>
-                        <th>类型</th>
-                        <th>状态</th>
-                        <th class="text-end">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in templates %}
-                    <tr data-id="{{ item.id }}"
-                        data-template-name="{{ item.template_name|e }}"
-                        data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
-                        data-media-type="{{ item.media_type }}"
-                        data-media-url="{{ (item.media_url or '')|e }}"
-                        data-content="{{ (item.content or '')|e }}"
-                        data-links="{{ (item.links or '[]')|e }}"
-                        data-send-as-reply="{{ 'true' if item.send_as_reply else 'false' }}"
-                        data-is-active="{{ 'true' if item.is_active else 'false' }}">
-                        <td>{{ item.template_name }}</td>
-                        <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
-                        <td class="template-preview text-muted small">{{ item.content or item.media_url or '无内容' }}</td>
-                        <td>{{ item.media_type }}</td>
-                        <td>
-                            <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-edit"></i></button>
-                            <button class="btn btn-sm btn-danger" onclick="deleteTemplate({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-5">暂无频道消息模板</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="templatesTable">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">模板名称</th>
+                    <th>关键词</th>
+                    <th class="hide-mobile">内容</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in templates %}
+                <tr data-id="{{ item.id }}"
+                    data-template-name="{{ item.template_name|e }}"
+                    data-trigger-keywords="{{ (item.trigger_keywords or '')|e }}"
+                    data-media-type="{{ item.media_type }}"
+                    data-media-url="{{ (item.media_url or '')|e }}"
+                    data-content="{{ (item.content or '')|e }}"
+                    data-links="{{ (item.links or '[]')|e }}"
+                    data-send-as-reply="{{ 'true' if item.send_as_reply else 'false' }}"
+                    data-is-active="{{ 'true' if item.is_active else 'false' }}">
+                    <td class="ps-3 ps-md-4 fw-semibold">{{ item.template_name }}</td>
+                    <td class="text-muted small">{{ item.trigger_keywords or '全部消息' }}</td>
+                    <td class="template-preview text-muted small hide-mobile">{{ item.content or item.media_url or '无内容' }}</td>
+                    <td>{{ item.media_type }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">{{ '启用中' if item.is_active else '已停用' }}</span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="openEditModal({{ item.id }})"><i class="fa-solid fa-pen"></i></button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteTemplate({{ item.id }})"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="list-empty-cell">暂无频道消息模板</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

@@ -5,13 +5,14 @@
 {{ loading_spinner() }}
 
 <style>
-    /* ---- shared card styles ---- */
+    /* config cards share table-container look */
     .section-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
         border-radius: 10px;
         margin-bottom: 1.5rem;
         overflow: hidden;
+        box-shadow: var(--card-shadow);
     }
     .section-card .card-header-custom {
         background: var(--bg-card);
@@ -23,77 +24,6 @@
         align-items: center;
         gap: 0.5rem;
     }
-
-    /* ---- exchange product grid ---- */
-    .product-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-        gap: 1rem;
-        padding: 1rem;
-    }
-    .product-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 1rem;
-        position: relative;
-        transition: box-shadow 0.2s, transform 0.2s;
-    }
-    .product-card:hover { box-shadow: var(--hover-shadow); }
-    .product-card .status-badge {
-        position: absolute;
-        top: 0.7rem; right: 0.7rem;
-        font-size: 0.72rem;
-        padding: 0.2rem 0.55rem;
-        border-radius: 20px;
-        font-weight: 600;
-    }
-    .product-card .product-name {
-        font-weight: 700; font-size: 0.95rem;
-        margin-bottom: 0.35rem; padding-right: 3.5rem;
-        color: var(--text-primary);
-    }
-    .product-card .product-desc {
-        font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.6rem;
-    }
-    .product-card .product-meta {
-        display: flex; align-items: center;
-        gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.75rem;
-    }
-    .meta-chip {
-        display: inline-flex; align-items: center; gap: 0.25rem;
-        background: var(--bg-card-hover); border-radius: 20px;
-        padding: 0.15rem 0.6rem; font-size: 0.78rem;
-        font-weight: 600; color: var(--text-secondary);
-    }
-    .meta-chip.chip-points      { background: rgba(234,179,8,.12);  color: #854d0e; }
-    .meta-chip.chip-stock-ok    { background: rgba(34,197,94,.12);  color: #166534; }
-    .meta-chip.chip-stock-low   { background: rgba(249,115,22,.12); color: #9a3412; }
-    .meta-chip.chip-stock-out   { background: rgba(239,68,68,.12);  color: #991b1b; }
-    .meta-chip.chip-unlimited   { background: rgba(59,130,246,.12); color: #3730a3; }
-    .product-card .product-actions { display: flex; gap: 0.5rem; }
-    .product-card .product-actions .btn {
-        flex: 1; font-size: 0.78rem; padding: 0.3rem 0.6rem; border-radius: 8px;
-    }
-
-    /* ---- auction list ---- */
-    .auction-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    .auction-item:last-child { border-bottom: none; }
-    .auction-item:hover { background-color: var(--bg-card-hover); }
-
-    /* ---- records table ---- */
-    .records-table th, .records-table td {
-        padding: 0.5rem 0.75rem; font-size: 0.83rem; vertical-align: middle;
-    }
-
-    /* ---- modal ---- */
-    .modal-content { border-radius: 14px; border: 1px solid var(--border-color); }
-
-    @media (max-width: 576px) { .product-grid { grid-template-columns: 1fr; } }
 </style>
 
 <div class="page-header">
@@ -102,7 +32,17 @@
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-store me-2"></i>积分商城</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">管理积分兑换商品与竞拍活动</p>
         </div>
-        <div id="tab-actions"></div>
+        <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch m-0 text-white">
+                <input class="form-check-input" type="checkbox" role="switch" id="points_shop_enabled"
+                       {% if conf.get('points_shop_enabled', True) %}checked{% endif %}
+                       onchange="togglePointsShop(this.checked)">
+                <label class="form-check-label fw-semibold" for="points_shop_enabled" id="points_shop_enabled_label">
+                    {{ '已启用' if conf.get('points_shop_enabled', True) else '已关闭' }}
+                </label>
+            </div>
+            <div id="tab-actions"></div>
+        </div>
     </div>
 </div>
 
@@ -180,108 +120,104 @@
         </div>
 
         <!-- Product list -->
-        <div class="section-card">
-            <div class="card-header-custom">
+        <div class="table-container">
+            <div class="list-section-header">
                 <i class="fa-solid fa-boxes-stacked text-primary"></i> 商品列表
                 <span class="badge bg-secondary ms-auto" style="font-weight:500;">{{ items|length }} 件</span>
             </div>
-            {% if items %}
-            <div class="product-grid">
-                {% for item in items %}
-                <div class="product-card">
-                    <span class="status-badge badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">
-                        {{ '上架' if item.is_active else '已下架' }}
-                    </span>
-                    <div class="product-name">{{ item.item_name }}</div>
-                    {% if item.item_description %}
-                    <div class="product-desc">{{ item.item_description }}</div>
-                    {% endif %}
-                    <div class="product-meta">
-                        <span class="meta-chip chip-points">
-                            <i class="fa-solid fa-coins" style="font-size:0.7rem;"></i> {{ item.points_cost }} 积分
-                        </span>
-                        {% if item.stock is none %}
-                        <span class="meta-chip chip-unlimited">
-                            <i class="fa-solid fa-infinity" style="font-size:0.7rem;"></i> 不限库存
-                        </span>
-                        {% elif item.stock > 5 %}
-                        <span class="meta-chip chip-stock-ok">
-                            <i class="fa-solid fa-box" style="font-size:0.7rem;"></i> 库存 {{ item.stock }}
-                        </span>
-                        {% elif item.stock > 0 %}
-                        <span class="meta-chip chip-stock-low">
-                            <i class="fa-solid fa-box-open" style="font-size:0.7rem;"></i> 仅剩 {{ item.stock }}
-                        </span>
-                        {% else %}
-                        <span class="meta-chip chip-stock-out">
-                            <i class="fa-solid fa-xmark" style="font-size:0.7rem;"></i> 已售罄
-                        </span>
-                        {% endif %}
-                    </div>
-                    {% if item.redemption_info %}
-                    <div class="text-muted" style="font-size:0.75rem; margin-bottom:0.6rem;">
-                        <i class="fa-solid fa-circle-info me-1"></i>
-                        {{ item.redemption_info[:60] }}{{ '…' if item.redemption_info|length > 60 else '' }}
-                    </div>
-                    {% endif %}
-                    <div class="product-actions">
-                        <button class="btn btn-outline-primary btn-sm"
-                            data-id="{{ item.id }}"
-                            data-name="{{ item.item_name|e }}"
-                            data-description="{{ (item.item_description or '')|e }}"
-                            data-points="{{ item.points_cost }}"
-                            data-stock="{{ item.stock if item.stock is not none else '' }}"
-                            data-redemption="{{ (item.redemption_info or '')|e }}"
-                            data-active="{{ 'true' if item.is_active else 'false' }}"
-                            onclick="editItemFromBtn(this)">
-                            <i class="fa-solid fa-pen me-1"></i>编辑
-                        </button>
-                        <button class="btn btn-outline-danger btn-sm" onclick="deleteItem({{ item.id }})">
-                            <i class="fa-solid fa-trash me-1"></i>删除
-                        </button>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="text-center py-5">
-                <i class="fa-solid fa-inbox fa-3x text-muted mb-3 d-block opacity-50"></i>
-                <p class="text-muted mb-0">暂无兑换商品，点击右上角「添加商品」创建</p>
-            </div>
-            {% endif %}
-        </div>
-
-        <!-- Redemption records -->
-        <div class="section-card">
-            <div class="card-header-custom">
-                <i class="fa-solid fa-receipt text-success"></i> 兑换记录
-                <span class="text-muted fw-normal ms-1" style="font-size:0.8rem;">最近 100 条</span>
-            </div>
-            {% if records %}
             <div class="table-responsive">
-                <table class="table table-hover mb-0 records-table">
-                    <thead class="table-light">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
                         <tr>
-                            <th>用户ID</th><th>商品</th><th>消耗积分</th><th>时间</th>
+                            <th class="ps-3 ps-md-4">商品</th>
+                            <th>积分</th>
+                            <th class="hide-mobile">库存</th>
+                            <th>状态</th>
+                            <th class="text-end pe-3 pe-md-4">操作</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for r in records %}
+                        {% for item in items %}
                         <tr>
-                            <td><code>{{ r.user_id }}</code></td>
-                            <td>{{ r.item.item_name if r.item else '<span class="text-muted">(已删除)</span>'|safe }}</td>
-                            <td><span class="text-danger fw-bold">-{{ r.points_spent }}</span></td>
-                            <td class="text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td class="ps-3 ps-md-4">
+                                <div class="fw-semibold">{{ item.item_name }}</div>
+                                {% if item.item_description %}<small class="text-muted">{{ item.item_description }}</small>{% endif %}
+                            </td>
+                            <td>{{ item.points_cost }}</td>
+                            <td class="hide-mobile">
+                                {% if item.stock is none %}不限
+                                {% elif item.stock > 0 %}{{ item.stock }}
+                                {% else %}<span class="text-danger">售罄</span>{% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {{ 'bg-success' if item.is_active else 'bg-secondary' }}">
+                                    {{ '上架' if item.is_active else '已下架' }}
+                                </span>
+                            </td>
+                            <td class="pe-3 pe-md-4">
+                                <div class="d-flex gap-1 align-items-center justify-content-end">
+                                    <button class="action-btn btn btn-sm btn-primary" title="编辑"
+                                        data-id="{{ item.id }}"
+                                        data-name="{{ item.item_name|e }}"
+                                        data-description="{{ (item.item_description or '')|e }}"
+                                        data-points="{{ item.points_cost }}"
+                                        data-stock="{{ item.stock if item.stock is not none else '' }}"
+                                        data-redemption="{{ (item.redemption_info or '')|e }}"
+                                        data-active="{{ 'true' if item.is_active else 'false' }}"
+                                        onclick="editItemFromBtn(this)">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                    <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteItem({{ item.id }})">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="list-empty-cell">
+                                <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                                暂无兑换商品，点击右上角「添加商品」创建
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <div class="text-center py-4">
-                <p class="text-muted mb-0">暂无兑换记录</p>
+        </div>
+
+        <!-- Redemption records -->
+        <div class="table-container">
+            <div class="list-section-header">
+                <i class="fa-solid fa-receipt text-success"></i> 兑换记录
+                <span class="text-muted fw-normal ms-1" style="font-size:0.8rem;">最近 100 条</span>
             </div>
-            {% endif %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">用户ID</th>
+                            <th>商品</th>
+                            <th>消耗积分</th>
+                            <th class="text-end pe-3 pe-md-4">时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in records %}
+                        <tr>
+                            <td class="ps-3 ps-md-4"><code>{{ r.user_id }}</code></td>
+                            <td>{{ r.item.item_name if r.item else '(已删除)' }}</td>
+                            <td><span class="text-danger fw-bold">-{{ r.points_spent }}</span></td>
+                            <td class="text-end pe-3 pe-md-4 text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="list-empty-cell">暂无兑换记录</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
 
     </div><!-- /exchange tab -->
@@ -332,50 +268,65 @@
             </div>
         </div>
 
-        <div class="section-card">
-            <div class="card-header-custom">
+        <div class="table-container">
+            <div class="list-section-header">
                 <i class="fa-solid fa-list text-primary"></i> 竞拍列表
                 <span class="badge bg-secondary ms-auto" style="font-weight:500;">{{ auctions|length }} 个</span>
             </div>
-            <div>
-                {% if auctions %}
-                    {% for auction in auctions %}
-                    <div class="auction-item">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ auction.item_name }}</h6>
-                                <p class="text-muted mb-2 small">{{ auction.item_description or '暂无描述' }}</p>
-                                <div class="d-flex gap-3 flex-wrap">
-                                    <small class="text-muted">起拍价: {{ auction.starting_price }}</small>
-                                    <small class="text-muted">当前价: {{ auction.current_bid or '未出价' }}</small>
-                                    {% if auction.auction_start %}
-                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
-                                    {% if auction.auction_end %}
-                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="ps-3 ps-md-4">物品</th>
+                            <th>起拍/当前</th>
+                            <th class="hide-mobile">时间</th>
+                            <th>状态</th>
+                            <th class="text-end pe-3 pe-md-4">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for auction in auctions %}
+                        <tr>
+                            <td class="ps-3 ps-md-4">
+                                <div class="fw-semibold">{{ auction.item_name }}</div>
+                                <small class="text-muted">{{ auction.item_description or '暂无描述' }}</small>
+                            </td>
+                            <td>
+                                <div>{{ auction.starting_price }}</div>
+                                <small class="text-muted">当前 {{ auction.current_bid or '未出价' }}</small>
+                            </td>
+                            <td class="hide-mobile">
+                                <div class="small text-muted">
+                                    {% if auction.auction_start %}起 {{ auction.auction_start.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
+                                    {% if auction.auction_end %}<br>止 {{ auction.auction_end.strftime('%m-%d %H:%M') }}{% endif %}
                                 </div>
-                                <span class="badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }} mt-2" style="font-size:0.85rem;">
+                            </td>
+                            <td>
+                                <span class="badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }}">
                                     {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
                                 </span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auctions_json[loop.index0]|tojson }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteAuction({{ auction.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3 d-block opacity-50"></i>
-                        <p class="text-muted mb-0">暂无竞拍活动，点击右上角「创建竞拍」</p>
-                    </div>
-                {% endif %}
+                            </td>
+                            <td class="pe-3 pe-md-4">
+                                <div class="d-flex gap-1 align-items-center justify-content-end">
+                                    <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick='editAuction({{ auction.id }}, {{ auctions_json[loop.index0]|tojson }})'>
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                    <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteAuction({{ auction.id }})">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="list-empty-cell">
+                                <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                                暂无竞拍活动，点击右上角「创建竞拍」
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -503,6 +454,34 @@ document.addEventListener('DOMContentLoaded', function () {
         history.replaceState(null, '', window.location.pathname + '#auction');
     });
 });
+
+function togglePointsShop(enabled) {
+    const label = document.getElementById('points_shop_enabled_label');
+    const switchEl = document.getElementById('points_shop_enabled');
+    switchEl.disabled = true;
+    fetch('/core/api/save_points_shop_enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: GROUP_ID, points_shop_enabled: enabled})
+    })
+    .then(r => r.json())
+    .then(res => {
+        switchEl.disabled = false;
+        if (res.status === 'ok') {
+            label.textContent = enabled ? '已启用' : '已关闭';
+            showToast(enabled ? '✅ 积分商城已启用' : '✅ 积分商城已关闭（群成员无法兑换/竞拍）', 'success');
+        } else {
+            switchEl.checked = !enabled;
+            alert('❌ ' + (res.msg || '保存失败'));
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        switchEl.disabled = false;
+        switchEl.checked = !enabled;
+        showToast('网络错误', 'error');
+    });
+}
 
 function setTabActions(tab) {
     const el = document.getElementById('tab-actions');

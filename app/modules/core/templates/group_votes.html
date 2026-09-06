@@ -5,33 +5,6 @@
 {{ loading_spinner() }}
 
 <style>
-    .votes-card {
-        border-radius: 10px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-card);
-        margin-bottom: 1.5rem;
-    }
-
-    .vote-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1.25rem;
-        transition: background-color 0.2s;
-    }
-
-    .vote-item:last-child {
-        border-bottom: none;
-    }
-
-    .vote-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-
-    .card-header {
-        background: var(--bg-card);
-        border-bottom: 1px solid var(--border-color);
-        color: var(--text-primary);
-    }
-
     .modal-body input,
     .modal-body select,
     .modal-body textarea {
@@ -83,54 +56,65 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="votes-card card">
-            <div class="card-header fw-bold py-3">
-                <i class="fa-solid fa-list me-2 text-primary"></i>投票列表
-            </div>
-            <div class="card-body p-0">
-                {% if votes %}
-                    {% for v in votes %}
-                    <div class="vote-item">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ v.title }}</h6>
-                                {% if v.description %}
-                                <p class="text-muted mb-2 small">{{ v.description }}</p>
-                                {% endif %}
-                                <div class="d-flex gap-2 flex-wrap mt-1">
-                                    <span class="badge {{ 'bg-warning' if v.status == 'pending' else ('bg-success' if v.status == 'active' else 'bg-secondary') }}">
-                                        {{ '待开始' if v.status == 'pending' else ('进行中' if v.status == 'active' else '已结束') }}
-                                    </span>
-                                    <span class="badge bg-info">{{ '单选' if v.vote_type == 'single' else '多选' }}</span>
-                                    {% if v.is_anonymous %}<span class="badge bg-dark">匿名</span>{% endif %}
-                                    {% if v.start_time %}<small class="text-muted">开始: {{ v.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>{% endif %}
-                                    {% if v.end_time %}<small class="text-muted">结束: {{ v.end_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>{% endif %}
-                                </div>
-                            </div>
-                            <div class="d-flex gap-1 ms-3">
-                                <button class="btn btn-sm btn-success" onclick="publishVote({{ v.id }})" {% if v.status == 'ended' %}disabled title="已结束"{% endif %}>
-                                    <i class="fa-solid fa-paper-plane"></i>
-                                </button>
-                                <button class="btn btn-sm btn-primary" onclick="editVote({{ v.id }})">
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteVote({{ v.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>投票列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">标题</th>
+                    <th>类型</th>
+                    <th class="hide-mobile">时间</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in votes %}
+                <tr>
+                    <td class="ps-3 ps-md-4">
+                        <div class="fw-semibold">{{ v.title }}</div>
+                        {% if v.description %}<small class="text-muted">{{ v.description }}</small>{% endif %}
+                        {% if v.is_anonymous %}<span class="badge bg-dark ms-1">匿名</span>{% endif %}
+                    </td>
+                    <td><span class="badge bg-info">{{ '单选' if v.vote_type == 'single' else '多选' }}</span></td>
+                    <td class="hide-mobile">
+                        <div class="small text-muted">
+                            {% if v.start_time %}起 {{ v.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
+                            {% if v.end_time %}<br>止 {{ v.end_time.strftime('%m-%d %H:%M') }}{% endif %}
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'bg-warning' if v.status == 'pending' else ('bg-success' if v.status == 'active' else 'bg-secondary') }}">
+                            {{ '待开始' if v.status == 'pending' else ('进行中' if v.status == 'active' else '已结束') }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-success" onclick="publishVote({{ v.id }})" {% if v.status == 'ended' %}disabled title="已结束"{% else %}title="发布"{% endif %}>
+                                <i class="fa-solid fa-paper-plane"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editVote({{ v.id }})">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteVote({{ v.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无投票，点击右上角按钮创建</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="5" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无投票，点击右上角按钮创建
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

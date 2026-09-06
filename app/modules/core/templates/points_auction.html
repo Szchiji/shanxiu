@@ -4,33 +4,7 @@
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
-<style>
-    .auctions-card {
-        border-radius: 10px;
-        border: none;
-        box-shadow: var(--card-shadow);
-        transition: all 0.3s ease;
-        margin-bottom: 1.5rem;
-    }
-    
-    .auction-item {
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
-        transition: background-color 0.2s;
-    }
-    
-    .auction-item:last-child {
-        border-bottom: none;
-    }
-    
-    .auction-item:hover {
-        background-color: var(--bg-card-hover);
-    }
-    
-    .status-badge {
-        font-size: 0.85rem;
-    }
-</style>
+
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
@@ -53,53 +27,64 @@
 </ul>
 {% endcall %}
 
-<div class="row">
-    <div class="col-12">
-        <div class="auctions-card card">
-            <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-list me-2 text-primary"></i>竞拍列表
-            </div>
-            <div class="card-body p-0">
-                {% if auctions %}
-                    {% for auction in auctions %}
-                    <div class="auction-item">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ auction.item_name }}</h6>
-                                <p class="text-muted mb-2 small">{{ auction.item_description or '暂无描述' }}</p>
-                                <div class="d-flex gap-3 flex-wrap">
-                                    <small class="text-muted">起拍价: {{ auction.starting_price }}</small>
-                                    <small class="text-muted">当前价: {{ auction.current_bid or '未出价' }}</small>
-                                    {% if auction.auction_start %}
-                                    <small class="text-muted">开始: {{ auction.auction_start.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
-                                    {% if auction.auction_end %}
-                                    <small class="text-muted">结束: {{ auction.auction_end.strftime('%Y-%m-%d %H:%M:%S') }}</small>
-                                    {% endif %}
-                                </div>
-                                <span class="badge status-badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }} mt-2">
-                                    {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
-                                </span>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button class="btn btn-sm btn-primary" onclick='editAuction({{ auction.id }}, {{ auction|tojson }})'>
-                                    <i class="fa-solid fa-edit"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteAuction({{ auction.id }})">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
-                            </div>
+<div class="table-container">
+    <div class="list-section-header">
+        <i class="fa-solid fa-list text-primary"></i>竞拍列表
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th class="ps-3 ps-md-4">物品</th>
+                    <th>起拍/当前</th>
+                    <th class="hide-mobile">时间</th>
+                    <th>状态</th>
+                    <th class="text-end pe-3 pe-md-4">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for auction in auctions %}
+                <tr>
+                    <td class="ps-3 ps-md-4">
+                        <div class="fw-semibold">{{ auction.item_name }}</div>
+                        <small class="text-muted">{{ auction.item_description or '暂无描述' }}</small>
+                    </td>
+                    <td>
+                        <div>{{ auction.starting_price }}</div>
+                        <small class="text-muted">当前 {{ auction.current_bid or '未出价' }}</small>
+                    </td>
+                    <td class="hide-mobile">
+                        <div class="small text-muted">
+                            {% if auction.auction_start %}起 {{ auction.auction_start.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
+                            {% if auction.auction_end %}<br>止 {{ auction.auction_end.strftime('%m-%d %H:%M') }}{% endif %}
                         </div>
-                    </div>
-                    {% endfor %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'bg-warning' if auction.status == 'pending' else ('bg-success' if auction.status == 'active' else 'bg-secondary') }}">
+                            {{ '待开始' if auction.status == 'pending' else ('进行中' if auction.status == 'active' else '已结束') }}
+                        </span>
+                    </td>
+                    <td class="pe-3 pe-md-4">
+                        <div class="d-flex gap-1 align-items-center justify-content-end">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick='editAuction({{ auction.id }}, {{ auction|tojson }})'>
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                            <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteAuction({{ auction.id }})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
                 {% else %}
-                    <div class="text-center py-5">
-                        <i class="fa-solid fa-inbox fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">暂无竞拍活动</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
+                <tr>
+                    <td colspan="5" class="list-empty-cell">
+                        <i class="fa-solid fa-inbox fa-2x mb-2 d-block opacity-50"></i>
+                        暂无竞拍活动
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 

@@ -385,9 +385,14 @@
         min-width: 150px;
     }
     
-    /* Table cell styles */
+    /* Table cell styles: single-line keyword preview */
     .keyword-cell {
-        word-break: break-all;
+        display: inline-block;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: bottom;
     }
 </style>
 
@@ -462,7 +467,7 @@
                     data-remark="{{ item.remark or ''|e }}"
                     data-is-active="{{ 'true' if item.is_active else 'false' }}">
                     <td class="ps-3 ps-md-4 fw-bold">{{ item.id }}</td>
-                    <td><code class="text-wrap keyword-cell">{{ item.trigger_keyword }}</code></td>
+                    <td><code class="keyword-cell" title="{{ item.trigger_keyword|e }}">{{ item.trigger_keyword }}</code></td>
                     <td>
                         {% set media_count = item.get_media_url_list()|length %}
                         {% if item.media_type == 'text' %}
@@ -475,7 +480,7 @@
                         <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
                     </td>
-                    <td>{{ item.remark or '-' }}</td>
+                    <td class="text-truncate" title="{{ (item.remark or '-')|e }}">{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>

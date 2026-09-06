@@ -26,8 +26,9 @@
     }
     .message-preview {
         max-width: 320px;
-        white-space: pre-wrap;
-        word-break: break-word;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 </style>
 
@@ -113,8 +114,8 @@
                         <small class="text-muted">消息ID: {{ item.discussion_message_id or '—' }}</small>
                     </td>
                     <td>{{ item.media_type or 'text' }}</td>
-                    <td class="message-preview text-muted small">{{ item.message_text or '—' }}</td>
-                    <td class="text-end pe-3 pe-md-4 text-muted small">{{ item.matched_rules or '[]' }}</td>
+                    <td class="message-preview text-muted small" title="{{ (item.message_text or '—')|e }}">{{ item.message_text or '—' }}</td>
+                    <td class="text-end pe-3 pe-md-4 text-muted small text-truncate" title="{{ (item.matched_rules or '[]')|e }}">{{ item.matched_rules or '[]' }}</td>
                 </tr>
                 {% else %}
                 <tr><td colspan="6" class="list-empty-cell">暂无频道统计数据</td></tr>

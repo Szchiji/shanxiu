@@ -74,17 +74,12 @@
             <tbody>
                 {% for v in votes %}
                 <tr>
-                    <td class="ps-3 ps-md-4">
-                        <div class="fw-semibold">{{ v.title }}</div>
-                        {% if v.description %}<small class="text-muted">{{ v.description }}</small>{% endif %}
-                        {% if v.is_anonymous %}<span class="badge bg-dark ms-1">匿名</span>{% endif %}
+                    <td class="ps-3 ps-md-4 list-cell-text" title="{{ v.title|e }}{% if v.description %} — {{ v.description|e }}{% endif %}">
+                        <span class="fw-semibold">{{ v.title }}</span>{% if v.description %}<span class="text-muted"> · {{ v.description }}</span>{% endif %}{% if v.is_anonymous %}<span class="badge bg-dark ms-1">匿名</span>{% endif %}
                     </td>
                     <td><span class="badge bg-info">{{ '单选' if v.vote_type == 'single' else '多选' }}</span></td>
-                    <td class="hide-mobile">
-                        <div class="small text-muted">
-                            {% if v.start_time %}起 {{ v.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}
-                            {% if v.end_time %}<br>止 {{ v.end_time.strftime('%m-%d %H:%M') }}{% endif %}
-                        </div>
+                    <td class="hide-mobile text-muted small text-truncate" title="{% if v.start_time %}起 {{ v.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}{% if v.end_time %} 止 {{ v.end_time.strftime('%m-%d %H:%M') }}{% endif %}">
+                        {% if v.start_time %}起 {{ v.start_time.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}{% if v.end_time %} · 止 {{ v.end_time.strftime('%m-%d %H:%M') }}{% endif %}
                     </td>
                     <td>
                         <span class="badge {{ 'bg-warning' if v.status == 'pending' else ('bg-success' if v.status == 'active' else 'bg-secondary') }}">

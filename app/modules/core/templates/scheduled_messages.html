@@ -573,13 +573,11 @@
                         <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
                     </td>
-                    <td>
+                    <td class="text-truncate" title="{% if item.target_type == 'channel' or item.target_channel_id %}频道 {{ item.target_channel_id or '-' }}{% else %}群组 默认聊天{% endif %}">
                         {% if item.target_type == 'channel' or item.target_channel_id %}
-                        <span class="badge bg-info">频道</span>
-                        <div><small class="text-muted">{{ item.target_channel_id or '-' }}</small></div>
+                        <span class="badge bg-info">频道</span> <span class="text-muted small">{{ item.target_channel_id or '-' }}</span>
                         {% else %}
-                        <span class="badge bg-secondary">群组</span>
-                        <div><small class="text-muted">默认聊天</small></div>
+                        <span class="badge bg-secondary">群组</span> <span class="text-muted small">默认聊天</span>
                         {% endif %}
                     </td>
                     <td>
@@ -609,7 +607,7 @@
                         -
                         {% endif %}
                     </td>
-                    <td class="text-truncate remark-cell">{{ item.remark or '-' }}</td>
+                    <td class="text-truncate remark-cell" title="{{ (item.remark or '-')|e }}">{{ item.remark or '-' }}</td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>

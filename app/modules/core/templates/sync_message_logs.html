@@ -169,21 +169,16 @@
                     <td style="white-space: nowrap;">
                         {{ log.synced_at.strftime('%m-%d %H:%M:%S') if log.synced_at else '-' }}
                     </td>
-                    <td class="hide-mobile">
-                        {% set m = log_member_map.get(log.user_id) if log.user_id else none %}
-                        {% set display_name = ((m.first_name or '') ~ ' ' ~ (m.last_name or '')).strip() if m else '' %}
-                        {% set initial = (display_name[:1] or log.username[:1] if log.username else '#')|upper %}
+                    {% set m = log_member_map.get(log.user_id) if log.user_id else none %}
+                    {% set display_name = ((m.first_name or '') ~ ' ' ~ (m.last_name or '')).strip() if m else '' %}
+                    {% set initial = (display_name[:1] or log.username[:1] if log.username else '#')|upper %}
+                    <td class="hide-mobile" title="{{ display_name }}{% if log.username %} @{{ log.username|e }}{% elif log.user_id %} ID: {{ log.user_id }}{% endif %}">
                         <div class="d-flex align-items-center gap-1">
                             <div class="user-avatar" data-uid="{{ log.user_id or 0 }}">{{ initial }}</div>
-                            <div>
-                                {% if display_name %}
-                                <div style="font-size:0.85rem;font-weight:600;">{{ display_name }}</div>
-                                {% endif %}
-                                {% if log.username %}
-                                <small class="text-muted">@{{ log.username }}</small>
-                                {% elif log.user_id %}
-                                <small class="text-muted">ID: {{ log.user_id }}</small>
-                                {% endif %}
+                            <div class="list-cell-text">
+                                {% if display_name %}<span style="font-size:0.85rem;font-weight:600;">{{ display_name }}</span>{% endif %}
+                                {% if log.username %}<span class="text-muted small">{% if display_name %} · {% endif %}@{{ log.username }}</span>
+                                {% elif log.user_id %}<span class="text-muted small">{% if display_name %} · {% endif %}ID: {{ log.user_id }}</span>{% endif %}
                             </div>
                         </div>
                     </td>

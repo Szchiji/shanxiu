@@ -675,6 +675,79 @@
             white-space: nowrap;
         }
 
+        /* List rows: keep every content cell on a single truncated line */
+        .table-container .table > tbody > tr > td {
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+        .table-container .table > tbody > tr > td.list-empty-cell,
+        .table-container .table > tbody > tr > td.text-center {
+            max-width: none;
+            overflow: visible;
+            text-overflow: clip;
+            white-space: normal;
+        }
+
+        /* Action / checkbox columns stay usable */
+        .table-container .table > tbody > tr > td:has(.action-btn),
+        .table-container .table > tbody > tr > td:has(.row-checkbox),
+        .table-container .table > tbody > tr > td:has(.row-select),
+        .table-container .table > tbody > tr > td:has(input[type="checkbox"]),
+        .table-container .table > tbody > tr > td.list-actions {
+            max-width: none;
+            overflow: visible;
+            text-overflow: clip;
+            white-space: nowrap;
+        }
+
+        /* Nested multi-line previews collapse to one line */
+        .table-container .table > tbody > tr > td .message-preview,
+        .table-container .table > tbody > tr > td .template-preview,
+        .table-container .table > tbody > tr > td .keyword-box,
+        .table-container .table > tbody > tr > td .content-preview,
+        .table-container .table > tbody > tr > td .keyword-cell,
+        .table-container .table > tbody > tr > td .remark-cell,
+        .table-container .table > tbody > tr > td .list-cell-text {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap !important;
+            word-break: normal !important;
+            overflow-wrap: normal !important;
+        }
+
+        /* Name + description / badge + detail stacks become one line */
+        .table-container .table > tbody > tr > td > div:not(.d-flex):not([class*="btn"]):not(.form-check),
+        .table-container .table > tbody > tr > td > small {
+            display: inline;
+        }
+
+        .table-container .table > tbody > tr > td > div:not(.d-flex):not([class*="btn"]):not(.form-check)::after {
+            content: " ";
+        }
+
+        .table-container .table > tbody > tr > td br {
+            display: none;
+        }
+
+        .table-container .table > tbody > tr > td > .d-flex {
+            max-width: 100%;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .table-container .table > tbody > tr > td > .d-flex > div:not(.user-avatar):not([class*="btn"]) {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .action-btn {
             transition: all 0.3s ease;
             border-radius: 6px;

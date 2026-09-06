@@ -94,7 +94,7 @@
                     </td>
                     <td>{{ log.admin_name|e or ('Admin #' ~ log.admin_id) }}</td>
                     <td class="hide-mobile">{{ log.target_user_name|e if log.target_user_name else '—' }}</td>
-                    <td class="hide-mobile text-muted small">{{ log.details|e if log.details else '—' }}</td>
+                    <td class="hide-mobile text-muted small text-truncate" title="{{ log.details|e if log.details else '—' }}">{{ log.details|e if log.details else '—' }}</td>
                     <td class="text-end pe-3 pe-md-4 text-muted">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                 </tr>
                 {% else %}

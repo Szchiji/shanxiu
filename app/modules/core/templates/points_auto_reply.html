@@ -45,7 +45,7 @@
             <tbody>
                 {% for reply in replies %}
                 <tr>
-                    <td class="ps-3 ps-md-4 fw-semibold">{{ reply.trigger_keyword }}</td>
+                    <td class="ps-3 ps-md-4 fw-semibold text-truncate" title="{{ reply.trigger_keyword|e }}">{{ reply.trigger_keyword }}</td>
                     <td>{{ reply.points_cost }}</td>
                     <td class="hide-mobile"><span class="badge bg-info">{{ reply.media_type }}</span></td>
                     <td>

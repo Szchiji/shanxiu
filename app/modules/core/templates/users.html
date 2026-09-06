@@ -253,23 +253,19 @@
                     <td class="ps-3">
                         <input type="checkbox" class="form-check-input row-select" value="{{ user.id }}" data-tgid="{{ user.tg_id }}">
                     </td>
-                    <td class="ps-2">
+                    <td class="ps-2" title="{% if user.tg_display_name %}{{ user.tg_display_name|e }} {% endif %}{% if user.tg_username %}@{{ user.tg_username|e }} {% endif %}ID: {{ user.tg_id }}">
                         <div class="d-flex align-items-center gap-2">
                             <div class="user-avatar" data-uid="{{ user.tg_id }}">
                                 {{ (user.tg_display_name[:1] or '#')|upper }}
                             </div>
-                            <div>
-                                {% if user.tg_display_name %}
-                                <div class="fw-bold" style="font-size:0.9rem;">{{ user.tg_display_name }}</div>
-                                {% endif %}
-                                {% if user.tg_username %}
-                                <small class="text-muted">@{{ user.tg_username }}</small>
-                                {% endif %}
-                                <small class="text-muted d-block" style="font-size:0.75rem;">ID: {{ user.tg_id }}</small>
+                            <div class="list-cell-text">
+                                {% if user.tg_display_name %}<span class="fw-bold" style="font-size:0.9rem;">{{ user.tg_display_name }}</span>{% endif %}
+                                {% if user.tg_username %}<span class="text-muted small">{% if user.tg_display_name %} · {% endif %}@{{ user.tg_username }}</span>{% endif %}
+                                <span class="text-muted small"> · ID: {{ user.tg_id }}</span>
                             </div>
                         </div>
                     </td>
-                    {% for field in fields %}<td>{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
+                    {% for field in fields %}<td class="text-truncate" title="{{ user.profile_dict.get(field.key, '')|e }}">{{ user.profile_dict.get(field.key, '') }}</td>{% endfor %}
                     <td>
                         {% if user.is_banned %}
                         <span class="badge-status badge bg-danger">🚫 封禁</span>

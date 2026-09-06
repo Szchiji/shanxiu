@@ -100,9 +100,9 @@
             <tbody>
                 {% for item in items %}
                 <tr>
-                    <td class="ps-3 ps-md-4">
+                    <td class="ps-3 ps-md-4 list-meta-stack">
                         <div class="fw-semibold">{{ item.item_name }}</div>
-                        {% if item.item_description %}<small class="text-muted">{{ item.item_description }}</small>{% endif %}
+                        {% if item.item_description %}<small class="text-muted list-text-preview" title="{{ item.item_description|e }}">{{ item.item_description }}</small>{% endif %}
                     </td>
                     <td>{{ item.points_cost }}</td>
                     <td class="hide-mobile">

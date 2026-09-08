@@ -26,7 +26,10 @@ class GroupUser(db.Model):
     tg_id = db.Column(db.BigInteger)
     profile_data = db.Column(db.Text, default='{}')
     # Custom admin-assigned tags for authenticated users, stored as JSON array of strings.
+    # The first tag is also applied as the Telegram nickname tag via setChatMemberTag.
     member_tags = db.Column(db.Text, default='[]')
+    # Last tag successfully applied to Telegram (for skip-if-unchanged); empty string = cleared.
+    applied_telegram_tag = db.Column(db.String(16), nullable=True)
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
     is_muted_permanent = db.Column(db.Boolean, default=False)  # Track if user needs admin to unlock
@@ -1165,6 +1168,9 @@ DEFAULT_SYSTEM = {
     "query_del_time": 60,
     "page_size": 10,
     "auto_like": True, "like_emoji": "❤",  # Telegram reaction form (no FE0F); ❤️ is normalized at runtime
+    # Auto-apply Telegram nickname member tag (setChatMemberTag) for authenticated users
+    "auto_member_tag": True,
+    "default_member_tag": "认证",  # used when user has no custom member_tags; max 16 chars, no emoji
     "auto_reply_open": True,  # 自动回复开关
     "scheduled_msg_open": True,  # 定时消息开关
     "start_msg_open": True,  # /start 消息开关

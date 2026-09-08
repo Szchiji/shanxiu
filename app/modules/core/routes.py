@@ -21,6 +21,8 @@ from app.utils import (
     parse_member_tags,
     serialize_member_tags,
     format_member_tags,
+    normalize_telegram_member_tag,
+    resolve_telegram_member_tag,
 )
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo
@@ -2152,10 +2154,21 @@ def api_save_settings():
             'msg': '点赞表情无效：只能使用 Telegram 支持的回应表情（如 👍❤🔥🎉），不能用任意图标/自定义表情。',
         })
     conf['like_emoji'] = normalize_like_emoji(raw_like)
+    # Nickname member tag: 0–16 chars, no emoji (setChatMemberTag)
+    conf['default_member_tag'] = normalize_telegram_member_tag(
+        conf.get('default_member_tag', '认证'),
+        default='认证',
+    )
+    if 'auto_member_tag' in conf:
+        conf['auto_member_tag'] = bool(conf.get('auto_member_tag'))
     d['config'] = conf
     group.config = json.dumps(conf, ensure_ascii=False)
     db.session.commit()
-    return jsonify({'status': 'ok', 'like_emoji': conf['like_emoji']})
+    return jsonify({
+        'status': 'ok',
+        'like_emoji': conf['like_emoji'],
+        'default_member_tag': conf['default_member_tag'],
+    })
 
 @core_bp.route('/api/save_user', methods=['POST'])
 def api_save_user():
@@ -2247,6 +2260,17 @@ def api_save_user():
 
     db.session.commit()
 
+    # Apply Telegram nickname member tag for authenticated users (setChatMemberTag)
+    try:
+        group_for_tag = BotGroup.query.get(gid)
+        conf_for_tag = get_group_conf(group_for_tag)
+        if conf_for_tag.get('auto_member_tag', True):
+            apply_telegram_member_tag_for_user(
+                group_for_tag, u, conf_for_tag, token=None, force=True
+            )
+    except Exception as e:
+        logging.warning(f'Apply member tag failed for group={gid} user={uid}: {e}')
+
     # 添加新认证用户时自动推送到频道
     if is_new_user:
         try:
@@ -2294,8 +2318,14 @@ def api_delete_user():
     user = GroupUser.query.get(d['id'])
     if not user:
         return jsonify({'status':'error', 'msg':'User not found'})
-    err = _api_check_group_access(BotGroup.query.get(user.group_id))
+    group = BotGroup.query.get(user.group_id)
+    err = _api_check_group_access(group)
     if err: return err
+    # Clear Telegram nickname tag before removing authenticated status
+    try:
+        clear_telegram_member_tag_for_user(group, user)
+    except Exception as e:
+        logging.warning(f'Clear member tag failed on delete user={user.id}: {e}')
     db.session.delete(user)
     db.session.commit()
     return jsonify({'status':'ok'})
@@ -10712,6 +10742,118 @@ def do_like(chat_id, message_id, emoji, token=None):
     except Exception as e:
         print(f"❌ [Like] 请求异常: {e}", flush=True)
 
+
+def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
+    """Apply a Telegram nickname member tag via setChatMemberTag.
+
+    The bot must be a group admin with ``can_manage_tags``. Tag text is
+    normalized to 0–16 characters without emoji. Returns True on API success.
+    """
+    if not token:
+        token = os.getenv('TG_BOT_TOKEN')
+    if not token or not chat_id or not user_id:
+        return False
+    clean_tag = normalize_telegram_member_tag(tag, default='')
+    try:
+        url = f"https://api.telegram.org/bot{token}/setChatMemberTag"
+        payload = {
+            "chat_id": chat_id,
+            "user_id": int(user_id),
+            "tag": clean_tag,
+        }
+        resp = requests.post(url, json=payload, timeout=5)
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if not resp.ok or not data.get('ok', False):
+            print(
+                f"❌ [MemberTag] setChatMemberTag failed chat={chat_id} user={user_id} "
+                f"tag={clean_tag!r} status={resp.status_code} body={data or resp.text}",
+                flush=True,
+            )
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ [MemberTag] 请求异常: {e}", flush=True)
+        return False
+
+
+def _resolve_bot_token_for_group(group, clone_id_from_context=None):
+    """Return the bot token that manages *group* (clone token or main env token)."""
+    clone_id = clone_id_from_context
+    if clone_id is None and group is not None:
+        clone_id = getattr(group, 'clone_id', None)
+    if clone_id:
+        clone = BotClone.query.get(clone_id)
+        if clone:
+            token = clone.get_bot_token()
+            if token:
+                return token
+    return os.getenv('TG_BOT_TOKEN')
+
+
+def apply_telegram_member_tag_for_user(group, db_user, conf=None, token=None, force: bool = False) -> bool:
+    """Ensure the authenticated user's Telegram nickname tag matches config.
+
+    Skips the API call when the desired tag already matches
+    ``db_user.applied_telegram_tag`` unless *force* is True.
+    Safe to call from the request thread with live ORM objects.
+    """
+    if not group or not db_user:
+        return False
+    conf = conf or get_group_conf(group)
+    if not conf.get('auto_member_tag', True):
+        return False
+    desired = resolve_telegram_member_tag(getattr(db_user, 'member_tags', None), conf)
+    current = getattr(db_user, 'applied_telegram_tag', None)
+    if not force and current is not None and current == desired:
+        return True
+    token = token or _resolve_bot_token_for_group(group)
+    chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
+    if chat_id is None:
+        return False
+    ok = do_set_member_tag(chat_id, db_user.tg_id, desired, token=token)
+    if ok:
+        db_user.applied_telegram_tag = desired
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ [MemberTag] failed to persist applied_telegram_tag: {e}", flush=True)
+    return ok
+
+
+def apply_telegram_member_tag_by_ids(group_id, user_db_id, conf=None, token=None, force: bool = False) -> bool:
+    """Thread-safe wrapper: reload ORM rows inside the Flask app context."""
+    app = global_flask_app
+    if not app:
+        return False
+    with app.app_context():
+        group = BotGroup.query.get(group_id)
+        db_user = GroupUser.query.get(user_db_id)
+        if not group or not db_user:
+            return False
+        return apply_telegram_member_tag_for_user(group, db_user, conf=conf, token=token, force=force)
+
+
+def clear_telegram_member_tag_for_user(group, db_user, token=None) -> bool:
+    """Clear the Telegram nickname tag when a user is removed/unauthenticated."""
+    if not group or not db_user:
+        return False
+    token = token or _resolve_bot_token_for_group(group)
+    chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
+    if chat_id is None:
+        return False
+    ok = do_set_member_tag(chat_id, db_user.tg_id, '', token=token)
+    if ok:
+        db_user.applied_telegram_tag = ''
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return ok
+
 # 🤖 Group Management Commands (群管理机器人功能)
 
 async def cmd_kick(update: Update, context):
@@ -13544,19 +13686,34 @@ async def on_message(update: Update, context):
                         except Exception as notify_err:
                             logging.error(f"❌ [消息计数] 发送参与成功通知失败 (抽奖 '{q_lottery.lottery_name}'): {notify_err}")
             
-            if conf.get('auto_like'):
+            # Authenticated-user perks: auto-like + Telegram nickname member tag
+            if conf.get('auto_like') or conf.get('auto_member_tag', True):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
-                    emoji = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
                     # Resolve the correct bot token: use clone bot token if this is a clone bot
-                    _like_token = None
+                    _perk_token = None
                     _clone_id = context.application.bot_data.get('clone_id')
                     if _clone_id:
                         _clone = BotClone.query.get(_clone_id)
                         if _clone:
-                            _like_token = _clone.get_bot_token()
-                    # 在线程中执行阻塞请求，避免卡顿
-                    asyncio.get_running_loop().run_in_executor(None, do_like, chat.id, msg.message_id, emoji, _like_token)
+                            _perk_token = _clone.get_bot_token()
+                    if conf.get('auto_like'):
+                        emoji = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
+                        # 在线程中执行阻塞请求，避免卡顿
+                        asyncio.get_running_loop().run_in_executor(
+                            None, do_like, chat.id, msg.message_id, emoji, _perk_token
+                        )
+                    if conf.get('auto_member_tag', True):
+                        # Apply nickname tag once (skipped when already matching applied_telegram_tag)
+                        asyncio.get_running_loop().run_in_executor(
+                            None,
+                            apply_telegram_member_tag_by_ids,
+                            group.id,
+                            db_user.id,
+                            conf,
+                            _perk_token,
+                            False,
+                        )
             
             # 2. 打卡
             if _is_checkin_msg:

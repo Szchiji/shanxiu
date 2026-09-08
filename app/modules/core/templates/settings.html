@@ -425,6 +425,19 @@
                         <button type="button" class="btn btn-sm btn-outline-secondary like-emoji-btn px-2 py-1" data-emoji="{{ em }}" title="{{ em }}">{{ em }}</button>
                         {% endfor %}
                     </div>
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="small text-muted fw-bold">自动成员标签 (认证用户昵称后)</label>
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" id="auto_member_tag" {{ 'checked' if conf.get('auto_member_tag', True) }}>
+                        </div>
+                    </div>
+                    <input id="default_member_tag" class="form-control mb-2" value="{{ conf.get('default_member_tag', '认证') }}" placeholder="认证" maxlength="16" autocomplete="off">
+                    <div class="small text-muted mb-3">
+                        开启后，认证用户发言时机器人会用 Telegram <code>setChatMemberTag</code> 在其<strong>昵称后面</strong>显示标签（如图中的「官方认证」「少妇」）。
+                        默认标签用于未单独设置标签的用户；单用户可在「认证用户」里覆盖。最多 16 字，不能含 emoji。
+                        机器人需有群管理权限 <code>can_manage_tags</code>。
+                    </div>
                     
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.auto_mute_expired }}>
@@ -969,6 +982,8 @@
                 
                 auto_like: document.getElementById('auto_like').checked,
                 like_emoji: document.getElementById('like_emoji').value,
+                auto_member_tag: document.getElementById('auto_member_tag').checked,
+                default_member_tag: document.getElementById('default_member_tag').value,
                 auto_mute_expired: document.getElementById('auto_mute_expired').checked,
                 
                 auto_reply_open: document.getElementById('auto_reply_open').checked,
@@ -989,6 +1004,9 @@
             if (data.status === 'ok') {
                 if (data.like_emoji) {
                     document.getElementById('like_emoji').value = data.like_emoji;
+                }
+                if (data.default_member_tag) {
+                    document.getElementById('default_member_tag').value = data.default_member_tag;
                 }
                 showToast('配置已保存', 'success');
             } else {

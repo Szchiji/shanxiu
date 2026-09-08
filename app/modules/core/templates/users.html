@@ -508,9 +508,9 @@
                         <small class="text-muted">留空表示永久有效</small>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-bold">成员标签</label>
-                        <input type="text" class="form-control" name="member_tags" id="memberTagsInput" placeholder="例如：VIP, 核心, 管理" autocomplete="off">
-                        <small class="text-muted">多个标签用逗号分隔，最多 10 个；可在列表/推送模板中使用 <code>{标签}</code></small>
+                        <label class="form-label fw-bold">成员标签（昵称后显示）</label>
+                        <input type="text" class="form-control" name="member_tags" id="memberTagsInput" placeholder="例如：官方认证 或 少妇,欢迎下单" autocomplete="off">
+                        <small class="text-muted">第一个标签会显示在 Telegram <strong>昵称后面</strong>（最多 16 字、不能含 emoji，需机器人有管理标签权限）。多个可用逗号分隔；模板占位符 <code>{标签}</code></small>
                     </div>
                     {% for field in fields %}
                     <div class="mb-3">

@@ -19,6 +19,7 @@ from typing import Optional
 import pytz
 from cryptography.fernet import Fernet, InvalidToken
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+from telegram.constants import ReactionEmoji
 
 
 # ---------------------------------------------------------------------------
@@ -248,3 +249,70 @@ def build_inline_keyboard_from_links(links: list) -> list:
         keyboard.append([btn['button'] for btn in row_buttons])
 
     return keyboard
+
+
+# ---------------------------------------------------------------------------
+# Telegram message-reaction helpers
+# ---------------------------------------------------------------------------
+
+# Official setMessageReaction emoji whitelist (Bot API ReactionTypeEmoji).
+TELEGRAM_REACTION_EMOJIS: tuple[str, ...] = tuple(
+    dict.fromkeys(e.value for e in ReactionEmoji)
+)
+DEFAULT_LIKE_EMOJI = ReactionEmoji.RED_HEART.value  # '❤' (no FE0F)
+
+# Map common presentation variants (e.g. ❤️) back to the API form (❤).
+_REACTION_EMOJI_BY_STRIPPED: dict[str, str] = {
+    e.replace('\ufe0f', ''): e for e in TELEGRAM_REACTION_EMOJIS
+}
+# Prefer longer sequences first so ZWJ emojis match before their base glyph.
+_REACTION_EMOJIS_BY_LENGTH: tuple[str, ...] = tuple(
+    sorted(TELEGRAM_REACTION_EMOJIS, key=len, reverse=True)
+)
+
+
+def normalize_like_emoji(emoji: Optional[str], default: str = DEFAULT_LIKE_EMOJI) -> str:
+    """Return a Telegram-allowed reaction emoji for setMessageReaction.
+
+    Users often paste presentation variants (❤️) or free-form icons that are
+    not in Telegram's reaction whitelist.  Those values make auto-like silently
+    fail.  This helper:
+
+    1. Accepts an exact whitelist match
+    2. Maps FE0F / presentation variants onto the canonical form
+    3. Extracts the first whitelist emoji embedded in free text
+    4. Falls back to *default* (❤) when nothing valid is found
+    """
+    if not emoji or not str(emoji).strip():
+        return default
+
+    raw = str(emoji).strip()
+    if raw in TELEGRAM_REACTION_EMOJIS:
+        return raw
+
+    stripped = raw.replace('\ufe0f', '')
+    mapped = _REACTION_EMOJI_BY_STRIPPED.get(stripped)
+    if mapped:
+        return mapped
+
+    # Try the same lookups after dropping surrounding non-emoji text.
+    for candidate in _REACTION_EMOJIS_BY_LENGTH:
+        if candidate in raw:
+            return candidate
+        cand_stripped = candidate.replace('\ufe0f', '')
+        if cand_stripped and cand_stripped in stripped:
+            return candidate
+
+    return default
+
+
+def is_valid_like_emoji(emoji: Optional[str]) -> bool:
+    """Return True if *emoji* can be normalized to a Telegram reaction emoji
+    without falling back to the default solely because input was empty/invalid.
+
+    Empty input is treated as invalid (caller should keep previous/default).
+    """
+    if not emoji or not str(emoji).strip():
+        return False
+    normalized = normalize_like_emoji(emoji, default='')
+    return bool(normalized) and normalized in TELEGRAM_REACTION_EMOJIS

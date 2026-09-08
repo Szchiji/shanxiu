@@ -1162,7 +1162,7 @@ DEFAULT_SYSTEM = {
     "checkin_del_time": 30, 
     "query_del_time": 60,
     "page_size": 10,
-    "auto_like": True, "like_emoji": "❤️",
+    "auto_like": True, "like_emoji": "❤",  # Telegram reaction form (no FE0F); ❤️ is normalized at runtime
     "auto_reply_open": True,  # 自动回复开关
     "scheduled_msg_open": True,  # 定时消息开关
     "start_msg_open": True,  # /start 消息开关

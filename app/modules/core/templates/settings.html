@@ -409,12 +409,22 @@
                 <div class="config-section">
                     <div class="section-title"><i class="fa-solid fa-cog me-1"></i> 其他</div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <label class="small text-muted fw-bold">自动点赞 (强制)</label>
+                        <label class="small text-muted fw-bold">自动点赞 (认证用户)</label>
                         <div class="form-check form-switch m-0">
                             <input class="form-check-input" type="checkbox" id="auto_like" {{ 'checked' if conf.auto_like }}>
                         </div>
                     </div>
-                    <input id="like_emoji" class="form-control mb-3" value="{{ conf.like_emoji }}" placeholder="❤️">
+                    <label class="small text-muted fw-bold">点赞表情</label>
+                    <input id="like_emoji" class="form-control mb-2" value="{{ conf.like_emoji }}" placeholder="❤" maxlength="16" autocomplete="off">
+                    <div class="small text-muted mb-2">
+                        只能使用 Telegram 官方支持的「消息回应」表情（例如 👍❤🔥🎉）。
+                        任意图标、贴纸或自定义 emoji 无法点赞。点击下方快捷选择：
+                    </div>
+                    <div class="d-flex flex-wrap gap-1 mb-3" id="like_emoji_picker" style="max-height: 7.5rem; overflow-y: auto;">
+                        {% for em in reaction_emojis %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary like-emoji-btn px-2 py-1" data-emoji="{{ em }}" title="{{ em }}">{{ em }}</button>
+                        {% endfor %}
+                    </div>
                     
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.auto_mute_expired }}>
@@ -929,6 +939,12 @@
         }
     }
     
+    document.querySelectorAll('.like-emoji-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById('like_emoji').value = btn.dataset.emoji || btn.textContent.trim();
+        });
+    });
+
     function saveSettings() {
         saveTmp(); 
         const d = {
@@ -966,7 +982,18 @@
         };
         fetch('/core/api/save_settings', {
             method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)
-        }).then(()=>showToast('配置已保存', 'success'));
+        }).then(async (res) => {
+            let data = {};
+            try { data = await res.json(); } catch (e) {}
+            if (data.status === 'ok') {
+                if (data.like_emoji) {
+                    document.getElementById('like_emoji').value = data.like_emoji;
+                }
+                showToast('配置已保存', 'success');
+            } else {
+                showToast(data.msg || '保存失败', 'error');
+            }
+        }).catch(() => showToast('保存失败', 'error'));
     }
 </script>
 {% endblock %}

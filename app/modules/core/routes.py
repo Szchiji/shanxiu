@@ -11,7 +11,14 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
 from app.services.points_service import clamp_award_to_daily_cap
-from app.utils import encrypt_token, decrypt_token
+from app.utils import (
+    encrypt_token,
+    decrypt_token,
+    normalize_like_emoji,
+    is_valid_like_emoji,
+    TELEGRAM_REACTION_EMOJIS,
+    DEFAULT_LIKE_EMOJI,
+)
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -648,6 +655,8 @@ def get_group_conf(group):
             for k, v in c.items():
                 if v is not None: conf[k] = v
         except: pass
+    # Always expose a Telegram-valid reaction emoji in conf (legacy ❤️ etc.).
+    conf['like_emoji'] = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
     return conf
 
 def get_group_fields(group):
@@ -987,7 +996,14 @@ def page_settings(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
-    return render_template('settings.html', page='settings', group=group, conf=get_group_conf(group), fields=get_group_fields(group))
+    return render_template(
+        'settings.html',
+        page='settings',
+        group=group,
+        conf=get_group_conf(group),
+        fields=get_group_fields(group),
+        reaction_emojis=TELEGRAM_REACTION_EMOJIS,
+    )
 
 @core_bp.route('/group/<int:gid>/auto_replies')
 def page_auto_replies(gid):
@@ -2120,9 +2136,21 @@ def api_save_settings():
         return jsonify({'status': 'error', 'msg': 'Group not found'})
     err = _api_check_group_access(group)
     if err: return err
-    group.config = json.dumps(d['config'], ensure_ascii=False)
+    conf = d.get('config') or {}
+    if not isinstance(conf, dict):
+        return jsonify({'status': 'error', 'msg': 'Invalid config'})
+    # Telegram only accepts reaction-whitelist emojis; normalize so auto-like keeps working.
+    raw_like = conf.get('like_emoji', DEFAULT_LIKE_EMOJI)
+    if raw_like and not is_valid_like_emoji(raw_like):
+        return jsonify({
+            'status': 'error',
+            'msg': '点赞表情无效：只能使用 Telegram 支持的回应表情（如 👍❤🔥🎉），不能用任意图标/自定义表情。',
+        })
+    conf['like_emoji'] = normalize_like_emoji(raw_like)
+    d['config'] = conf
+    group.config = json.dumps(conf, ensure_ascii=False)
     db.session.commit()
-    return jsonify({'status':'ok'})
+    return jsonify({'status': 'ok', 'like_emoji': conf['like_emoji']})
 
 @core_bp.route('/api/save_user', methods=['POST'])
 def api_save_user():
@@ -10620,14 +10648,40 @@ async def start_all_clone_bots(flask_app):
 
 
 def do_like(chat_id, message_id, emoji, token=None):
+    """Set a message reaction using a Telegram-allowed emoji only.
+
+    Telegram's setMessageReaction only accepts the Bot API reaction whitelist
+    (e.g. ❤ not ❤️, and not arbitrary icons). Invalid emojis are normalized
+    first; API failures are logged instead of failing silently.
+    """
     if not token:
         token = os.getenv('TG_BOT_TOKEN')
-    if not token or not emoji: return
-    clean_emoji = emoji.strip()
-    try: 
+    if not token:
+        return
+    clean_emoji = normalize_like_emoji(emoji)
+    try:
         url = f"https://api.telegram.org/bot{token}/setMessageReaction"
-        requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": clean_emoji}]}, timeout=5)
-    except Exception as e: print(f"❌ [Like] 请求异常: {e}", flush=True)
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reaction": [{"type": "emoji", "emoji": clean_emoji}],
+            },
+            timeout=5,
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if not resp.ok or not data.get('ok', False):
+            print(
+                f"❌ [Like] setMessageReaction failed chat={chat_id} msg={message_id} "
+                f"emoji={clean_emoji!r} status={resp.status_code} body={data or resp.text}",
+                flush=True,
+            )
+    except Exception as e:
+        print(f"❌ [Like] 请求异常: {e}", flush=True)
 
 # 🤖 Group Management Commands (群管理机器人功能)
 
@@ -13464,7 +13518,7 @@ async def on_message(update: Update, context):
             if conf.get('auto_like'):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
-                    emoji = conf.get('like_emoji', '❤️')
+                    emoji = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
                     # Resolve the correct bot token: use clone bot token if this is a clone bot
                     _like_token = None
                     _clone_id = context.application.bot_data.get('clone_id')

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -316,3 +317,80 @@ def is_valid_like_emoji(emoji: Optional[str]) -> bool:
         return False
     normalized = normalize_like_emoji(emoji, default='')
     return bool(normalized) and normalized in TELEGRAM_REACTION_EMOJIS
+
+
+# ---------------------------------------------------------------------------
+# Authenticated-user custom member tags
+# ---------------------------------------------------------------------------
+
+_MAX_MEMBER_TAGS = 10
+_MAX_MEMBER_TAG_LEN = 20
+
+
+def parse_member_tags(value) -> list[str]:
+    """Normalize raw tag input into a de-duplicated list of short tag strings.
+
+    Accepts:
+    - ``None`` / empty → ``[]``
+    - JSON array string (DB storage form)
+    - Python list / tuple
+    - Comma / Chinese-comma / whitespace separated text (UI form)
+    """
+    if value is None:
+        return []
+
+    raw_items: list = []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith('['):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    raw_items = parsed
+                else:
+                    raw_items = [text]
+            except Exception:
+                raw_items = re.split(r'[,，;；、\s]+', text)
+        else:
+            raw_items = re.split(r'[,，;；、\s]+', text)
+    else:
+        raw_items = [value]
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if item is None:
+            continue
+        tag = str(item).strip()
+        # Strip a single leading '#' so "#VIP" and "VIP" are the same tag.
+        if tag.startswith('#'):
+            tag = tag[1:].strip()
+        if not tag:
+            continue
+        if len(tag) > _MAX_MEMBER_TAG_LEN:
+            tag = tag[:_MAX_MEMBER_TAG_LEN]
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+        if len(tags) >= _MAX_MEMBER_TAGS:
+            break
+    return tags
+
+
+def serialize_member_tags(value) -> str:
+    """Serialize tags to the JSON array string stored on ``GroupUser.member_tags``."""
+    return json.dumps(parse_member_tags(value), ensure_ascii=False)
+
+
+def format_member_tags(value, sep: str = ' ') -> str:
+    """Format tags for display / template placeholders (e.g. ``#VIP #核心``)."""
+    tags = parse_member_tags(value)
+    if not tags:
+        return ''
+    return sep.join(f'#{t}' for t in tags)

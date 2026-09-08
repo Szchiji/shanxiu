@@ -480,6 +480,7 @@
                     <div class="vr mx-1"></div>
                     <span class="badge-variable badge bg-light text-dark border" onmousedown="insert('{onlineEmoji}', event)">🟢表情</span>
                     <span class="badge-variable badge bg-info text-white border" onmousedown="insert('{序号}', event)">#️⃣序号</span>
+                    <span class="badge-variable badge bg-dark text-white border" onmousedown="insert('{标签}', event)" title="认证用户自定义成员标签">🏷️标签</span>
                     {% for f in fields %}
                     <span class="badge-variable badge bg-primary text-white border" onmousedown="insert('{'+'{{ f.label }}'+'}', event)">{{ f.label }}</span>
                     {% endfor %}

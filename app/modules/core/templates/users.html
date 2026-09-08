@@ -237,7 +237,7 @@
 <div class="search-box">
     <div class="d-flex align-items-center flex-wrap gap-2">
         <i class="fa-solid fa-search text-muted ms-2"></i>
-        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索用户名 / TG ID / 资料...">
+        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索用户名 / TG ID / 资料 / 标签..." value="{{ search or '' }}">
         <button class="btn btn-primary btn-sm" onclick="searchUsers()">
             <i class="fa-solid fa-search me-1"></i>搜索
         </button>
@@ -268,6 +268,7 @@
                     </th>
                     <th>ID</th>
                     <th>用户</th>
+                    <th class="hide-mobile">标签</th>
                     {% for f in fields %}
                     <th class="{% if not loop.first %}hide-mobile{% endif %}">{{ f.label }}</th>
                     {% endfor %}
@@ -295,8 +296,26 @@
                                 {% if user.tg_username %}
                                 <small class="text-muted list-text-preview" title="@{{ user.tg_username|e }}">@{{ user.tg_username }}</small>
                                 {% endif %}
+                                {% if user.member_tag_list %}
+                                <div class="d-flex flex-wrap gap-1 mt-1 d-md-none">
+                                    {% for tag in user.member_tag_list %}
+                                    <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis border">#{{ tag }}</span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
                             </div>
                         </div>
+                    </td>
+                    <td class="hide-mobile">
+                        {% if user.member_tag_list %}
+                        <div class="d-flex flex-wrap gap-1">
+                            {% for tag in user.member_tag_list %}
+                            <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis border" title="#{{ tag|e }}">#{{ tag }}</span>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
                     </td>
                     {% for field in fields %}
                     {% set pval = user.profile_dict.get(field.key, '') %}
@@ -325,7 +344,7 @@
                             <button class="action-btn btn btn-sm btn-warning text-white" onclick="pushUser({{ user.id }})" title="推送">
                                 <i class="fa-solid fa-bell"></i>
                             </button>
-                            <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
+                            <button class="action-btn btn btn-sm btn-primary" data-id="{{ user.id }}" data-tgid="{{ user.tg_id }}" data-profile='{{ user.profile_data|default('{}')|safe }}' data-tags='{{ user.member_tag_list|tojson }}' data-expiration="{{ user.expiration_date.strftime('%Y-%m-%dT%H:%M') if user.expiration_date else '' }}" onclick="openEdit(this)" title="编辑">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
                             <button class="action-btn btn btn-sm btn-danger" onclick="delUser({{ user.id }}, '{{ (user.tg_display_name or user.tg_id)|e }}')" title="删除">
@@ -336,7 +355,7 @@
                 </tr>
                 {% else %}
                 <tr id="emptyRow">
-                    <td colspan="{{ 6 + (fields|length) }}" class="text-center py-4 py-md-5 text-muted list-empty-cell">
+                    <td colspan="{{ 7 + (fields|length) }}" class="text-center py-4 py-md-5 text-muted list-empty-cell">
                         <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
                         暂无认证用户，点击上方按钮添加
                     </td>
@@ -488,6 +507,11 @@
                         <input type="datetime-local" class="form-control" name="expiration_date" placeholder="选择到期日期和时间">
                         <small class="text-muted">留空表示永久有效</small>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">成员标签</label>
+                        <input type="text" class="form-control" name="member_tags" id="memberTagsInput" placeholder="例如：VIP, 核心, 管理" autocomplete="off">
+                        <small class="text-muted">多个标签用逗号分隔，最多 10 个；可在列表/推送模板中使用 <code>{标签}</code></small>
+                    </div>
                     {% for field in fields %}
                     <div class="mb-3">
                         <label class="form-label fw-bold">{{ field.label }}</label>
@@ -521,6 +545,7 @@
         // Reset form
         document.getElementById('addUserForm').reset();
         document.getElementById('editUserId').value = '';
+        document.getElementById('memberTagsInput').value = '';
         
         // Set title to "添加用户"
         document.querySelector('#addUserModal .modal-title').textContent = '添加用户';
@@ -548,6 +573,13 @@
         } catch (e) {
             console.error('Failed to parse profile data:', e);
         }
+        let tags = [];
+        try {
+            tags = JSON.parse(btn.dataset.tags || '[]');
+            if (!Array.isArray(tags)) tags = [];
+        } catch (e) {
+            tags = [];
+        }
         
         // Reset form first
         document.getElementById('addUserForm').reset();
@@ -566,6 +598,8 @@
         // Set expiration_date from button's data attribute
         const expirationInput = document.querySelector('input[name="expiration_date"]');
         expirationInput.value = btn.dataset.expiration || '';
+
+        document.getElementById('memberTagsInput').value = tags.join(', ');
         
         // Populate profile fields
         document.querySelectorAll('.profile-input').forEach(input => {
@@ -623,6 +657,7 @@
             group_id: {{ group.id|tojson }},
             tg_id: tgId,
             expiration_date: formData.get('expiration_date') || null,
+            member_tags: (formData.get('member_tags') || '').toString(),
             profile: {}
         };
         const existingId = formData.get('user_id');

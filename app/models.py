@@ -25,6 +25,8 @@ class GroupUser(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     tg_id = db.Column(db.BigInteger)
     profile_data = db.Column(db.Text, default='{}')
+    # Custom admin-assigned tags for authenticated users, stored as JSON array of strings.
+    member_tags = db.Column(db.Text, default='[]')
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
     is_muted_permanent = db.Column(db.Boolean, default=False)  # Track if user needs admin to unlock

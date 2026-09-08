@@ -148,6 +148,8 @@ def fix_database_schema(app):
             "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS mute_reason VARCHAR(255)",
             "ALTER TABLE group_users ADD COLUMN last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE group_users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            # Custom member tags for authenticated users (JSON array of strings)
+            "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS member_tags TEXT DEFAULT '[]'",
             # Auto replies table columns
             "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
             "CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)",

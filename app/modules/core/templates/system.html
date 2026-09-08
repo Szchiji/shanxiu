@@ -290,7 +290,8 @@
             
             online_emoji: document.getElementById('online_emoji').value, 
             offline_emoji: document.getElementById('offline_emoji').value,
-            auto_like: true, like_emoji: "❤️", // 默认开启
+            auto_like: true, like_emoji: "❤", // 默认开启（须为 Telegram 回应白名单表情）
+            auto_member_tag: true, default_member_tag: "认证", // 认证用户昵称后自动挂成员标签
             push_channel_id: "{{ sys.push_channel_id }}" 
         };
         fetch('/core/api/save_system', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)})

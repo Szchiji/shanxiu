@@ -31,7 +31,8 @@
                 <div class="mb-3"><label class="small text-muted">指令删除时间 (秒)</label><input type="number" id="del_time" class="form-control" value="{{ s.del_time }}"></div>
                 <hr>
                 <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="auto_like" {{ 'checked' if s.auto_like }}><label>认证用户点赞</label></div>
-                <div class="input-group mb-3"><span class="input-group-text">点赞表情</span><input id="like_emoji" class="form-control" value="{{ s.like_emoji }}"></div>
+                <div class="input-group mb-2"><span class="input-group-text">点赞表情</span><input id="like_emoji" class="form-control" value="{{ s.like_emoji }}" placeholder="❤" maxlength="16"></div>
+                <div class="small text-muted mb-3">仅支持 Telegram 消息回应表情（👍❤🔥🎉 等），任意图标/自定义 emoji 无效。</div>
             </div>
         </div>
     </div>

@@ -409,12 +409,35 @@
                 <div class="config-section">
                     <div class="section-title"><i class="fa-solid fa-cog me-1"></i> 其他</div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <label class="small text-muted fw-bold">自动点赞 (强制)</label>
+                        <label class="small text-muted fw-bold">自动点赞 (认证用户)</label>
                         <div class="form-check form-switch m-0">
                             <input class="form-check-input" type="checkbox" id="auto_like" {{ 'checked' if conf.auto_like }}>
                         </div>
                     </div>
-                    <input id="like_emoji" class="form-control mb-3" value="{{ conf.like_emoji }}" placeholder="❤️">
+                    <label class="small text-muted fw-bold">点赞表情</label>
+                    <input id="like_emoji" class="form-control mb-2" value="{{ conf.like_emoji }}" placeholder="❤" maxlength="16" autocomplete="off">
+                    <div class="small text-muted mb-2">
+                        只能使用 Telegram 官方支持的「消息回应」表情（例如 👍❤🔥🎉）。
+                        任意图标、贴纸或自定义 emoji 无法点赞。点击下方快捷选择：
+                    </div>
+                    <div class="d-flex flex-wrap gap-1 mb-3" id="like_emoji_picker" style="max-height: 7.5rem; overflow-y: auto;">
+                        {% for em in reaction_emojis %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary like-emoji-btn px-2 py-1" data-emoji="{{ em }}" title="{{ em }}">{{ em }}</button>
+                        {% endfor %}
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="small text-muted fw-bold">自动成员标签 (认证用户昵称后)</label>
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" id="auto_member_tag" {{ 'checked' if conf.get('auto_member_tag', True) }}>
+                        </div>
+                    </div>
+                    <input id="default_member_tag" class="form-control mb-2" value="{{ conf.get('default_member_tag', '认证') }}" placeholder="认证" maxlength="16" autocomplete="off">
+                    <div class="small text-muted mb-3">
+                        开启后，认证用户发言时机器人会用 Telegram <code>setChatMemberTag</code> 在其<strong>昵称后面</strong>显示标签（如图中的「官方认证」「少妇」）。
+                        默认标签用于未单独设置标签的用户；单用户可在「认证用户」里覆盖。最多 16 字，不能含 emoji。
+                        机器人需有群管理权限 <code>can_manage_tags</code>。
+                    </div>
                     
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.auto_mute_expired }}>
@@ -470,6 +493,7 @@
                     <div class="vr mx-1"></div>
                     <span class="badge-variable badge bg-light text-dark border" onmousedown="insert('{onlineEmoji}', event)">🟢表情</span>
                     <span class="badge-variable badge bg-info text-white border" onmousedown="insert('{序号}', event)">#️⃣序号</span>
+                    <span class="badge-variable badge bg-dark text-white border" onmousedown="insert('{标签}', event)" title="认证用户自定义成员标签">🏷️标签</span>
                     {% for f in fields %}
                     <span class="badge-variable badge bg-primary text-white border" onmousedown="insert('{'+'{{ f.label }}'+'}', event)">{{ f.label }}</span>
                     {% endfor %}
@@ -929,6 +953,12 @@
         }
     }
     
+    document.querySelectorAll('.like-emoji-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById('like_emoji').value = btn.dataset.emoji || btn.textContent.trim();
+        });
+    });
+
     function saveSettings() {
         saveTmp(); 
         const d = {
@@ -952,6 +982,8 @@
                 
                 auto_like: document.getElementById('auto_like').checked,
                 like_emoji: document.getElementById('like_emoji').value,
+                auto_member_tag: document.getElementById('auto_member_tag').checked,
+                default_member_tag: document.getElementById('default_member_tag').value,
                 auto_mute_expired: document.getElementById('auto_mute_expired').checked,
                 
                 auto_reply_open: document.getElementById('auto_reply_open').checked,
@@ -966,7 +998,21 @@
         };
         fetch('/core/api/save_settings', {
             method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)
-        }).then(()=>showToast('配置已保存', 'success'));
+        }).then(async (res) => {
+            let data = {};
+            try { data = await res.json(); } catch (e) {}
+            if (data.status === 'ok') {
+                if (data.like_emoji) {
+                    document.getElementById('like_emoji').value = data.like_emoji;
+                }
+                if (data.default_member_tag) {
+                    document.getElementById('default_member_tag').value = data.default_member_tag;
+                }
+                showToast('配置已保存', 'success');
+            } else {
+                showToast(data.msg || '保存失败', 'error');
+            }
+        }).catch(() => showToast('保存失败', 'error'));
     }
 </script>
 {% endblock %}

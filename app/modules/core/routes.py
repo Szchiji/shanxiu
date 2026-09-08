@@ -11,7 +11,19 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
 from app.services.points_service import clamp_award_to_daily_cap
-from app.utils import encrypt_token, decrypt_token
+from app.utils import (
+    encrypt_token,
+    decrypt_token,
+    normalize_like_emoji,
+    is_valid_like_emoji,
+    TELEGRAM_REACTION_EMOJIS,
+    DEFAULT_LIKE_EMOJI,
+    parse_member_tags,
+    serialize_member_tags,
+    format_member_tags,
+    normalize_telegram_member_tag,
+    resolve_telegram_member_tag,
+)
 from app import bot_clone_manager
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
@@ -648,6 +660,8 @@ def get_group_conf(group):
             for k, v in c.items():
                 if v is not None: conf[k] = v
         except: pass
+    # Always expose a Telegram-valid reaction emoji in conf (legacy ❤️ etc.).
+    conf['like_emoji'] = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
     return conf
 
 def get_group_fields(group):
@@ -837,11 +851,12 @@ def page_users(gid):
     # Build query with optional search filter
     query = GroupUser.query.filter_by(group_id=gid)
     if search_query:
-        # Search in tg_id and profile_data
+        # Search in tg_id, profile_data, and custom member tags
         query = query.filter(
             or_(
                 cast(GroupUser.tg_id, String).contains(search_query),
-                GroupUser.profile_data.contains(search_query)
+                GroupUser.profile_data.contains(search_query),
+                GroupUser.member_tags.contains(search_query),
             )
         )
     
@@ -854,6 +869,7 @@ def page_users(gid):
     for u in users:
         try: u.profile_dict = json.loads(u.profile_data) if u.profile_data else {}
         except: u.profile_dict = {}
+        u.member_tag_list = parse_member_tags(getattr(u, 'member_tags', None))
     
     # 批量查询 GroupMember 以获取昵称和用户名（限定本群组，避免跨群组数据污染）
     tg_ids = [u.tg_id for u in users]
@@ -987,7 +1003,14 @@ def page_settings(gid):
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
-    return render_template('settings.html', page='settings', group=group, conf=get_group_conf(group), fields=get_group_fields(group))
+    return render_template(
+        'settings.html',
+        page='settings',
+        group=group,
+        conf=get_group_conf(group),
+        fields=get_group_fields(group),
+        reaction_emojis=TELEGRAM_REACTION_EMOJIS,
+    )
 
 @core_bp.route('/group/<int:gid>/auto_replies')
 def page_auto_replies(gid):
@@ -2120,9 +2143,32 @@ def api_save_settings():
         return jsonify({'status': 'error', 'msg': 'Group not found'})
     err = _api_check_group_access(group)
     if err: return err
-    group.config = json.dumps(d['config'], ensure_ascii=False)
+    conf = d.get('config') or {}
+    if not isinstance(conf, dict):
+        return jsonify({'status': 'error', 'msg': 'Invalid config'})
+    # Telegram only accepts reaction-whitelist emojis; normalize so auto-like keeps working.
+    raw_like = conf.get('like_emoji', DEFAULT_LIKE_EMOJI)
+    if raw_like and not is_valid_like_emoji(raw_like):
+        return jsonify({
+            'status': 'error',
+            'msg': '点赞表情无效：只能使用 Telegram 支持的回应表情（如 👍❤🔥🎉），不能用任意图标/自定义表情。',
+        })
+    conf['like_emoji'] = normalize_like_emoji(raw_like)
+    # Nickname member tag: 0–16 chars, no emoji (setChatMemberTag)
+    conf['default_member_tag'] = normalize_telegram_member_tag(
+        conf.get('default_member_tag', '认证'),
+        default='认证',
+    )
+    if 'auto_member_tag' in conf:
+        conf['auto_member_tag'] = bool(conf.get('auto_member_tag'))
+    d['config'] = conf
+    group.config = json.dumps(conf, ensure_ascii=False)
     db.session.commit()
-    return jsonify({'status':'ok'})
+    return jsonify({
+        'status': 'ok',
+        'like_emoji': conf['like_emoji'],
+        'default_member_tag': conf['default_member_tag'],
+    })
 
 @core_bp.route('/api/save_user', methods=['POST'])
 def api_save_user():
@@ -2180,6 +2226,11 @@ def api_save_user():
             db.session.add(u)
     
     u.profile_data = json.dumps(d.get('profile') or {}, ensure_ascii=False)
+    # Custom member tags (JSON array). Accept list or comma-separated string from UI.
+    if 'member_tags' in d:
+        u.member_tags = serialize_member_tags(d.get('member_tags'))
+    elif u.member_tags is None:
+        u.member_tags = '[]'
     
     # Handle expiration_date - directly set from datetime picker
     # Note: datetime-local input returns browser local time, which we treat as Beijing time
@@ -2209,6 +2260,17 @@ def api_save_user():
 
     db.session.commit()
 
+    # Apply Telegram nickname member tag for authenticated users (setChatMemberTag)
+    try:
+        group_for_tag = BotGroup.query.get(gid)
+        conf_for_tag = get_group_conf(group_for_tag)
+        if conf_for_tag.get('auto_member_tag', True):
+            apply_telegram_member_tag_for_user(
+                group_for_tag, u, conf_for_tag, token=None, force=True
+            )
+    except Exception as e:
+        logging.warning(f'Apply member tag failed for group={gid} user={uid}: {e}')
+
     # 添加新认证用户时自动推送到频道
     if is_new_user:
         try:
@@ -2227,6 +2289,7 @@ def api_save_user():
                     cid = conf['push_channel_id']
                     tpl = conf.get('push_template', '用户: {tg_id}')
                     text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
+                    text = text.replace('{标签}', format_member_tags(getattr(u, 'member_tags', None)))
                     p = json.loads(u.profile_data or '{}')
                     for k, v in p.items():
                         text = text.replace(f'{{{k}}}', str(v))
@@ -2255,8 +2318,14 @@ def api_delete_user():
     user = GroupUser.query.get(d['id'])
     if not user:
         return jsonify({'status':'error', 'msg':'User not found'})
-    err = _api_check_group_access(BotGroup.query.get(user.group_id))
+    group = BotGroup.query.get(user.group_id)
+    err = _api_check_group_access(group)
     if err: return err
+    # Clear Telegram nickname tag before removing authenticated status
+    try:
+        clear_telegram_member_tag_for_user(group, user)
+    except Exception as e:
+        logging.warning(f'Clear member tag failed on delete user={user.id}: {e}')
     db.session.delete(user)
     db.session.commit()
     return jsonify({'status':'ok'})
@@ -2299,7 +2368,8 @@ def api_get_user_info():
             'last_activity': user.last_activity.isoformat() if user.last_activity else None,
             'expiration_date': user.expiration_date.isoformat() if user.expiration_date else None,
             'checkin_time': user.checkin_time.isoformat() if user.checkin_time else None,
-            'profile_data': profile_data
+            'profile_data': profile_data,
+            'member_tags': parse_member_tags(getattr(user, 'member_tags', None)),
         }
     })
 
@@ -2425,10 +2495,19 @@ def api_bulk_import_users():
                     if col_idx < len(row):
                         value = row[col_idx]
                         profile[field['key']] = str(value) if value else ''
+                # Optional tags column right after profile fields (export header: 标签)
+                tags_col = len(fields) + 1
+                member_tags = ''
+                if tags_col < len(row) and row[tags_col] is not None:
+                    member_tags = str(row[tags_col]).strip()
+                    # Skip if this cell looks like a status column from older exports
+                    if member_tags in ('封禁', '正常', '永久', '是', '否'):
+                        member_tags = ''
                 
                 users_data.append({
                     'tg_id': tg_id,
-                    'profile': profile
+                    'profile': profile,
+                    'member_tags': member_tags,
                 })
         except Exception as e:
             return jsonify({'status':'error', 'msg': f'解析 XLSX 文件失败: {str(e)}'})
@@ -2443,6 +2522,7 @@ def api_bulk_import_users():
         for user_data in users_data:
             tg_id = user_data.get('tg_id')
             profile = user_data.get('profile', {})
+            member_tags = serialize_member_tags(user_data.get('member_tags'))
             
             if not tg_id:
                 continue
@@ -2462,6 +2542,7 @@ def api_bulk_import_users():
                 group_id=group_id,
                 tg_id=tg_id,
                 profile_data=json.dumps(profile, ensure_ascii=False),
+                member_tags=member_tags,
                 expiration_date=expiration_date,
                 is_banned=False,
                 online=False
@@ -2513,7 +2594,7 @@ def api_export_users():
     header = ['TG_ID']
     for field in fields:
         header.append(field['label'])
-    header.extend(['状态', '过期时间', '禁言'])
+    header.extend(['标签', '状态', '过期时间', '禁言'])
     
     for col_num, column_title in enumerate(header, 1):
         cell = ws.cell(row=1, column=col_num)
@@ -2535,8 +2616,13 @@ def api_export_users():
             value = profile.get(field['key'], '')
             ws.cell(row=row_num, column=col_num, value=str(value))
         
+        # Custom member tags (comma-separated for spreadsheet editing)
+        tags_col = len(fields) + 2
+        tags = parse_member_tags(getattr(user, 'member_tags', None))
+        ws.cell(row=row_num, column=tags_col, value=','.join(tags))
+        
         # Status
-        col_num = len(fields) + 2
+        col_num = tags_col + 1
         if user.is_banned:
             status = '封禁'
         elif user.expiration_date:
@@ -2647,6 +2733,7 @@ def api_push_user():
         
         tpl = conf.get('push_template', '用户: {tg_id}')
         text = tpl.replace('{tg_id}', str(user.tg_id)).replace('{onlineEmoji}', '🟢' if user.online else '🔴').replace('{序号}', str(user.id))
+        text = text.replace('{标签}', format_member_tags(getattr(user, 'member_tags', None)))
         
         p = json.loads(user.profile_data or '{}')
         for k,v in p.items(): text = text.replace(f'{{{k}}}', str(v)) 
@@ -10620,14 +10707,152 @@ async def start_all_clone_bots(flask_app):
 
 
 def do_like(chat_id, message_id, emoji, token=None):
+    """Set a message reaction using a Telegram-allowed emoji only.
+
+    Telegram's setMessageReaction only accepts the Bot API reaction whitelist
+    (e.g. ❤ not ❤️, and not arbitrary icons). Invalid emojis are normalized
+    first; API failures are logged instead of failing silently.
+    """
     if not token:
         token = os.getenv('TG_BOT_TOKEN')
-    if not token or not emoji: return
-    clean_emoji = emoji.strip()
-    try: 
+    if not token:
+        return
+    clean_emoji = normalize_like_emoji(emoji)
+    try:
         url = f"https://api.telegram.org/bot{token}/setMessageReaction"
-        requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "reaction": [{"type": "emoji", "emoji": clean_emoji}]}, timeout=5)
-    except Exception as e: print(f"❌ [Like] 请求异常: {e}", flush=True)
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reaction": [{"type": "emoji", "emoji": clean_emoji}],
+            },
+            timeout=5,
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if not resp.ok or not data.get('ok', False):
+            print(
+                f"❌ [Like] setMessageReaction failed chat={chat_id} msg={message_id} "
+                f"emoji={clean_emoji!r} status={resp.status_code} body={data or resp.text}",
+                flush=True,
+            )
+    except Exception as e:
+        print(f"❌ [Like] 请求异常: {e}", flush=True)
+
+
+def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
+    """Apply a Telegram nickname member tag via setChatMemberTag.
+
+    The bot must be a group admin with ``can_manage_tags``. Tag text is
+    normalized to 0–16 characters without emoji. Returns True on API success.
+    """
+    if not token:
+        token = os.getenv('TG_BOT_TOKEN')
+    if not token or not chat_id or not user_id:
+        return False
+    clean_tag = normalize_telegram_member_tag(tag, default='')
+    try:
+        url = f"https://api.telegram.org/bot{token}/setChatMemberTag"
+        payload = {
+            "chat_id": chat_id,
+            "user_id": int(user_id),
+            "tag": clean_tag,
+        }
+        resp = requests.post(url, json=payload, timeout=5)
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if not resp.ok or not data.get('ok', False):
+            print(
+                f"❌ [MemberTag] setChatMemberTag failed chat={chat_id} user={user_id} "
+                f"tag={clean_tag!r} status={resp.status_code} body={data or resp.text}",
+                flush=True,
+            )
+            return False
+        return True
+    except Exception as e:
+        print(f"❌ [MemberTag] 请求异常: {e}", flush=True)
+        return False
+
+
+def _resolve_bot_token_for_group(group, clone_id_from_context=None):
+    """Return the bot token that manages *group* (clone token or main env token)."""
+    clone_id = clone_id_from_context
+    if clone_id is None and group is not None:
+        clone_id = getattr(group, 'clone_id', None)
+    if clone_id:
+        clone = BotClone.query.get(clone_id)
+        if clone:
+            token = clone.get_bot_token()
+            if token:
+                return token
+    return os.getenv('TG_BOT_TOKEN')
+
+
+def apply_telegram_member_tag_for_user(group, db_user, conf=None, token=None, force: bool = False) -> bool:
+    """Ensure the authenticated user's Telegram nickname tag matches config.
+
+    Skips the API call when the desired tag already matches
+    ``db_user.applied_telegram_tag`` unless *force* is True.
+    Safe to call from the request thread with live ORM objects.
+    """
+    if not group or not db_user:
+        return False
+    conf = conf or get_group_conf(group)
+    if not conf.get('auto_member_tag', True):
+        return False
+    desired = resolve_telegram_member_tag(getattr(db_user, 'member_tags', None), conf)
+    current = getattr(db_user, 'applied_telegram_tag', None)
+    if not force and current is not None and current == desired:
+        return True
+    token = token or _resolve_bot_token_for_group(group)
+    chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
+    if chat_id is None:
+        return False
+    ok = do_set_member_tag(chat_id, db_user.tg_id, desired, token=token)
+    if ok:
+        db_user.applied_telegram_tag = desired
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ [MemberTag] failed to persist applied_telegram_tag: {e}", flush=True)
+    return ok
+
+
+def apply_telegram_member_tag_by_ids(group_id, user_db_id, conf=None, token=None, force: bool = False) -> bool:
+    """Thread-safe wrapper: reload ORM rows inside the Flask app context."""
+    app = global_flask_app
+    if not app:
+        return False
+    with app.app_context():
+        group = BotGroup.query.get(group_id)
+        db_user = GroupUser.query.get(user_db_id)
+        if not group or not db_user:
+            return False
+        return apply_telegram_member_tag_for_user(group, db_user, conf=conf, token=token, force=force)
+
+
+def clear_telegram_member_tag_for_user(group, db_user, token=None) -> bool:
+    """Clear the Telegram nickname tag when a user is removed/unauthenticated."""
+    if not group or not db_user:
+        return False
+    token = token or _resolve_bot_token_for_group(group)
+    chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
+    if chat_id is None:
+        return False
+    ok = do_set_member_tag(chat_id, db_user.tg_id, '', token=token)
+    if ok:
+        db_user.applied_telegram_tag = ''
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return ok
 
 # 🤖 Group Management Commands (群管理机器人功能)
 
@@ -13461,19 +13686,34 @@ async def on_message(update: Update, context):
                         except Exception as notify_err:
                             logging.error(f"❌ [消息计数] 发送参与成功通知失败 (抽奖 '{q_lottery.lottery_name}'): {notify_err}")
             
-            if conf.get('auto_like'):
+            # Authenticated-user perks: auto-like + Telegram nickname member tag
+            if conf.get('auto_like') or conf.get('auto_member_tag', True):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if db_user:
-                    emoji = conf.get('like_emoji', '❤️')
                     # Resolve the correct bot token: use clone bot token if this is a clone bot
-                    _like_token = None
+                    _perk_token = None
                     _clone_id = context.application.bot_data.get('clone_id')
                     if _clone_id:
                         _clone = BotClone.query.get(_clone_id)
                         if _clone:
-                            _like_token = _clone.get_bot_token()
-                    # 在线程中执行阻塞请求，避免卡顿
-                    asyncio.get_running_loop().run_in_executor(None, do_like, chat.id, msg.message_id, emoji, _like_token)
+                            _perk_token = _clone.get_bot_token()
+                    if conf.get('auto_like'):
+                        emoji = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
+                        # 在线程中执行阻塞请求，避免卡顿
+                        asyncio.get_running_loop().run_in_executor(
+                            None, do_like, chat.id, msg.message_id, emoji, _perk_token
+                        )
+                    if conf.get('auto_member_tag', True):
+                        # Apply nickname tag once (skipped when already matching applied_telegram_tag)
+                        asyncio.get_running_loop().run_in_executor(
+                            None,
+                            apply_telegram_member_tag_by_ids,
+                            group.id,
+                            db_user.id,
+                            conf,
+                            _perk_token,
+                            False,
+                        )
             
             # 2. 打卡
             if _is_checkin_msg:
@@ -14015,6 +14255,7 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
                     for k, lbl in f_map.items(): l = l.replace(f"{{{lbl}}}", str(d.get(k,'')))
                     l = l.replace("{序号}", str(start + idx + 1))
                     l = l.replace("{tg_id}", str(u.tg_id))
+                    l = l.replace("{标签}", format_member_tags(getattr(u, 'member_tags', None)))
                     lines.append(re.sub(r'\{.*?\}', '', l))
                 except: continue
                 

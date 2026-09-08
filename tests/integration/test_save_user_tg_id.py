@@ -70,3 +70,40 @@ def test_edit_user_rejects_duplicate_tg_id(client, db):
     assert body['status'] == 'error'
     assert '已被其他认证用户使用' in body['msg']
     assert GroupUser.query.get(u1.id).tg_id == 100
+
+
+def test_save_user_custom_member_tags(client, db):
+    from app.models import BotGroup, GroupUser
+    from app.utils import parse_member_tags
+
+    group = BotGroup(chat_id='-1003', title='g3', type='supergroup', is_active=True)
+    db.session.add(group)
+    db.session.commit()
+
+    _login(client)
+    resp = client.post('/core/api/save_user', json={
+        'group_id': group.id,
+        'tg_id': 333,
+        'expiration_date': None,
+        'profile': {'name': 'Tagged'},
+        'member_tags': 'VIP, 核心, #管理',
+    })
+    assert resp.status_code == 200
+    assert resp.get_json()['status'] == 'ok'
+
+    user = GroupUser.query.filter_by(group_id=group.id, tg_id=333).first()
+    assert user is not None
+    assert parse_member_tags(user.member_tags) == ['VIP', '核心', '管理']
+
+    # Update tags on existing user
+    resp2 = client.post('/core/api/save_user', json={
+        'id': user.id,
+        'group_id': group.id,
+        'tg_id': 333,
+        'profile': {'name': 'Tagged'},
+        'member_tags': ['金牌'],
+    })
+    assert resp2.status_code == 200
+    assert resp2.get_json()['status'] == 'ok'
+    updated = GroupUser.query.get(user.id)
+    assert parse_member_tags(updated.member_tags) == ['金牌']

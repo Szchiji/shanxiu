@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from typing import Optional
 import pytz
 from cryptography.fernet import Fernet, InvalidToken
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+from telegram.constants import ReactionEmoji
 
 
 # ---------------------------------------------------------------------------
@@ -248,3 +250,204 @@ def build_inline_keyboard_from_links(links: list) -> list:
         keyboard.append([btn['button'] for btn in row_buttons])
 
     return keyboard
+
+
+# ---------------------------------------------------------------------------
+# Telegram message-reaction helpers
+# ---------------------------------------------------------------------------
+
+# Official setMessageReaction emoji whitelist (Bot API ReactionTypeEmoji).
+TELEGRAM_REACTION_EMOJIS: tuple[str, ...] = tuple(
+    dict.fromkeys(e.value for e in ReactionEmoji)
+)
+DEFAULT_LIKE_EMOJI = ReactionEmoji.RED_HEART.value  # '❤' (no FE0F)
+
+# Map common presentation variants (e.g. ❤️) back to the API form (❤).
+_REACTION_EMOJI_BY_STRIPPED: dict[str, str] = {
+    e.replace('\ufe0f', ''): e for e in TELEGRAM_REACTION_EMOJIS
+}
+# Prefer longer sequences first so ZWJ emojis match before their base glyph.
+_REACTION_EMOJIS_BY_LENGTH: tuple[str, ...] = tuple(
+    sorted(TELEGRAM_REACTION_EMOJIS, key=len, reverse=True)
+)
+
+
+def normalize_like_emoji(emoji: Optional[str], default: str = DEFAULT_LIKE_EMOJI) -> str:
+    """Return a Telegram-allowed reaction emoji for setMessageReaction.
+
+    Users often paste presentation variants (❤️) or free-form icons that are
+    not in Telegram's reaction whitelist.  Those values make auto-like silently
+    fail.  This helper:
+
+    1. Accepts an exact whitelist match
+    2. Maps FE0F / presentation variants onto the canonical form
+    3. Extracts the first whitelist emoji embedded in free text
+    4. Falls back to *default* (❤) when nothing valid is found
+    """
+    if not emoji or not str(emoji).strip():
+        return default
+
+    raw = str(emoji).strip()
+    if raw in TELEGRAM_REACTION_EMOJIS:
+        return raw
+
+    stripped = raw.replace('\ufe0f', '')
+    mapped = _REACTION_EMOJI_BY_STRIPPED.get(stripped)
+    if mapped:
+        return mapped
+
+    # Try the same lookups after dropping surrounding non-emoji text.
+    for candidate in _REACTION_EMOJIS_BY_LENGTH:
+        if candidate in raw:
+            return candidate
+        cand_stripped = candidate.replace('\ufe0f', '')
+        if cand_stripped and cand_stripped in stripped:
+            return candidate
+
+    return default
+
+
+def is_valid_like_emoji(emoji: Optional[str]) -> bool:
+    """Return True if *emoji* can be normalized to a Telegram reaction emoji
+    without falling back to the default solely because input was empty/invalid.
+
+    Empty input is treated as invalid (caller should keep previous/default).
+    """
+    if not emoji or not str(emoji).strip():
+        return False
+    normalized = normalize_like_emoji(emoji, default='')
+    return bool(normalized) and normalized in TELEGRAM_REACTION_EMOJIS
+
+
+# ---------------------------------------------------------------------------
+# Authenticated-user custom member tags
+# ---------------------------------------------------------------------------
+
+_MAX_MEMBER_TAGS = 10
+_MAX_MEMBER_TAG_LEN = 20
+
+
+def parse_member_tags(value) -> list[str]:
+    """Normalize raw tag input into a de-duplicated list of short tag strings.
+
+    Accepts:
+    - ``None`` / empty → ``[]``
+    - JSON array string (DB storage form)
+    - Python list / tuple
+    - Comma / Chinese-comma / whitespace separated text (UI form)
+    """
+    if value is None:
+        return []
+
+    raw_items: list = []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith('['):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    raw_items = parsed
+                else:
+                    raw_items = [text]
+            except Exception:
+                raw_items = re.split(r'[,，;；、\s]+', text)
+        else:
+            raw_items = re.split(r'[,，;；、\s]+', text)
+    else:
+        raw_items = [value]
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if item is None:
+            continue
+        tag = str(item).strip()
+        # Strip a single leading '#' so "#VIP" and "VIP" are the same tag.
+        if tag.startswith('#'):
+            tag = tag[1:].strip()
+        if not tag:
+            continue
+        if len(tag) > _MAX_MEMBER_TAG_LEN:
+            tag = tag[:_MAX_MEMBER_TAG_LEN]
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+        if len(tags) >= _MAX_MEMBER_TAGS:
+            break
+    return tags
+
+
+def serialize_member_tags(value) -> str:
+    """Serialize tags to the JSON array string stored on ``GroupUser.member_tags``."""
+    return json.dumps(parse_member_tags(value), ensure_ascii=False)
+
+
+def format_member_tags(value, sep: str = ' ') -> str:
+    """Format tags for display / template placeholders (e.g. ``#VIP #核心``)."""
+    tags = parse_member_tags(value)
+    if not tags:
+        return ''
+    return sep.join(f'#{t}' for t in tags)
+
+
+# Telegram setChatMemberTag limit (Bot API TagLimit.MAX_TAG_LENGTH).
+TELEGRAM_MEMBER_TAG_MAX_LEN = 16
+# Rough emoji / symbol strip so tags stay within Telegram's "no emoji" rule.
+_TELEGRAM_TAG_EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"  # misc symbols & pictographs extended
+    "\U00002700-\U000027BF"  # dingbats
+    "\U00002600-\U000026FF"  # misc symbols
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0000200D"             # ZWJ
+    "\U000020E3"             # combining enclosing keycap
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def normalize_telegram_member_tag(value: Optional[str], default: str = '') -> str:
+    """Normalize a string for Telegram ``setChatMemberTag``.
+
+    Rules from Bot API: 0–16 characters, emoji not allowed. Returns *default*
+    when the cleaned value is empty.
+    """
+    if value is None:
+        return default
+    text = str(value).strip()
+    if text.startswith('#'):
+        text = text[1:].strip()
+    text = _TELEGRAM_TAG_EMOJI_RE.sub('', text)
+    # Collapse leftover whitespace after emoji removal.
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text:
+        return default
+    if len(text) > TELEGRAM_MEMBER_TAG_MAX_LEN:
+        text = text[:TELEGRAM_MEMBER_TAG_MAX_LEN]
+    return text
+
+
+def resolve_telegram_member_tag(member_tags_value, conf: Optional[dict] = None) -> str:
+    """Pick the Telegram nickname tag for an authenticated user.
+
+    Preference order:
+    1. First custom tag on the user (``member_tags``)
+    2. Group default ``default_member_tag`` (default ``认证``)
+    """
+    conf = conf or {}
+    default = normalize_telegram_member_tag(
+        conf.get('default_member_tag', '认证'),
+        default='认证',
+    )
+    tags = parse_member_tags(member_tags_value)
+    if tags:
+        primary = normalize_telegram_member_tag(tags[0], default='')
+        if primary:
+            return primary
+    return default

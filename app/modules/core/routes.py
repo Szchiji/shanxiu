@@ -2289,7 +2289,8 @@ def api_save_user():
                     cid = conf['push_channel_id']
                     tpl = conf.get('push_template', '用户: {tg_id}')
                     text = tpl.replace('{tg_id}', str(u.tg_id)).replace('{onlineEmoji}', '🟢' if u.online or False else '🔴').replace('{序号}', str(u.id))
-                    text = text.replace('{标签}', format_member_tags(getattr(u, 'member_tags', None)))
+                    _member_tags_text = format_member_tags(getattr(u, 'member_tags', None))
+                    text = text.replace('{成员标签}', _member_tags_text).replace('{标签}', _member_tags_text)
                     p = json.loads(u.profile_data or '{}')
                     for k, v in p.items():
                         text = text.replace(f'{{{k}}}', str(v))
@@ -2733,7 +2734,8 @@ def api_push_user():
         
         tpl = conf.get('push_template', '用户: {tg_id}')
         text = tpl.replace('{tg_id}', str(user.tg_id)).replace('{onlineEmoji}', '🟢' if user.online else '🔴').replace('{序号}', str(user.id))
-        text = text.replace('{标签}', format_member_tags(getattr(user, 'member_tags', None)))
+        _member_tags_text = format_member_tags(getattr(user, 'member_tags', None))
+        text = text.replace('{成员标签}', _member_tags_text).replace('{标签}', _member_tags_text)
         
         p = json.loads(user.profile_data or '{}')
         for k,v in p.items(): text = text.replace(f'{{{k}}}', str(v)) 
@@ -14255,7 +14257,8 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
                     for k, lbl in f_map.items(): l = l.replace(f"{{{lbl}}}", str(d.get(k,'')))
                     l = l.replace("{序号}", str(start + idx + 1))
                     l = l.replace("{tg_id}", str(u.tg_id))
-                    l = l.replace("{标签}", format_member_tags(getattr(u, 'member_tags', None)))
+                    _member_tags_text = format_member_tags(getattr(u, 'member_tags', None))
+                    l = l.replace("{成员标签}", _member_tags_text).replace("{标签}", _member_tags_text)
                     lines.append(re.sub(r'\{.*?\}', '', l))
                 except: continue
                 

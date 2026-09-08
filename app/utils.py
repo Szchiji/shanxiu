@@ -394,3 +394,60 @@ def format_member_tags(value, sep: str = ' ') -> str:
     if not tags:
         return ''
     return sep.join(f'#{t}' for t in tags)
+
+
+# Telegram setChatMemberTag limit (Bot API TagLimit.MAX_TAG_LENGTH).
+TELEGRAM_MEMBER_TAG_MAX_LEN = 16
+# Rough emoji / symbol strip so tags stay within Telegram's "no emoji" rule.
+_TELEGRAM_TAG_EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"  # misc symbols & pictographs extended
+    "\U00002700-\U000027BF"  # dingbats
+    "\U00002600-\U000026FF"  # misc symbols
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0000200D"             # ZWJ
+    "\U000020E3"             # combining enclosing keycap
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def normalize_telegram_member_tag(value: Optional[str], default: str = '') -> str:
+    """Normalize a string for Telegram ``setChatMemberTag``.
+
+    Rules from Bot API: 0–16 characters, emoji not allowed. Returns *default*
+    when the cleaned value is empty.
+    """
+    if value is None:
+        return default
+    text = str(value).strip()
+    if text.startswith('#'):
+        text = text[1:].strip()
+    text = _TELEGRAM_TAG_EMOJI_RE.sub('', text)
+    # Collapse leftover whitespace after emoji removal.
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text:
+        return default
+    if len(text) > TELEGRAM_MEMBER_TAG_MAX_LEN:
+        text = text[:TELEGRAM_MEMBER_TAG_MAX_LEN]
+    return text
+
+
+def resolve_telegram_member_tag(member_tags_value, conf: Optional[dict] = None) -> str:
+    """Pick the Telegram nickname tag for an authenticated user.
+
+    Preference order:
+    1. First custom tag on the user (``member_tags``)
+    2. Group default ``default_member_tag`` (default ``认证``)
+    """
+    conf = conf or {}
+    default = normalize_telegram_member_tag(
+        conf.get('default_member_tag', '认证'),
+        default='认证',
+    )
+    tags = parse_member_tags(member_tags_value)
+    if tags:
+        primary = normalize_telegram_member_tag(tags[0], default='')
+        if primary:
+            return primary
+    return default

@@ -2129,21 +2129,57 @@ def api_save_user():
     if not session.get('logged_in'): return jsonify({'status':'error'})
     d = request.json
     gid = d['group_id']
-    uid = d.get('tg_id')
-    if not uid: return jsonify({'status':'error','msg':'No ID'})
+    uid_raw = d.get('tg_id')
+    if uid_raw is None or str(uid_raw).strip() == '':
+        return jsonify({'status':'error','msg':'No ID'})
+    try:
+        uid = int(str(uid_raw).strip())
+    except (TypeError, ValueError):
+        return jsonify({'status':'error','msg':'TG ID 必须是数字'})
     group = BotGroup.query.get(gid)
     if not group:
         return jsonify({'status': 'error', 'msg': 'Group not found'})
     err = _api_check_group_access(group)
     if err: return err
+
+    # Edit existing user by primary key so tg_id can be changed in place
+    existing_id = d.get('id')
+    old_tg_id = None
+    if existing_id not in (None, '', 0, '0'):
+        try:
+            existing_id = int(existing_id)
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'msg': '无效的用户记录 ID'})
+        u = GroupUser.query.filter_by(id=existing_id, group_id=gid).first()
+        if not u:
+            return jsonify({'status': 'error', 'msg': 'User not found'})
+        old_tg_id = u.tg_id
+        if old_tg_id != uid:
+            conflict = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
+            if conflict and conflict.id != u.id:
+                return jsonify({'status': 'error', 'msg': f'TG ID {uid} 已被其他认证用户使用'})
+            u.tg_id = uid
+            # Keep points balance/logs attached to the same person after ID change
+            points_row = UserPoints.query.filter_by(group_id=gid, user_id=old_tg_id).first()
+            if points_row:
+                target_points = UserPoints.query.filter_by(group_id=gid, user_id=uid).first()
+                if target_points and target_points.id != points_row.id:
+                    target_points.points_balance = (target_points.points_balance or 0) + (points_row.points_balance or 0)
+                    db.session.delete(points_row)
+                else:
+                    points_row.user_id = uid
+            PointsLog.query.filter_by(group_id=gid, user_id=old_tg_id).update(
+                {PointsLog.user_id: uid}, synchronize_session=False
+            )
+        is_new_user = False
+    else:
+        u = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
+        is_new_user = u is None
+        if not u:
+            u = GroupUser(group_id=gid, tg_id=uid)
+            db.session.add(u)
     
-    u = GroupUser.query.filter_by(group_id=gid, tg_id=uid).first()
-    is_new_user = u is None
-    if not u:
-        u = GroupUser(group_id=gid, tg_id=uid)
-        db.session.add(u)
-    
-    u.profile_data = json.dumps(d['profile'], ensure_ascii=False)
+    u.profile_data = json.dumps(d.get('profile') or {}, ensure_ascii=False)
     
     # Handle expiration_date - directly set from datetime picker
     # Note: datetime-local input returns browser local time, which we treat as Beijing time

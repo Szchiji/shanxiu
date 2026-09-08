@@ -2495,7 +2495,7 @@ def api_bulk_import_users():
                     if col_idx < len(row):
                         value = row[col_idx]
                         profile[field['key']] = str(value) if value else ''
-                # Optional tags column right after profile fields (export header: 标签)
+                # Optional tags column right after profile fields (export header: 成员标签; older exports: 标签)
                 tags_col = len(fields) + 1
                 member_tags = ''
                 if tags_col < len(row) and row[tags_col] is not None:
@@ -2594,7 +2594,7 @@ def api_export_users():
     header = ['TG_ID']
     for field in fields:
         header.append(field['label'])
-    header.extend(['标签', '状态', '过期时间', '禁言'])
+    header.extend(['成员标签', '状态', '过期时间', '禁言'])
     
     for col_num, column_title in enumerate(header, 1):
         cell = ws.cell(row=1, column=col_num)

@@ -477,9 +477,11 @@
             </div>
             <div class="modal-body p-4">
                 <form id="addUserForm">
+                    <input type="hidden" name="user_id" id="editUserId" value="">
                     <div class="mb-3">
                         <label class="form-label fw-bold">TG ID <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" name="tg_id" required placeholder="输入 Telegram 用户 ID">
+                        <small class="text-muted">编辑时可修改；修改后将按新 ID 识别该认证用户</small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">到期时间</label>
@@ -518,6 +520,7 @@
     function openAddUser() {
         // Reset form
         document.getElementById('addUserForm').reset();
+        document.getElementById('editUserId').value = '';
         
         // Set title to "添加用户"
         document.querySelector('#addUserModal .modal-title').textContent = '添加用户';
@@ -552,10 +555,13 @@
         // Set title to "编辑用户"
         document.querySelector('#addUserModal .modal-title').textContent = '编辑用户';
         
-        // Set tg_id and make it read-only
+        // Keep existing record id so backend can update tg_id in place
+        document.getElementById('editUserId').value = btn.dataset.id || '';
+        
+        // Set tg_id and keep it editable
         const tgIdInput = document.querySelector('input[name="tg_id"]');
         tgIdInput.value = btn.dataset.tgid;
-        tgIdInput.readOnly = true;
+        tgIdInput.readOnly = false;
         
         // Set expiration_date from button's data attribute
         const expirationInput = document.querySelector('input[name="expiration_date"]');
@@ -608,12 +614,21 @@
     async function submitAddUser() {
         const form = document.getElementById('addUserForm');
         const formData = new FormData(form);
+        const tgId = String(formData.get('tg_id') || '').trim();
+        if (!/^-?\d+$/.test(tgId)) {
+            showToast('TG ID 必须是数字', 'danger');
+            return;
+        }
         const data = {
             group_id: {{ group.id|tojson }},
-            tg_id: formData.get('tg_id'),
+            tg_id: tgId,
             expiration_date: formData.get('expiration_date') || null,
             profile: {}
         };
+        const existingId = formData.get('user_id');
+        if (existingId) {
+            data.id = parseInt(existingId, 10);
+        }
         
         // Collect profile data from profile-input fields
         document.querySelectorAll('.profile-input').forEach(input => {

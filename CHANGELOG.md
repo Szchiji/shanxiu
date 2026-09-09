@@ -19,6 +19,10 @@
 
 ### 🐛 问题修复 (Fixed)
 
+#### 定时消息列表「备注」列偏高
+- 根因：全局 `.remark-cell` 使用了 `display: inline-block`，却直接加在 `<td>` 上，破坏了表格单元格布局，导致备注文字比同行其他列更靠上
+- 定时消息 / 自动回复列表改为在单元格内用 `<span class="remark-cell">` 做短预览；`base` 增加 `td.remark-cell` 兜底，避免再把表格单元格改成 inline-block
+
 #### 自动点赞换图标后不生效
 - 根因：Telegram `setMessageReaction` 只接受官方「消息回应」白名单表情（如 `❤`/`👍`/`🔥`），任意图标、贴纸或自定义 emoji 会被 API 拒绝；旧默认值 `❤️`（带 FE0F）与部分粘贴变体也会导致失败，且失败被静默吞掉
 - 新增 `normalize_like_emoji`：自动把 `❤️` 等变体映射为 API 合法形式，并拒绝无效图标

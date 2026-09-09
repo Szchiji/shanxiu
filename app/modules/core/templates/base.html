@@ -677,12 +677,10 @@
 
         /*
          * List text fields — same idea as 定时消息「备注」:
-         * show a short single-line preview, full text stays in edit modal / title tooltip.
-         * Do NOT force every cell to nowrap (dates / 目标 stacks may wrap like 定时消息).
-         */
-        /*
+         * short single-line preview; full text stays in edit modal / title tooltip.
          * Apply to inner spans/code — NOT to <td>. display:inline-block on a table
          * cell breaks row height and makes the text sit higher than sibling cells.
+         * Do NOT force every cell to nowrap (dates / 目标 stacks may wrap).
          */
         .table-container .list-text-preview,
         .table-container .remark-cell,

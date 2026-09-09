@@ -680,6 +680,10 @@
          * show a short single-line preview, full text stays in edit modal / title tooltip.
          * Do NOT force every cell to nowrap (dates / 目标 stacks may wrap like 定时消息).
          */
+        /*
+         * Apply to inner spans/code — NOT to <td>. display:inline-block on a table
+         * cell breaks row height and makes the text sit higher than sibling cells.
+         */
         .table-container .list-text-preview,
         .table-container .remark-cell,
         .table-container .message-preview,
@@ -688,6 +692,23 @@
         .table-container .keyword-cell,
         .table-container .content-preview {
             display: inline-block;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+            word-break: normal;
+        }
+
+        /* Safety: if preview class is still on a <td>, keep table-cell layout */
+        .table-container td.list-text-preview,
+        .table-container td.remark-cell,
+        .table-container td.message-preview,
+        .table-container td.template-preview,
+        .table-container td.keyword-box,
+        .table-container td.keyword-cell,
+        .table-container td.content-preview {
+            display: table-cell;
             max-width: 160px;
             overflow: hidden;
             text-overflow: ellipsis;

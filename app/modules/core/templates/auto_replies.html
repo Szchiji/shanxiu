@@ -480,7 +480,7 @@
                         <span class="badge bg-info">多媒体{% if media_count > 1 %} ×{{ media_count }}{% endif %}</span>
                         {% endif %}
                     </td>
-                    <td class="text-truncate remark-cell" title="{{ (item.remark or '-')|e }}" style="max-width:100px;">{{ item.remark or '-' }}</td>
+                    <td><span class="remark-cell" title="{{ (item.remark or '-')|e }}">{{ item.remark or '-' }}</span></td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>

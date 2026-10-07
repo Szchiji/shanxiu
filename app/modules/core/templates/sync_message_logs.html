@@ -134,13 +134,14 @@
     }
 </style>
 
+{% set sync_settings_path = '/core/group/' ~ group.id ~ ('/sync_channel_messages' if group.type == 'channel' else '/sync_group_messages') %}
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-list me-2"></i>同步消息日志</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看消息同步的历史记录和状态</p>
         </div>
-        <a href="/core/group/{{ group.id }}/sync_group_messages" class="btn btn-settings">
+        <a href="{{ sync_settings_path }}" class="btn btn-settings">
             <i class="fa-solid fa-cog me-2"></i>同步设置
         </a>
     </div>
@@ -221,7 +222,7 @@
         <i class="fa-solid fa-inbox"></i>
         <h5>暂无同步记录</h5>
         <p>启用同步功能后，这里将显示同步的消息日志</p>
-        <a href="/core/group/{{ group.id }}/sync_group_messages" class="btn btn-settings mt-3">
+        <a href="{{ sync_settings_path }}" class="btn btn-settings mt-3">
             <i class="fa-solid fa-cog me-2"></i>配置同步设置
         </a>
     </div>

@@ -139,7 +139,7 @@ _BUILTIN_PLUGINS: List[dict] = [
     {
         'name': 'sync',
         'display_name': '消息同步',
-        'description': '跨群组消息同步',
+        'description': '跨群组消息同步、频道帖同步',
         'default_enabled': False,
     },
 ]

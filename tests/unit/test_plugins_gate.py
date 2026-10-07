@@ -1,7 +1,7 @@
 """
 tests/unit/test_plugins_gate.py
 -------------------------------
-Unit tests for plugin default-on / explicit-off behavior.
+Unit tests for plugin registry defaults / explicit on-off behavior.
 """
 
 import pytest
@@ -20,6 +20,11 @@ class TestIsPluginEnabledDefaultOn:
         assert is_plugin_enabled(99999, 'points') is True
         assert is_plugin_enabled(99999, 'lottery') is True
         assert is_plugin_enabled(99999, 'spam') is True
+
+    def test_sync_defaults_false_when_no_row(self, app_ctx):
+        from app.plugins import get_plugin_default_enabled, is_plugin_enabled
+        assert get_plugin_default_enabled('sync') is False
+        assert is_plugin_enabled(99999, 'sync') is False
 
     def test_explicit_disable(self, app_ctx):
         from app import db

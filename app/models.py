@@ -589,7 +589,7 @@ class SyncGroupMessages(db.Model):
     enabled = db.Column(db.Boolean, default=False)
     sync_media = db.Column(db.Boolean, default=True)  # 是否同步媒体文件
     sync_forwards = db.Column(db.Boolean, default=True)  # 是否同步转发消息
-    filter_keywords = db.Column(db.Text, default='[]')  # JSON array of keywords to filter
+    filter_keywords = db.Column(db.Text, default='[]')  # JSON blacklist: messages containing these are not synced
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -1119,7 +1119,8 @@ class GroupPluginSettings(db.Model):
     """每个群组可独立开启/关闭的插件设置。
 
     plugin_name 对应各功能模块的 PLUGIN_META['name']。
-    若某群组没有对应记录，则视为 enabled=True（向后兼容默认全开）。
+    若某群组没有对应记录，则使用插件注册表的 default_enabled
+    （多数插件默认开；sync 等显式 default_enabled=False 的默认关）。
     """
     __tablename__ = 'group_plugin_settings'
     id = db.Column(db.Integer, primary_key=True)
@@ -1138,12 +1139,16 @@ class GroupPluginSettings(db.Model):
     def is_enabled(cls, group_id: int, plugin_name: str) -> bool:
         """Return True if the plugin is enabled for *group_id*.
 
-        Defaults to True when no setting row exists (backward-compatible).
+        When no setting row exists, uses registry default_enabled
+        (True for unknown plugins).
         """
         setting = cls.query.filter_by(
             group_id=group_id, plugin_name=plugin_name
         ).first()
-        return setting.enabled if setting is not None else True
+        if setting is not None:
+            return setting.enabled
+        from app.plugins import get_plugin_default_enabled
+        return get_plugin_default_enabled(plugin_name)
 
     @classmethod
     def set_enabled(cls, db_session, group_id: int, plugin_name: str, enabled: bool):

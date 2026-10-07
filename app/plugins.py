@@ -60,10 +60,19 @@ def is_plugin_registered(plugin_name: str) -> bool:
 # DB helper (requires Flask app context)
 # ---------------------------------------------------------------------------
 
+def get_plugin_default_enabled(plugin_name: str) -> bool:
+    """Return registry ``default_enabled`` for *plugin_name* (True if unknown)."""
+    meta = _REGISTRY.get(plugin_name)
+    if meta is None:
+        return True
+    return bool(meta.get('default_enabled', True))
+
+
 def is_plugin_enabled(group_id: int, plugin_name: str) -> bool:
     """Return True if *plugin_name* is enabled for *group_id*.
 
-    Falls back to True when no setting row exists (backward-compatible).
+    When no setting row exists, uses the registry ``default_enabled``
+    (e.g. ``sync`` defaults to False; most others default to True).
     Requires an active Flask application context.
     """
     from app.models import GroupPluginSettings

@@ -3,6 +3,16 @@
 
 ## [Unreleased] - 2026-10-07
 
+### 🐛 问题修复 (Fixed)
+
+#### 跨群同步：媒体路径接通 + 插件默认关生效
+- **媒体同步死代码**：此前 `handle_sync_group_messages` 仅从纯文本 `on_message` 调用，且入口 `if not msg.text: return`；现由 `on_non_text_message` 在反垃圾通过后同样调用，`sync_media` 开启时可同步图/视频/文档等
+- **`sync` 插件 `default_enabled=False`**：无设置行时 `is_plugin_enabled` / `GroupPluginSettings.is_enabled` 改读注册表默认值（多数插件仍默认开，`sync` 默认关）
+- **防环**：跳过 `user.is_bot` 消息；跳过源群 chat_id == 目标群 ID
+- **关键词文案对齐黑名单**：模板说明改为「包含关键词则不同步」；命中时写 `SyncMessageLog.status=filtered`
+- 首次打开同步页时，媒体/转发勾选与模型默认（开）一致
+
+
 ### 🔧 优化改进 (Improved)
 
 #### 接线 commands.py 到生产注册（behavior-preserving）

@@ -8019,11 +8019,22 @@ async def handle_sync_group_messages(update: Update, context):
         return
     
     try:
+        from app.services.sync_service import (
+            is_same_source_target,
+            keyword_blocks_sync,
+            should_skip_bot_sender,
+            sync_filter_text,
+        )
+
         msg = update.effective_message
         chat = update.effective_chat
         user = update.effective_user
         
         if not chat or chat.type not in ['group', 'supergroup']:
+            return
+
+        # Anti-loop: do not re-sync bot messages (own bot / clones / other bots)
+        if should_skip_bot_sender(user):
             return
         
         with global_flask_app.app_context():
@@ -8043,32 +8054,43 @@ async def handle_sync_group_messages(update: Update, context):
             
             for sync_setting in sync_settings:
                 try:
-                    # Check keyword filters for text messages
-                    if msg.text and sync_setting.filter_keywords:
-                        try:
-                            keywords = json.loads(sync_setting.filter_keywords)
-                            if any(kw in msg.text for kw in keywords):
-                                continue  # Skip this message due to keyword filter
-                        except json.JSONDecodeError as e:
-                            print(f"Error parsing filter keywords JSON: {e}")
-                            # Continue with sync if filter is invalid
+                    # target_group_id is stored as string chat_id, not database id
+                    target_chat_id = sync_setting.target_group_id
+
+                    # Skip self-sync (source == target)
+                    if is_same_source_target(chat.id, target_chat_id):
+                        continue
+
+                    # Blacklist keyword filter (text or caption)
+                    filter_text = sync_filter_text(msg)
+                    if keyword_blocks_sync(filter_text, sync_setting.filter_keywords):
+                        log_entry = SyncMessageLog(
+                            source_group_id=group.id,
+                            target_group_id=target_chat_id,
+                            source_message_id=msg.message_id,
+                            user_id=user.id if user else None,
+                            username=user.username if user else None,
+                            message_type='text' if msg.text else 'media',
+                            content_preview=(filter_text[:100] if filter_text else None),
+                            status='filtered',
+                            synced_at=get_beijing_now()
+                        )
+                        db.session.add(log_entry)
+                        db.session.commit()
+                        continue
                     
                     # Skip forwards if not enabled (use hasattr for safety)
                     if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
                     
-                    # Sync the message to target group
-                    # target_group_id is stored as string chat_id, not database id
-                    target_chat_id = sync_setting.target_group_id
-                    
-                    # Prepare sender info (include bot messages)
+                    # Prepare sender info
                     if user:
                         sender_name = user.first_name
                         if user.last_name:
                             sender_name += f" {user.last_name}"
                         sender_prefix = f"[{sender_name}] "
                     else:
-                        sender_prefix = "[机器人] "
+                        sender_prefix = "[未知] "
                     
                     sent_msg = None
                     message_type = 'unknown'
@@ -10270,7 +10292,8 @@ async def run_bot(app_instance):
     # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
     _media_filter = (
         filters.Sticker.ALL | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
-        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE |
+        filters.POLL | filters.LOCATION | filters.CONTACT | filters.VENUE
     )
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
@@ -10415,7 +10438,8 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # 🆕 Non-text message handler (stickers, photos, videos, etc.) for spam protection
     _media_filter = (
         filters.Sticker.ALL | filters.PHOTO | filters.VIDEO | filters.ANIMATION |
-        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE
+        filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.VIDEO_NOTE |
+        filters.POLL | filters.LOCATION | filters.CONTACT | filters.VENUE
     )
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
@@ -12639,7 +12663,8 @@ def _sched_del(context, msg, delay: int):
 
 async def on_non_text_message(update: Update, context):
     """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
-    Applies spam-protection rules (block stickers/forwards) to media messages."""
+    Applies spam-protection rules (block stickers/forwards) to media messages,
+    then runs cross-group sync when enabled."""
     if not global_flask_app:
         return
     try:
@@ -12647,7 +12672,11 @@ async def on_non_text_message(update: Update, context):
         if not chat or chat.type not in ['group', 'supergroup']:
             return
         # Re-use check_spam_protection which already handles sticker/forward blocking
-        await check_spam_protection(update, context)
+        spam_detected = await check_spam_protection(update, context)
+        if spam_detected:
+            return
+        # Cross-group media sync (text path already calls this from on_message)
+        await handle_sync_group_messages(update, context)
     except Exception as e:
         print(f"Error in on_non_text_message: {e}")
 

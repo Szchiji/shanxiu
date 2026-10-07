@@ -952,6 +952,28 @@ class AdminActionLog(db.Model):
     group = db.relationship('BotGroup', backref='admin_action_logs', lazy=True)
 
 
+class GroupWarning(db.Model):
+    """群组用户警告记录（/warn 与关键词 action=warn 落库计次）
+
+    当前无后台「警告阈值 → 自动处罚」配置；仅持久化并在回复中展示累计次数。
+    自动升级处罚留待后续 UI/设置接入（见 warning_service.resolve_escalation）。
+    """
+    __tablename__ = 'group_warnings'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True, nullable=False)
+    user_id = db.Column(db.BigInteger, nullable=False, index=True)  # Telegram user ID
+    admin_id = db.Column(db.BigInteger, nullable=True)  # 发出警告的管理员；关键词自动警告可为 None
+    reason = db.Column(db.Text, nullable=True)
+    source = db.Column(db.String(20), default='command')  # command, keyword
+    created_at = db.Column(db.DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (
+        db.Index('ix_group_warnings_group_user', 'group_id', 'user_id'),
+    )
+
+    group = db.relationship('BotGroup', backref='group_warnings', lazy=True)
+
+
 class GroupMember(db.Model):
     """群内成员（从 Telegram 同步）"""
     __tablename__ = 'group_members'

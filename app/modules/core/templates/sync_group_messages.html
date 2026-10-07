@@ -69,7 +69,7 @@
 <ul>
     <li>将本群内的消息实时转发同步到另一个群组或频道。</li>
     <li>填写<strong>目标群组 ID</strong>（以负号开头的数字），机器人需要是目标群的管理员。</li>
-    <li>可选择同步所有消息或仅同步包含特定关键词的消息。</li>
+    <li>可按黑名单关键词跳过同步：包含所列关键词的消息不会转发到目标群。</li>
     <li>同步日志记录每条消息的转发状态，便于排查问题。</li>
 </ul>
 {% endcall %}
@@ -97,21 +97,21 @@
                 
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="sync_media" 
-                           {{ 'checked' if settings and settings.sync_media }}>
+                           {{ 'checked' if (settings.sync_media if settings else True) }}>
                     <label class="form-check-label">同步媒体文件</label>
                 </div>
                 
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="sync_forwards" 
-                           {{ 'checked' if settings and settings.sync_forwards }}>
+                           {{ 'checked' if (settings.sync_forwards if settings else True) }}>
                     <label class="form-check-label">同步转发消息</label>
                 </div>
                 
                 <div class="mb-0">
-                    <label class="form-label">过滤关键词（JSON数组）</label>
+                    <label class="form-label">黑名单关键词（JSON数组）</label>
                     <textarea class="form-control" id="filter_keywords" rows="3" 
                               placeholder='["广告", "垃圾"]'>{{ settings.filter_keywords if settings and settings.filter_keywords else '[]' }}</textarea>
-                    <small class="text-muted">包含这些关键词的消息将不会被同步</small>
+                    <small class="text-muted">黑名单：包含这些关键词的文本/说明文字将不会被同步</small>
                 </div>
             </div>
         </div>

@@ -3,6 +3,13 @@
 
 ## [Unreleased] - 2026-10-07
 
+### 🔧 优化改进 (Improved)
+
+#### 接线 commands.py 到生产注册（behavior-preserving）
+- `run_bot` / `setup_clone_handlers` 现注册 `app.bot.handlers.commands` 中的实现
+- 对齐线上行为：插件开关门禁、`_sched_del` 自动删回复、unmute 清除永久禁言标记、群管命令中「群主/管理员不可解除禁言」语义
+- 从 `routes.py` 移除上述 13 个命令的内联实现，消除死 `_hcmd_*` noqa 导入；其余命令仍留在 `routes.py`
+
 ### 🐛 问题修复 (Fixed)
 
 #### `/warn` 落库计次（Warning persistence）

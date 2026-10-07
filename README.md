@@ -20,11 +20,8 @@
 
 ## 📚 文档
 
-- **[详细设计方案](DESIGN_DOCUMENT.md)** - 完整的系统架构和技术设计文档
-- **[功能实现指南](BOT_FEATURES_IMPLEMENTATION.md)** - 机器人功能实现详解
-- **[实现总结](IMPLEMENTATION_SUMMARY_CN.md)** - 中文版实现总结
-- **[测试指南](TESTING_GUIDE.md)** - 测试步骤和验证方法
 - **[更新日志](CHANGELOG.md)** - 版本更新记录
+- 代码与 `app/` 模块、`tests/` 用例为当前实现的主要参考（独立设计/测试文档尚未入库）
 
 ## 🚀 快速开始
 
@@ -114,8 +111,6 @@ python run.py
 └─────────────────────────────────────────────┘
 ```
 
-详细架构设计请参阅 [设计文档](DESIGN_DOCUMENT.md#2-系统架构设计)。
-
 ## 🎯 主要功能模块
 
 ### 1. 用户管理
@@ -199,8 +194,6 @@ python run.py
 - **GroupLottery**: 群抽奖
 - **PointsAuction**: 积分竞拍
 
-详细数据库设计请参阅 [设计文档](DESIGN_DOCUMENT.md#4-数据库设计)。
-
 ## 🔐 安全特性
 
 - ✅ JWT身份认证 (7天有效期)
@@ -232,8 +225,6 @@ python run.py
 - **积分系统**: `/api/save_points_rule`, `/api/save_points_auction`
 - **社交功能**: `/api/save_group_lottery`, `/api/save_group_vote`
 
-详细API文档请参阅 [设计文档](DESIGN_DOCUMENT.md#5-api设计)。
-
 ## 🤖 Bot命令
 
 ### 用户命令
@@ -247,10 +238,8 @@ python run.py
 - `/kick @user` - 踢出用户
 - `/ban @user` - 封禁用户
 - `/mute @user` - 禁言用户
-- `/warn @user` - 警告用户
+- `/warn` - 警告用户（回复消息；落库计次）
 - `/pin` - 置顶消息
-
-详细命令文档请参阅 [设计文档](DESIGN_DOCUMENT.md#6-机器人命令与处理器设计)。
 
 ## 🎨 后台任务
 
@@ -274,8 +263,6 @@ python run.py
 - ✅ 异步并发处理
 - ✅ API速率控制
 - ✅ 连接池管理
-
-详细优化策略请参阅 [设计文档](DESIGN_DOCUMENT.md#10-性能优化)。
 
 ## 🔄 扩展性
 

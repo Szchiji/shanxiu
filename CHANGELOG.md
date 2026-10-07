@@ -6,12 +6,16 @@
 ### ✨ 新增功能 (Added)
 
 #### 频道帖同步 + 频道/群同步设置分离
-- **真实频道帖同步**：新增 `handle_sync_channel_posts`，通过 `filters.UpdateType.CHANNEL_POSTS` 接收频道发帖并拷贝到配置的目标群/频道（前缀为 `[频道名]`）；与群成员同步共用 `SyncGroupMessages` 配置表，互不抢入口
+- **真实频道帖同步**：新增 `handle_sync_channel_posts`，通过 `filters.UpdateType.CHANNEL_POSTS` 接收频道发帖并拷贝到配置的目标群/频道（原文同步、无 `[频道名]` 前缀）；与群成员同步共用 `SyncGroupMessages` 配置表，互不抢入口
 - **频道后台 UX**：侧栏「同步消息」改为「频道帖同步」页（`/sync_channel_messages`），不再挂误导性的「同步群消息」；群组侧栏仍用原同步设置。群/频道互相访问设置页会自动 redirect
 - **插件门禁**：频道保存「启用」时自动镜像 `sync` 插件开关（频道无插件页）；群组行为不变
 - 抽取 `_deliver_sync_copy` 供群/频道共用发送逻辑，避免媒体类型分叉漂移
 
 ### 🐛 问题修复 (Fixed)
+
+#### 频道帖同步去掉 `[频道名]` 前缀
+- 频道帖同步投递改为原文（`build_channel_sender_prefix` 返回空串）；群成员同步仍带 `[发送者]` 前缀
+- `_deliver_sync_copy` 在前缀为空时不再为 location/contact/venue 额外发空白消息
 
 #### 跨群同步：媒体路径接通 + 插件默认关生效
 - **媒体同步死代码**：此前 `handle_sync_group_messages` 仅从纯文本 `on_message` 调用，且入口 `if not msg.text: return`；现由 `on_non_text_message` 在反垃圾通过后同样调用，`sync_media` 开启时可同步图/视频/文档等

@@ -8085,7 +8085,8 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
         )
     elif msg.location:
         message_type = 'location'
-        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        if sender_prefix:
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
         sent_msg = await bot.send_location(
             chat_id=target_chat_id,
             latitude=msg.location.latitude,
@@ -8093,7 +8094,8 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
         )
     elif msg.contact:
         message_type = 'contact'
-        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        if sender_prefix:
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
         sent_msg = await bot.send_contact(
             chat_id=target_chat_id,
             phone_number=msg.contact.phone_number,
@@ -8102,7 +8104,8 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
         )
     elif msg.venue:
         message_type = 'venue'
-        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        if sender_prefix:
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
         sent_msg = await bot.send_venue(
             chat_id=target_chat_id,
             latitude=msg.venue.location.latitude,
@@ -8235,9 +8238,9 @@ async def handle_sync_group_messages(update: Update, context):
 async def handle_sync_channel_posts(update: Update, context):
     """Sync channel posts (channel_post) to configured target chats.
 
-    Separate from group-member sync: only runs for Telegram channel chats and
-    uses the channel title as the sender prefix. Reuses SyncGroupMessages rows
-    keyed by the channel BotGroup id.
+    Separate from group-member sync: only runs for Telegram channel chats.
+    Delivers content as-is (no ``[频道名]`` prefix). Reuses SyncGroupMessages
+    rows keyed by the channel BotGroup id.
     """
     if not global_flask_app:
         return

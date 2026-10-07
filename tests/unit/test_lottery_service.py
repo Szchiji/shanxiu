@@ -180,3 +180,34 @@ class TestRunLotteryDraw:
         participants = [(i, i) for i in range(1, 20)]
         winners = run_lottery_draw('message_rank', participants, top_n_winners=10)
         assert len(winners) == len(set(winners))
+
+
+# ---------------------------------------------------------------------------
+# random lottery type
+# ---------------------------------------------------------------------------
+
+class TestRandomLotteryType:
+    def test_valid_random(self):
+        ok, _ = validate_lottery_draw('random', [(1, 1)], top_n_winners=2)
+        assert ok is True
+
+    def test_random_allows_empty_participants(self):
+        ok, _ = validate_lottery_draw('random', [], top_n_winners=1)
+        assert ok is True
+
+    def test_random_zero_top_n_fails(self):
+        ok, reason = validate_lottery_draw('random', [(1, 1)], top_n_winners=0)
+        assert ok is False
+        assert reason
+
+    def test_run_random_from_participants(self):
+        participants = [(10, 1), (20, 1), (30, 1)]
+        winners = run_lottery_draw('random', participants, top_n_winners=2)
+        assert len(winners) == 2
+        assert all(w in (10, 20, 30) for w in winners)
+        assert len(set(winners)) == 2
+
+    def test_run_random_from_fallback(self):
+        winners = run_lottery_draw('random', [], top_n_winners=2, fallback_pool=[1, 2, 3, 4])
+        assert len(winners) == 2
+        assert all(w in (1, 2, 3, 4) for w in winners)

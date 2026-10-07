@@ -277,7 +277,7 @@ async def cmd_unpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """警告用户 /warn [原因]"""
+    """警告用户 /warn [原因] — 落库计次并在回复中展示累计次数"""
     chat = update.effective_chat
     user = update.effective_user
 
@@ -296,8 +296,40 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = update.message.reply_to_message.from_user
     reason = " ".join(context.args) if context.args else "违反群规"
 
+    warn_count = 0
+    if _state.global_flask_app:
+        def _persist():
+            from app.models import BotGroup
+            from app.services.warning_service import record_warning
+            with _state.global_flask_app.app_context():
+                group = BotGroup.query.filter_by(
+                    chat_id=str(chat.id),
+                    clone_id=context.application.bot_data.get('clone_id'),
+                ).first()
+                if not group:
+                    return 0
+                count = record_warning(
+                    group.id,
+                    target.id,
+                    admin_id=user.id,
+                    reason=reason,
+                    source='command',
+                )
+                log_admin_action(
+                    group.id, user.id, _full_name(user),
+                    'warn', target.id, _full_name(target),
+                    details=f"reason={reason}; count={count}",
+                )
+                return count
+        try:
+            warn_count = await asyncio.get_running_loop().run_in_executor(None, _persist)
+        except Exception as exc:
+            print(f"Error persisting warning: {exc}")
+            warn_count = 0
+
+    from app.services.warning_service import format_command_warn_reply
     await update.message.reply_text(
-        f"⚠️ 警告\n\n用户: {target.first_name}\n原因: {reason}\n\n请遵守群规，避免再次违规！"
+        format_command_warn_reply(target.first_name, reason, warn_count or 1)
     )
 
 

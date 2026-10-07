@@ -7,7 +7,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone,
                         ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelMessageStats, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
-                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupMember, InvitationRecord, PendingReferral,
+                        QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
 from app.services.points_service import clamp_award_to_daily_cap
@@ -8698,14 +8698,14 @@ async def run_lottery_draws(context):
                                     logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
 
                         elif lottery.lottery_type == 'random':
-                            # 🆕 Pure random draw from all registered group members
+                            # Pure random draw from all registered group members
+                            from app.services.lottery_service import pick_winners_random
                             top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                             all_users = GroupUser.query.filter_by(group_id=group.id).all()
                             logging.info(f"🎲 [抽奖任务] 随机抽奖: 共 {len(all_users)} 名群成员，抽取 {top_n} 名")
-                            if all_users:
-                                sample_size = min(top_n, len(all_users))
-                                chosen = random.sample(all_users, sample_size)
-                                winners = [u.tg_id for u in chosen]
+                            pool = [u.tg_id for u in all_users]
+                            winners = pick_winners_random(pool, top_n)
+                            if winners:
                                 logging.info(f"🎲 [抽奖任务] 随机抽中获奖者: {winners}")
                         
                         # Update lottery with winners
@@ -9039,7 +9039,30 @@ async def check_keyword_filter(update: Update, context):
                 await msg.delete()
                 return True
             elif matched_filter.action == 'warn':
-                await msg.reply_text(f"⚠️ 警告：消息包含禁止关键词")
+                warn_count = 0
+                def _persist_kw_warn():
+                    from app.services.warning_service import record_warning
+                    with global_flask_app.app_context():
+                        group = BotGroup.query.filter_by(
+                            chat_id=str(chat.id),
+                            clone_id=context.application.bot_data.get('clone_id'),
+                        ).first()
+                        if not group:
+                            return 0
+                        return record_warning(
+                            group.id,
+                            user.id,
+                            admin_id=None,
+                            reason='关键词过滤',
+                            source='keyword',
+                        )
+                try:
+                    warn_count = await asyncio.get_running_loop().run_in_executor(None, _persist_kw_warn)
+                except Exception as e:
+                    print(f"Error persisting keyword warning: {e}")
+                    warn_count = 0
+                from app.services.warning_service import format_keyword_warn_reply
+                await msg.reply_text(format_keyword_warn_reply(warn_count or 1))
             elif matched_filter.action == 'mute':
                 try:
                     print(f"🔄 [内容过滤] 准备禁言触发关键词的用户 {user.id} in group {chat.id}", flush=True)
@@ -11217,7 +11240,7 @@ async def cmd_unpin(update: Update, context):
         _sched_del(context, await update.message.reply_text(f"❌ 操作失败: {str(e)}"), 20)
 
 async def cmd_warn(update: Update, context):
-    """警告用户命令 /warn [原因]"""
+    """警告用户命令 /warn [原因] — 落库计次并在回复中展示累计次数"""
     chat = update.effective_chat
     user = update.effective_user
     
@@ -11241,8 +11264,45 @@ async def cmd_warn(update: Update, context):
     
     target_user = update.message.reply_to_message.from_user
     reason = " ".join(context.args) if context.args else "违反群规"
-    
-    warning_text = f"⚠️ 警告\n\n用户: {target_user.first_name}\n原因: {reason}\n\n请遵守群规，避免再次违规！"
+
+    warn_count = 0
+    if global_flask_app:
+        def _persist():
+            from app.services.warning_service import record_warning
+            with global_flask_app.app_context():
+                group = BotGroup.query.filter_by(
+                    chat_id=str(chat.id),
+                    clone_id=context.application.bot_data.get('clone_id'),
+                ).first()
+                if not group:
+                    return 0
+                count = record_warning(
+                    group.id,
+                    target_user.id,
+                    admin_id=user.id,
+                    reason=reason,
+                    source='command',
+                )
+                admin_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
+                target_name = target_user.first_name + (f" {target_user.last_name}" if target_user.last_name else "")
+                log_admin_action(
+                    group.id,
+                    user.id,
+                    admin_name,
+                    'warn',
+                    target_user.id,
+                    target_name,
+                    details=f"reason={reason}; count={count}",
+                )
+                return count
+        try:
+            warn_count = await asyncio.get_running_loop().run_in_executor(None, _persist)
+        except Exception as e:
+            print(f"Error persisting warning: {e}")
+            warn_count = 0
+
+    from app.services.warning_service import format_command_warn_reply
+    warning_text = format_command_warn_reply(target_user.first_name, reason, warn_count or 1)
     await update.message.reply_text(warning_text)
 
 

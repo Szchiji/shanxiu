@@ -161,6 +161,12 @@ def run_migrations():
         # forced_channel_subscription: Add reward fields (feat PR #256)
         "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_points INTEGER DEFAULT 0",
         "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_given_user_ids TEXT DEFAULT '[]'",
+        # group_warnings: /warn + keyword action=warn persistence (created via db.create_all; listed for clarity)
+        "CREATE TABLE IF NOT EXISTS group_warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL REFERENCES bot_groups(id), user_id BIGINT NOT NULL, admin_id BIGINT, reason TEXT, source VARCHAR(20) DEFAULT 'command', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_id ON group_warnings(group_id)",
+        "CREATE INDEX IF NOT EXISTS ix_group_warnings_user_id ON group_warnings(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_group_warnings_created_at ON group_warnings(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_user ON group_warnings(group_id, user_id)",
     ]
 
     with app.app_context():

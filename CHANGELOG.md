@@ -5,6 +5,21 @@
 
 ### 🐛 问题修复 (Fixed)
 
+#### `/warn` 落库计次（Warning persistence）
+- 此前 `/warn` 与关键词过滤 `action=warn` 仅发话，不落库、不计次
+- 新增 `group_warnings` 表与 `warning_service`；回复中展示累计警告次数
+- 同步写入 `admin_action_log`（`action_type=warn`，命令路径）
+- **未做自动升级处罚**：模型/后台暂无警告阈值配置；`resolve_escalation` 为占位，避免上线后默默 mute/kick/ban
+
+#### 备份页侧栏入口
+- `/core/group/<id>/backup` 路由已存在但侧栏无链接；现于「群组功能」中「插件开关」旁增加「备份还原」
+
+#### 抽奖 `random` 类型接入 lottery_service
+- `validate_lottery_draw` / `run_lottery_draw` 支持 `random`；定时开奖路径改用 `pick_winners_random`（行为与原先 `random.sample` 等价）
+
+#### README 失效文档链接
+- 移除指向仓库中不存在的 DESIGN/FEATURES/TESTING 等文档的链接，保留 CHANGELOG
+
 #### 插件开关真正生效（Plugin switches gate bot logic）
 - 后台「插件开关」此前只写库、不拦逻辑；现已在消息入口 / 命令 / 相关定时任务接入 `is_plugin_enabled`
 - 原则：无设置行或开关为开 → 行为与线上一致；仅在显式关闭时跳过对应功能（积分、抽奖、消息过滤、邀请、游戏、群管理、消息同步）

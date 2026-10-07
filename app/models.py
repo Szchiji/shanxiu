@@ -581,18 +581,26 @@ class GroupBottomButton(db.Model):
 
 
 class SyncGroupMessages(db.Model):
-    """同步配置：群成员消息或频道帖（由 chat 类型决定走哪条 handler）"""
+    """同步配置：群成员消息或频道帖（由 chat 类型决定走哪条 handler）。
+
+    One row per (source_group_id, target_group_id) — multi-target via multiple rows.
+    """
     __tablename__ = 'sync_group_messages'
     id = db.Column(db.Integer, primary_key=True)
     source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
-    target_group_id = db.Column(db.String(50), nullable=False)  # 目标群组ID
+    target_group_id = db.Column(db.String(50), nullable=False)  # Telegram chat_id of target
+    target_title = db.Column(db.String(255), nullable=True)  # Cached title from getChat
     enabled = db.Column(db.Boolean, default=False)
     sync_media = db.Column(db.Boolean, default=True)  # 是否同步媒体文件
     sync_forwards = db.Column(db.Boolean, default=True)  # 是否同步转发消息
     filter_keywords = db.Column(db.Text, default='[]')  # JSON blacklist: messages containing these are not synced
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
+
+    __table_args__ = (
+        db.UniqueConstraint('source_group_id', 'target_group_id', name='_sync_source_target_uc'),
+    )
+
     group = db.relationship('BotGroup', backref='sync_group_messages', lazy=True, foreign_keys=[source_group_id])
 
 

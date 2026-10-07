@@ -161,6 +161,9 @@ def run_migrations():
         # forced_channel_subscription: Add reward fields (feat PR #256)
         "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_points INTEGER DEFAULT 0",
         "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS reward_given_user_ids TEXT DEFAULT '[]'",
+        # sync_group_messages: multi-target title cache + unique (source, target)
+        "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS target_title VARCHAR(255)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS _sync_source_target_uc ON sync_group_messages(source_group_id, target_group_id)",
         # group_warnings: /warn + keyword action=warn persistence (created via db.create_all; listed for clarity)
         "CREATE TABLE IF NOT EXISTS group_warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL REFERENCES bot_groups(id), user_id BIGINT NOT NULL, admin_id BIGINT, reason TEXT, source VARCHAR(20) DEFAULT 'command', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_id ON group_warnings(group_id)",

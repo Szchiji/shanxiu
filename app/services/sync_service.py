@@ -78,3 +78,41 @@ def build_channel_sender_prefix(chat: Any) -> str:
     stability / call-site compatibility.
     """
     return ""
+
+
+def fetch_chat_info(bot_token: str, chat_id: str, timeout: float = 10.0) -> dict:
+    """Call Telegram getChat and return a normalized dict.
+
+    Returns ``{"ok": True, "id": str, "title": str, "type": str, "username": str|None}``
+    or ``{"ok": False, "error": str}``. Does not raise on Telegram API errors.
+    """
+    import requests as _requests
+
+    if not bot_token:
+        return {"ok": False, "error": "缺少 Bot Token"}
+    chat_id = (chat_id or "").strip()
+    if not chat_id:
+        return {"ok": False, "error": "目标 chat_id 为空"}
+
+    try:
+        resp = _requests.get(
+            f"https://api.telegram.org/bot{bot_token}/getChat",
+            params={"chat_id": chat_id},
+            timeout=timeout,
+        )
+        data = resp.json()
+    except Exception as e:
+        return {"ok": False, "error": f"网络错误: {e}"}
+
+    if not data.get("ok"):
+        return {"ok": False, "error": data.get("description") or "getChat 失败"}
+
+    chat = data.get("result") or {}
+    title = chat.get("title") or chat.get("username") or str(chat.get("id", chat_id))
+    return {
+        "ok": True,
+        "id": str(chat.get("id", chat_id)),
+        "title": title,
+        "type": chat.get("type") or "",
+        "username": chat.get("username"),
+    }

@@ -1416,6 +1416,18 @@ def page_group_bottom_button(gid):
     
     return render_template('group_bottom_button.html', page='group_bottom_button', group=group, buttons=buttons, buttons_json=buttons_json)
 
+def _sync_page_context(gid):
+    """Shared context for group/channel sync settings pages (multi-target list)."""
+    targets = (
+        SyncGroupMessages.query.filter_by(source_group_id=gid)
+        .order_by(SyncGroupMessages.id.asc())
+        .all()
+    )
+    # Shared options: first row if any, else sensible defaults for empty form
+    settings = targets[0] if targets else None
+    return targets, settings
+
+
 @core_bp.route('/group/<int:gid>/sync_group_messages')
 def page_sync_group_messages(gid):
     """同步群消息（仅群组；频道请用 sync_channel_messages）"""
@@ -1424,12 +1436,14 @@ def page_sync_group_messages(gid):
     group = get_group_or_403(gid)
     if getattr(group, 'type', None) == 'channel':
         return redirect(f'/core/group/{gid}/sync_channel_messages')
-    settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
-    if not settings:
-        # Don't create a new record here to avoid constraint violation
-        # Instead, pass None and let the template handle empty state
-        settings = None
-    return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
+    targets, settings = _sync_page_context(gid)
+    return render_template(
+        'sync_group_messages.html',
+        page='sync_group_messages',
+        group=group,
+        settings=settings,
+        targets=targets,
+    )
 
 
 @core_bp.route('/group/<int:gid>/sync_channel_messages')
@@ -1440,10 +1454,14 @@ def page_sync_channel_messages(gid):
     group = get_group_or_403(gid)
     if getattr(group, 'type', None) != 'channel':
         return redirect(f'/core/group/{gid}/sync_group_messages')
-    settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
-    if not settings:
-        settings = None
-    return render_template('sync_channel_messages.html', page='sync_channel_messages', group=group, settings=settings)
+    targets, settings = _sync_page_context(gid)
+    return render_template(
+        'sync_channel_messages.html',
+        page='sync_channel_messages',
+        group=group,
+        settings=settings,
+        targets=targets,
+    )
 
 
 @core_bp.route('/group/<int:gid>/sync_message_logs')
@@ -1798,9 +1816,14 @@ def api_toggle_plugin():
     if not is_plugin_registered(plugin_name):
         return jsonify({'success': False, 'error': f'未知插件: {plugin_name}'}), 400
 
-    from app.models import GroupPluginSettings
+    from app.models import GroupPluginSettings, SyncGroupMessages
     try:
         GroupPluginSettings.set_enabled(db.session, gid, plugin_name, bool(enabled))
+        # Keep sync settings.enabled aligned with the plugins page kill-switch
+        if plugin_name == 'sync':
+            for row in SyncGroupMessages.query.filter_by(source_group_id=int(gid)).all():
+                row.enabled = bool(enabled)
+            db.session.commit()
         return jsonify({'success': True, 'enabled': bool(enabled)})
     except Exception as exc:
         db.session.rollback()
@@ -5307,9 +5330,37 @@ def api_push_group_bottom_buttons():
         print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
         return jsonify({'status':'error','msg':str(e)})
 
+def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords):
+    """Apply shared sync toggles to every target row for a source."""
+    for row in rows:
+        row.enabled = enabled
+        row.sync_media = sync_media
+        row.sync_forwards = sync_forwards
+        row.filter_keywords = filter_keywords
+
+
+def _fetch_and_set_target_title(group, row, chat_id=None):
+    """Best-effort getChat → target_title. Returns (ok, title_or_error)."""
+    from app.services.sync_service import fetch_chat_info
+    token = _resolve_bot_token_for_group(group)
+    info = fetch_chat_info(token, chat_id or row.target_group_id)
+    if info.get('ok'):
+        # Prefer canonical id from Telegram when available
+        if info.get('id'):
+            row.target_group_id = str(info['id'])
+        row.target_title = info.get('title') or row.target_title
+        return True, row.target_title
+    return False, info.get('error') or 'getChat 失败'
+
+
 @core_bp.route('/api/save_sync_group_messages', methods=['POST'])
 def api_save_sync_group_messages():
-    """保存同步群消息设置"""
+    """Save shared sync options for all targets of a source group.
+
+    Optional ``target_group_id`` upserts that one target (legacy single-target
+    clients / tests). Multi-target UIs should use add/delete target APIs and
+    call this endpoint only for enabled/media/forwards/keywords.
+    """
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
     if not d or 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
@@ -5319,41 +5370,181 @@ def api_save_sync_group_messages():
     err = _api_check_group_access(group)
     if err: return err
 
-    # Validate target_group_id is provided
-    target_group_id = d.get('target_group_id', '').strip()
-    if not target_group_id:
-        return jsonify({'status':'error','msg':'目标群组ID不能为空'})
-    
-    try:
-        settings = SyncGroupMessages.query.filter_by(source_group_id=d['group_id']).first()
-        if not settings:
-            # Explicitly set all fields when creating new record to ensure consistent behavior
-            settings = SyncGroupMessages(
-                source_group_id=d['group_id'],
-                target_group_id=target_group_id,
-                enabled=d.get('enabled', False),
-                sync_media=d.get('sync_media', True),
-                sync_forwards=d.get('sync_forwards', True),
-                filter_keywords=d.get('filter_keywords', '[]')
-            )
-            db.session.add(settings)
-        else:
-            settings.target_group_id = target_group_id
-            settings.enabled = d.get('enabled', False)
-            settings.sync_media = d.get('sync_media', True)
-            settings.sync_forwards = d.get('sync_forwards', True)
-            settings.filter_keywords = d.get('filter_keywords', '[]')
+    enabled = bool(d.get('enabled', False))
+    sync_media = bool(d.get('sync_media', True))
+    sync_forwards = bool(d.get('sync_forwards', True))
+    filter_keywords = d.get('filter_keywords', '[]')
+    if filter_keywords is None:
+        filter_keywords = '[]'
+    target_group_id = (d.get('target_group_id') or '').strip()
 
+    try:
+        rows = SyncGroupMessages.query.filter_by(source_group_id=group.id).all()
+
+        if target_group_id:
+            existing = SyncGroupMessages.query.filter_by(
+                source_group_id=group.id, target_group_id=target_group_id
+            ).first()
+            if not existing:
+                # Legacy single-target UI: if exactly one row, retarget it
+                if len(rows) == 1 and not d.get('add_target'):
+                    existing = rows[0]
+                    existing.target_group_id = target_group_id
+                else:
+                    existing = SyncGroupMessages(
+                        source_group_id=group.id,
+                        target_group_id=target_group_id,
+                    )
+                    db.session.add(existing)
+                    rows = list(rows) + [existing]
+            _fetch_and_set_target_title(group, existing, target_group_id)
+
+        if not rows and not target_group_id:
+            # Allow saving "enabled" with zero targets (plugin mirror only)
+            from app.models import GroupPluginSettings
+            GroupPluginSettings.set_enabled(db.session, group.id, 'sync', enabled)
+            return jsonify({'status': 'ok', 'targets': 0, 'msg': '已保存开关；请添加至少一个目标'})
+
+        _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords)
         db.session.commit()
 
-        # Channel admin UI has no plugin page: mirror enabled → sync plugin gate
-        if getattr(group, 'type', None) == 'channel':
-            from app.models import GroupPluginSettings
-            GroupPluginSettings.set_enabled(
-                db.session, group.id, 'sync', bool(settings.enabled)
-            )
+        from app.models import GroupPluginSettings
+        GroupPluginSettings.set_enabled(db.session, group.id, 'sync', enabled)
 
-        return jsonify({'status':'ok'})
+        return jsonify({
+            'status': 'ok',
+            'targets': SyncGroupMessages.query.filter_by(source_group_id=group.id).count(),
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/add_sync_target', methods=['POST'])
+def api_add_sync_target():
+    """Add a sync target chat_id for a source group; fetches title via getChat."""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json or {}
+    if 'group_id' not in d: return jsonify({'status':'error','msg':'Missing group_id'})
+
+    group = BotGroup.query.get(d['group_id'])
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    target_group_id = (d.get('target_group_id') or '').strip()
+    if not target_group_id:
+        return jsonify({'status':'error','msg':'目标群组/频道 ID 不能为空'})
+
+    try:
+        if SyncGroupMessages.query.filter_by(
+            source_group_id=group.id, target_group_id=target_group_id
+        ).first():
+            return jsonify({'status':'error','msg':'该目标已存在'})
+
+        # Copy shared options from an existing row if any
+        sibling = SyncGroupMessages.query.filter_by(source_group_id=group.id).first()
+        enabled = bool(d['enabled']) if 'enabled' in d else (bool(sibling.enabled) if sibling else False)
+        sync_media = bool(d['sync_media']) if 'sync_media' in d else (bool(sibling.sync_media) if sibling else True)
+        sync_forwards = bool(d['sync_forwards']) if 'sync_forwards' in d else (bool(sibling.sync_forwards) if sibling else True)
+        filter_keywords = d.get('filter_keywords')
+        if filter_keywords is None:
+            filter_keywords = sibling.filter_keywords if sibling else '[]'
+
+        row = SyncGroupMessages(
+            source_group_id=group.id,
+            target_group_id=target_group_id,
+            enabled=enabled,
+            sync_media=sync_media,
+            sync_forwards=sync_forwards,
+            filter_keywords=filter_keywords or '[]',
+        )
+        ok, title_or_err = _fetch_and_set_target_title(group, row, target_group_id)
+        # Still save even if getChat fails (bot may not be in target yet)
+        if not ok:
+            row.target_title = None
+        db.session.add(row)
+        db.session.commit()
+
+        from app.models import GroupPluginSettings
+        if enabled:
+            GroupPluginSettings.set_enabled(db.session, group.id, 'sync', True)
+
+        return jsonify({
+            'status': 'ok',
+            'id': row.id,
+            'target_group_id': row.target_group_id,
+            'target_title': row.target_title,
+            'title_ok': ok,
+            'title_error': None if ok else title_or_err,
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/delete_sync_target', methods=['POST'])
+def api_delete_sync_target():
+    """Remove one sync target row by id (must belong to group_id)."""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json or {}
+    gid = d.get('group_id')
+    tid = d.get('id')
+    if not gid or not tid:
+        return jsonify({'status':'error','msg':'Missing group_id or id'})
+
+    group = BotGroup.query.get(gid)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        row = SyncGroupMessages.query.filter_by(id=int(tid), source_group_id=int(gid)).first()
+        if not row:
+            return jsonify({'status':'error','msg':'目标不存在'})
+        db.session.delete(row)
+        db.session.commit()
+
+        remaining = SyncGroupMessages.query.filter_by(source_group_id=group.id).count()
+        if remaining == 0:
+            from app.models import GroupPluginSettings
+            GroupPluginSettings.set_enabled(db.session, group.id, 'sync', False)
+
+        return jsonify({'status': 'ok', 'targets': remaining})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status':'error','msg':str(e)})
+
+
+@core_bp.route('/api/refresh_sync_target_title', methods=['POST'])
+def api_refresh_sync_target_title():
+    """Re-fetch target title via Telegram getChat."""
+    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
+    d = request.json or {}
+    gid = d.get('group_id')
+    tid = d.get('id')
+    if not gid or not tid:
+        return jsonify({'status':'error','msg':'Missing group_id or id'})
+
+    group = BotGroup.query.get(gid)
+    if not group: return jsonify({'status':'error','msg':'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+
+    try:
+        row = SyncGroupMessages.query.filter_by(id=int(tid), source_group_id=int(gid)).first()
+        if not row:
+            return jsonify({'status':'error','msg':'目标不存在'})
+        ok, title_or_err = _fetch_and_set_target_title(group, row)
+        if not ok:
+            return jsonify({'status':'error','msg': title_or_err})
+        db.session.commit()
+        return jsonify({
+            'status': 'ok',
+            'id': row.id,
+            'target_group_id': row.target_group_id,
+            'target_title': row.target_title,
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
@@ -8146,19 +8337,19 @@ async def handle_sync_group_messages(update: Update, context):
             return
 
         with global_flask_app.app_context():
-            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
+            clone_id = context.application.bot_data.get('clone_id')
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=clone_id).first()
             if not group:
+                print(f"[sync] skip group chat {chat.id}: no BotGroup for clone_id={clone_id}")
                 return
 
-            # Plugin gate: sync defaults to off in registry; only run when enabled
-            if not is_plugin_enabled(group.id, 'sync'):
-                return
-
-            # Find sync settings where this group is the source
+            # Single gate: SyncGroupMessages.enabled (save/toggle keep plugin row mirrored)
             sync_settings = SyncGroupMessages.query.filter_by(
                 source_group_id=group.id,
                 enabled=True
             ).all()
+            if not sync_settings:
+                return
 
             for sync_setting in sync_settings:
                 try:
@@ -8327,24 +8518,25 @@ async def handle_sync_channel_posts(update: Update, context):
             return
 
         with global_flask_app.app_context():
+            clone_id = context.application.bot_data.get('clone_id')
             group = BotGroup.query.filter_by(
                 chat_id=str(chat.id),
-                clone_id=context.application.bot_data.get('clone_id'),
+                clone_id=clone_id,
             ).first()
             if not group:
+                print(f"[sync] skip channel {chat.id}: no BotGroup for clone_id={clone_id}")
                 return
 
-            # Channel auto-reply is independent of the sync plugin gate
+            # Channel auto-reply is independent of sync settings
             await _maybe_send_channel_auto_reply(context.bot, msg, chat, group, context)
 
-            # Plugin gate (channel save API mirrors enabled → sync plugin)
-            if not is_plugin_enabled(group.id, 'sync'):
-                return
-
+            # Single gate: SyncGroupMessages.enabled
             sync_settings = SyncGroupMessages.query.filter_by(
                 source_group_id=group.id,
                 enabled=True,
             ).all()
+            if not sync_settings:
+                return
 
             sender_prefix = build_channel_sender_prefix(chat)
 
@@ -10531,12 +10723,17 @@ async def run_bot(app_instance):
     await _register_bot_commands(app.bot)
 
     # 根据环境变量自动判断运行模式
+    # Explicit allowed_updates so channel_post (频道帖同步) is never dropped.
+    # Omitting allowed_updates keeps Telegram's *previous* webhook setting, which
+    # may exclude channel_post after an older deploy.
+    _all_allowed = [t.value for t in Update.ALL_TYPES]
+
     domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
     if domain:
         # Webhook 模式：注册 Webhook 地址到 Telegram
         webhook_url = f"https://{domain}/core/webhook"
         try:
-            await app.bot.set_webhook(url=webhook_url)
+            await app.bot.set_webhook(url=webhook_url, allowed_updates=_all_allowed)
             print(f"✅ Bot 初始化完成 (Webhook 模式)，Webhook URL: {webhook_url}", flush=True)
         except Exception as e:
             print(f"❌ Webhook 设置失败: {e}", flush=True)
@@ -10545,7 +10742,10 @@ async def run_bot(app_instance):
         # Polling 模式：开始轮询拉取消息
         print("✅ Bot 初始化完成 (Polling 模式)，开始轮询...", flush=True)
         try:
-            await app.updater.start_polling(drop_pending_updates=True)
+            await app.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=_all_allowed,
+            )
             print("✅ Polling 已启动", flush=True)
         except Exception as e:
             print(f"❌ Polling 启动失败: {e}", flush=True)

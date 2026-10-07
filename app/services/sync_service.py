@@ -1,8 +1,8 @@
 """
-Helpers for cross-group message sync.
+Helpers for cross-group / channel message sync.
 
-Pure functions used by handle_sync_group_messages so unit tests can cover
-keyword filtering and anti-loop checks without a live Telegram bot.
+Pure functions used by handle_sync_group_messages and handle_sync_channel_posts
+so unit tests can cover keyword filtering and anti-loop checks without a live bot.
 """
 
 from __future__ import annotations
@@ -48,3 +48,29 @@ def sync_filter_text(msg: Any) -> Optional[str]:
     if text:
         return text
     return getattr(msg, "caption", None) or None
+
+
+def is_group_chat(chat: Any) -> bool:
+    """True for Telegram group / supergroup chats."""
+    return bool(chat is not None and getattr(chat, "type", None) in ("group", "supergroup"))
+
+
+def is_channel_chat(chat: Any) -> bool:
+    """True for Telegram channel chats (channel_post source)."""
+    return bool(chat is not None and getattr(chat, "type", None) == "channel")
+
+
+def build_group_sender_prefix(user: Any) -> str:
+    """Prefix for group member sync, e.g. ``[Alice] ``."""
+    if user is None:
+        return "[未知] "
+    first = getattr(user, "first_name", None) or ""
+    last = getattr(user, "last_name", None) or ""
+    name = f"{first} {last}".strip() or "未知"
+    return f"[{name}] "
+
+
+def build_channel_sender_prefix(chat: Any) -> str:
+    """Prefix for channel post sync, e.g. ``[频道名] ``."""
+    title = (getattr(chat, "title", None) or "").strip() if chat is not None else ""
+    return f"[{title}] " if title else "[频道] "

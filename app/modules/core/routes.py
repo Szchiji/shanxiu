@@ -1418,16 +1418,32 @@ def page_group_bottom_button(gid):
 
 @core_bp.route('/group/<int:gid>/sync_group_messages')
 def page_sync_group_messages(gid):
-    """同步群消息"""
+    """同步群消息（仅群组；频道请用 sync_channel_messages）"""
     if not session.get('logged_in'): return redirect('/core')
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
+    if getattr(group, 'type', None) == 'channel':
+        return redirect(f'/core/group/{gid}/sync_channel_messages')
     settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
     if not settings:
         # Don't create a new record here to avoid constraint violation
         # Instead, pass None and let the template handle empty state
         settings = None
     return render_template('sync_group_messages.html', page='sync_group_messages', group=group, settings=settings)
+
+
+@core_bp.route('/group/<int:gid>/sync_channel_messages')
+def page_sync_channel_messages(gid):
+    """同步频道帖子（仅频道；群组请用 sync_group_messages）"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    if getattr(group, 'type', None) != 'channel':
+        return redirect(f'/core/group/{gid}/sync_group_messages')
+    settings = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
+    if not settings:
+        settings = None
+    return render_template('sync_channel_messages.html', page='sync_channel_messages', group=group, settings=settings)
 
 
 @core_bp.route('/group/<int:gid>/sync_message_logs')
@@ -5327,8 +5343,16 @@ def api_save_sync_group_messages():
             settings.sync_media = d.get('sync_media', True)
             settings.sync_forwards = d.get('sync_forwards', True)
             settings.filter_keywords = d.get('filter_keywords', '[]')
-        
+
         db.session.commit()
+
+        # Channel admin UI has no plugin page: mirror enabled → sync plugin gate
+        if getattr(group, 'type', None) == 'channel':
+            from app.models import GroupPluginSettings
+            GroupPluginSettings.set_enabled(
+                db.session, group.id, 'sync', bool(settings.enabled)
+            )
+
         return jsonify({'status':'ok'})
     except Exception as e:
         db.session.rollback()
@@ -8013,13 +8037,94 @@ async def update_group_member(update: Update, context):
     except Exception as e:
         print(f"Error in update_group_member: {e}")
 
+async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool):
+    """Copy *msg* to *target_chat_id* with *sender_prefix*. Returns (sent_msg, message_type) or (None, type/skip)."""
+    sent_msg = None
+    message_type = 'unknown'
+
+    if msg.text:
+        message_type = 'text'
+        synced_text = f"{sender_prefix}{msg.text}"
+        sent_msg = await bot.send_message(chat_id=target_chat_id, text=synced_text)
+    elif msg.photo and sync_media:
+        message_type = 'photo'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_photo(chat_id=target_chat_id, photo=msg.photo[-1].file_id, caption=caption)
+    elif msg.video and sync_media:
+        message_type = 'video'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_video(chat_id=target_chat_id, video=msg.video.file_id, caption=caption)
+    elif msg.document and sync_media:
+        message_type = 'document'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_document(chat_id=target_chat_id, document=msg.document.file_id, caption=caption)
+    elif msg.audio and sync_media:
+        message_type = 'audio'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_audio(chat_id=target_chat_id, audio=msg.audio.file_id, caption=caption)
+    elif msg.voice and sync_media:
+        message_type = 'voice'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_voice(chat_id=target_chat_id, voice=msg.voice.file_id, caption=caption)
+    elif msg.video_note and sync_media:
+        message_type = 'video_note'
+        sent_msg = await bot.send_video_note(chat_id=target_chat_id, video_note=msg.video_note.file_id)
+    elif msg.sticker and sync_media:
+        message_type = 'sticker'
+        sent_msg = await bot.send_sticker(chat_id=target_chat_id, sticker=msg.sticker.file_id)
+    elif msg.animation and sync_media:
+        message_type = 'animation'
+        caption = f"{sender_prefix}{msg.caption or ''}"
+        sent_msg = await bot.send_animation(chat_id=target_chat_id, animation=msg.animation.file_id, caption=caption)
+    elif msg.poll:
+        message_type = 'poll'
+        sent_msg = await bot.forward_message(
+            chat_id=target_chat_id,
+            from_chat_id=msg.chat_id if hasattr(msg, 'chat_id') else msg.chat.id,
+            message_id=msg.message_id,
+        )
+    elif msg.location:
+        message_type = 'location'
+        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        sent_msg = await bot.send_location(
+            chat_id=target_chat_id,
+            latitude=msg.location.latitude,
+            longitude=msg.location.longitude,
+        )
+    elif msg.contact:
+        message_type = 'contact'
+        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        sent_msg = await bot.send_contact(
+            chat_id=target_chat_id,
+            phone_number=msg.contact.phone_number,
+            first_name=msg.contact.first_name,
+            last_name=msg.contact.last_name,
+        )
+    elif msg.venue:
+        message_type = 'venue'
+        await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+        sent_msg = await bot.send_venue(
+            chat_id=target_chat_id,
+            latitude=msg.venue.location.latitude,
+            longitude=msg.venue.location.longitude,
+            title=msg.venue.title,
+            address=msg.venue.address,
+        )
+    else:
+        return None, None
+
+    return sent_msg, message_type
+
+
 async def handle_sync_group_messages(update: Update, context):
     """Sync messages from source group to target groups - Enhanced to sync all message types"""
     if not global_flask_app or not update.effective_message:
         return
-    
+
     try:
         from app.services.sync_service import (
+            build_group_sender_prefix,
+            is_group_chat,
             is_same_source_target,
             keyword_blocks_sync,
             should_skip_bot_sender,
@@ -8029,14 +8134,14 @@ async def handle_sync_group_messages(update: Update, context):
         msg = update.effective_message
         chat = update.effective_chat
         user = update.effective_user
-        
-        if not chat or chat.type not in ['group', 'supergroup']:
+
+        if not is_group_chat(chat):
             return
 
         # Anti-loop: do not re-sync bot messages (own bot / clones / other bots)
         if should_skip_bot_sender(user):
             return
-        
+
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
@@ -8045,13 +8150,13 @@ async def handle_sync_group_messages(update: Update, context):
             # Plugin gate: sync defaults to off in registry; only run when enabled
             if not is_plugin_enabled(group.id, 'sync'):
                 return
-            
+
             # Find sync settings where this group is the source
             sync_settings = SyncGroupMessages.query.filter_by(
                 source_group_id=group.id,
                 enabled=True
             ).all()
-            
+
             for sync_setting in sync_settings:
                 try:
                     # target_group_id is stored as string chat_id, not database id
@@ -8078,142 +8183,18 @@ async def handle_sync_group_messages(update: Update, context):
                         db.session.add(log_entry)
                         db.session.commit()
                         continue
-                    
+
                     # Skip forwards if not enabled (use hasattr for safety)
                     if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
-                    
-                    # Prepare sender info
-                    if user:
-                        sender_name = user.first_name
-                        if user.last_name:
-                            sender_name += f" {user.last_name}"
-                        sender_prefix = f"[{sender_name}] "
-                    else:
-                        sender_prefix = "[未知] "
-                    
-                    sent_msg = None
-                    message_type = 'unknown'
-                    
-                    # Handle different message types
-                    if msg.text:
-                        message_type = 'text'
-                        synced_text = f"{sender_prefix}{msg.text}"
-                        sent_msg = await context.bot.send_message(
-                            chat_id=target_chat_id,
-                            text=synced_text
-                        )
-                    elif msg.photo and sync_setting.sync_media:
-                        message_type = 'photo'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_photo(
-                            chat_id=target_chat_id,
-                            photo=msg.photo[-1].file_id,
-                            caption=caption
-                        )
-                    elif msg.video and sync_setting.sync_media:
-                        message_type = 'video'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_video(
-                            chat_id=target_chat_id,
-                            video=msg.video.file_id,
-                            caption=caption
-                        )
-                    elif msg.document and sync_setting.sync_media:
-                        message_type = 'document'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_document(
-                            chat_id=target_chat_id,
-                            document=msg.document.file_id,
-                            caption=caption
-                        )
-                    elif msg.audio and sync_setting.sync_media:
-                        message_type = 'audio'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_audio(
-                            chat_id=target_chat_id,
-                            audio=msg.audio.file_id,
-                            caption=caption
-                        )
-                    elif msg.voice and sync_setting.sync_media:
-                        message_type = 'voice'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_voice(
-                            chat_id=target_chat_id,
-                            voice=msg.voice.file_id,
-                            caption=caption
-                        )
-                    elif msg.video_note and sync_setting.sync_media:
-                        message_type = 'video_note'
-                        sent_msg = await context.bot.send_video_note(
-                            chat_id=target_chat_id,
-                            video_note=msg.video_note.file_id
-                        )
-                    elif msg.sticker and sync_setting.sync_media:
-                        message_type = 'sticker'
-                        sent_msg = await context.bot.send_sticker(
-                            chat_id=target_chat_id,
-                            sticker=msg.sticker.file_id
-                        )
-                    elif msg.animation and sync_setting.sync_media:
-                        message_type = 'animation'
-                        caption = f"{sender_prefix}{msg.caption or ''}"
-                        sent_msg = await context.bot.send_animation(
-                            chat_id=target_chat_id,
-                            animation=msg.animation.file_id,
-                            caption=caption
-                        )
-                    elif msg.poll:
-                        message_type = 'poll'
-                        # Forward poll as-is (can't modify poll sender)
-                        sent_msg = await context.bot.forward_message(
-                            chat_id=target_chat_id,
-                            from_chat_id=chat.id,
-                            message_id=msg.message_id
-                        )
-                    elif msg.location:
-                        message_type = 'location'
-                        # Send location with sender prefix as a separate message
-                        await context.bot.send_message(
-                            chat_id=target_chat_id,
-                            text=sender_prefix
-                        )
-                        sent_msg = await context.bot.send_location(
-                            chat_id=target_chat_id,
-                            latitude=msg.location.latitude,
-                            longitude=msg.location.longitude
-                        )
-                    elif msg.contact:
-                        message_type = 'contact'
-                        # Send contact with sender prefix as a separate message
-                        await context.bot.send_message(
-                            chat_id=target_chat_id,
-                            text=sender_prefix
-                        )
-                        sent_msg = await context.bot.send_contact(
-                            chat_id=target_chat_id,
-                            phone_number=msg.contact.phone_number,
-                            first_name=msg.contact.first_name,
-                            last_name=msg.contact.last_name
-                        )
-                    elif msg.venue:
-                        message_type = 'venue'
-                        # Send venue with sender prefix as a separate message
-                        await context.bot.send_message(
-                            chat_id=target_chat_id,
-                            text=sender_prefix
-                        )
-                        sent_msg = await context.bot.send_venue(
-                            chat_id=target_chat_id,
-                            latitude=msg.venue.location.latitude,
-                            longitude=msg.venue.location.longitude,
-                            title=msg.venue.title,
-                            address=msg.venue.address
-                        )
-                    else:
-                        # Unknown or unsupported message type, skip
+
+                    sender_prefix = build_group_sender_prefix(user)
+                    sent_msg, message_type = await _deliver_sync_copy(
+                        context.bot, target_chat_id, msg, sender_prefix, bool(sync_setting.sync_media)
+                    )
+                    if message_type is None:
                         continue
-                    
+
                     # Log the sync if message was sent
                     if sent_msg:
                         log_entry = SyncMessageLog(
@@ -8230,7 +8211,7 @@ async def handle_sync_group_messages(update: Update, context):
                         )
                         db.session.add(log_entry)
                         db.session.commit()
-                    
+
                 except Exception as e:
                     print(f"Error syncing message to {sync_setting.target_group_id}: {e}")
                     # Log the failure
@@ -8246,9 +8227,129 @@ async def handle_sync_group_messages(update: Update, context):
                     )
                     db.session.add(log_entry)
                     db.session.commit()
-                    
+
     except Exception as e:
         print(f"Error in handle_sync_group_messages: {e}")
+
+
+async def handle_sync_channel_posts(update: Update, context):
+    """Sync channel posts (channel_post) to configured target chats.
+
+    Separate from group-member sync: only runs for Telegram channel chats and
+    uses the channel title as the sender prefix. Reuses SyncGroupMessages rows
+    keyed by the channel BotGroup id.
+    """
+    if not global_flask_app:
+        return
+
+    try:
+        from app.services.sync_service import (
+            build_channel_sender_prefix,
+            is_channel_chat,
+            is_same_source_target,
+            keyword_blocks_sync,
+            should_skip_bot_sender,
+            sync_filter_text,
+        )
+
+        # Prefer channel_post; effective_message also covers it
+        msg = update.channel_post or update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+
+        if not msg or not is_channel_chat(chat):
+            return
+
+        # Anti-loop if a bot account authored the post (signatures / linked bots)
+        if should_skip_bot_sender(user):
+            return
+
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(
+                chat_id=str(chat.id),
+                clone_id=context.application.bot_data.get('clone_id'),
+            ).first()
+            if not group:
+                return
+
+            # Plugin gate (channel save API mirrors enabled → sync plugin)
+            if not is_plugin_enabled(group.id, 'sync'):
+                return
+
+            sync_settings = SyncGroupMessages.query.filter_by(
+                source_group_id=group.id,
+                enabled=True,
+            ).all()
+
+            sender_prefix = build_channel_sender_prefix(chat)
+
+            for sync_setting in sync_settings:
+                try:
+                    target_chat_id = sync_setting.target_group_id
+
+                    if is_same_source_target(chat.id, target_chat_id):
+                        continue
+
+                    filter_text = sync_filter_text(msg)
+                    if keyword_blocks_sync(filter_text, sync_setting.filter_keywords):
+                        log_entry = SyncMessageLog(
+                            source_group_id=group.id,
+                            target_group_id=target_chat_id,
+                            source_message_id=msg.message_id,
+                            user_id=user.id if user else None,
+                            username=user.username if user else (chat.username if getattr(chat, 'username', None) else None),
+                            message_type='text' if msg.text else 'media',
+                            content_preview=(filter_text[:100] if filter_text else None),
+                            status='filtered',
+                            synced_at=get_beijing_now(),
+                        )
+                        db.session.add(log_entry)
+                        db.session.commit()
+                        continue
+
+                    if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
+                        continue
+
+                    sent_msg, message_type = await _deliver_sync_copy(
+                        context.bot, target_chat_id, msg, sender_prefix, bool(sync_setting.sync_media)
+                    )
+                    if message_type is None:
+                        continue
+
+                    if sent_msg:
+                        log_entry = SyncMessageLog(
+                            source_group_id=group.id,
+                            target_group_id=target_chat_id,
+                            source_message_id=msg.message_id,
+                            target_message_id=sent_msg.message_id,
+                            user_id=user.id if user else None,
+                            username=user.username if user else (chat.username if getattr(chat, 'username', None) else None),
+                            message_type=message_type,
+                            content_preview=msg.text[:100] if msg.text else (msg.caption[:100] if msg.caption else None),
+                            status='success',
+                            synced_at=get_beijing_now(),
+                        )
+                        db.session.add(log_entry)
+                        db.session.commit()
+
+                except Exception as e:
+                    print(f"Error syncing channel post to {sync_setting.target_group_id}: {e}")
+                    log_entry = SyncMessageLog(
+                        source_group_id=group.id,
+                        target_group_id=sync_setting.target_group_id,
+                        source_message_id=msg.message_id,
+                        user_id=user.id if user else None,
+                        username=user.username if user else None,
+                        status='failed',
+                        error_message=str(e),
+                        synced_at=get_beijing_now(),
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+
+    except Exception as e:
+        print(f"Error in handle_sync_channel_posts: {e}")
+
 
 async def handle_auto_delete_messages(update: Update, context):
     """Auto-delete system messages based on settings"""
@@ -10277,6 +10378,9 @@ async def run_bot(app_instance):
     # 🆕 Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
 
+    # Channel post sync (channel_post updates — not group-member messages)
+    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
+
     # Report module handlers – registered BEFORE the general text handler so that
     # report_conv_handler can intercept text replies in STEP_QUESTION state before
     # on_message consumes them.  audit_callback_handler must also precede the
@@ -10419,6 +10523,9 @@ def setup_clone_handlers(app, flask_app, clone_id):
     
     # Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+
+    # Channel post sync (channel_post updates — not group-member messages)
+    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
 
     # Report module handlers – registered BEFORE the general text handler so that
     # report_conv_handler can intercept text replies in STEP_QUESTION state before
@@ -12688,6 +12795,10 @@ async def on_message(update: Update, context):
         chat = update.effective_chat
         user = update.effective_user
         if not msg.text or not chat: return
+
+        # Channel posts are handled by handle_sync_channel_posts (CHANNEL_POSTS filter)
+        if chat.type == 'channel':
+            return
 
         txt = msg.text.strip()
 

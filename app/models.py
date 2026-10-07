@@ -581,7 +581,7 @@ class GroupBottomButton(db.Model):
 
 
 class SyncGroupMessages(db.Model):
-    """同步群消息"""
+    """同步配置：群成员消息或频道帖（由 chat 类型决定走哪条 handler）"""
     __tablename__ = 'sync_group_messages'
     id = db.Column(db.Integer, primary_key=True)
     source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)

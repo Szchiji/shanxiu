@@ -72,10 +72,20 @@ class TestChatKindHelpers:
 
 
 class TestSenderPrefix:
-    def test_group_prefix(self):
-        assert build_group_sender_prefix(None) == '[未知] '
-        assert build_group_sender_prefix(SimpleNamespace(first_name='Alice', last_name=None)) == '[Alice] '
-        assert build_group_sender_prefix(SimpleNamespace(first_name='A', last_name='B')) == '[A B] '
+    def test_group_prefix_off_by_default(self):
+        """Group sync defaults to clean copy (no ``[发送者]``)."""
+        assert build_group_sender_prefix(None) == ''
+        assert build_group_sender_prefix(SimpleNamespace(first_name='Alice', last_name=None)) == ''
+        assert build_group_sender_prefix(SimpleNamespace(first_name='A', last_name='B'), include_prefix=False) == ''
+
+    def test_group_prefix_when_enabled(self):
+        assert build_group_sender_prefix(None, include_prefix=True) == '[未知] '
+        assert build_group_sender_prefix(
+            SimpleNamespace(first_name='Alice', last_name=None), include_prefix=True
+        ) == '[Alice] '
+        assert build_group_sender_prefix(
+            SimpleNamespace(first_name='A', last_name='B'), include_prefix=True
+        ) == '[A B] '
 
     def test_channel_prefix_is_empty(self):
         """Channel posts sync without a ``[频道名]`` prefix."""

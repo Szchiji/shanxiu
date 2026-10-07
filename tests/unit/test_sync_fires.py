@@ -138,6 +138,7 @@ class TestHandlerUsesSettingsOnly:
 
             sent = SimpleNamespace(message_id=99)
             bot = AsyncMock()
+            bot.copy_message = AsyncMock(return_value=sent)
             bot.send_message = AsyncMock(return_value=sent)
 
             user = SimpleNamespace(id=42, username='alice', first_name='Alice', last_name='', is_bot=False)
@@ -150,6 +151,7 @@ class TestHandlerUsesSettingsOnly:
                 video_note=None, sticker=None, animation=None, poll=None,
                 location=None, contact=None, venue=None,
                 forward_origin=None,
+                media_group_id=None,
             )
             update = SimpleNamespace(
                 effective_message=msg,
@@ -166,9 +168,10 @@ class TestHandlerUsesSettingsOnly:
                 routes.handle_sync_group_messages(update, context)
             )
 
-            bot.send_message.assert_awaited()
-            call_kwargs = bot.send_message.await_args.kwargs
-            assert call_kwargs['text'] == 'hello sync'  # no [Alice] prefix by default
+            # No prefix → copy_message keeps original formatting
+            bot.copy_message.assert_awaited()
+            assert bot.copy_message.await_args.kwargs['message_id'] == 7
+            bot.send_message.assert_not_awaited()
             logs = SyncMessageLog.query.filter_by(source_group_id=gid).all()
             assert len(logs) == 1
             assert logs[0].status == 'success'
@@ -199,6 +202,7 @@ class TestHandlerUsesSettingsOnly:
 
             sent = SimpleNamespace(message_id=100)
             bot = AsyncMock()
+            bot.copy_message = AsyncMock(side_effect=AssertionError('should not copy when prefix on'))
             bot.send_message = AsyncMock(return_value=sent)
 
             user = SimpleNamespace(id=42, username='alice', first_name='Alice', last_name='', is_bot=False)
@@ -211,6 +215,9 @@ class TestHandlerUsesSettingsOnly:
                 video_note=None, sticker=None, animation=None, poll=None,
                 location=None, contact=None, venue=None,
                 forward_origin=None,
+                media_group_id=None,
+                text_html=None,
+                entities=None,
             )
             update = SimpleNamespace(
                 effective_message=msg,
@@ -228,7 +235,9 @@ class TestHandlerUsesSettingsOnly:
             )
 
             bot.send_message.assert_awaited()
-            assert bot.send_message.await_args.kwargs['text'] == '[Alice] hello sync'
+            kwargs = bot.send_message.await_args.kwargs
+            assert kwargs['parse_mode'] == 'HTML'
+            assert kwargs['text'] == '[<a href="tg://user?id=42">Alice</a>] hello sync'
 
     def test_channel_sync_writes_log_when_enabled(self, flask_app):
         from app import db
@@ -254,6 +263,7 @@ class TestHandlerUsesSettingsOnly:
 
             sent = SimpleNamespace(message_id=55)
             bot = AsyncMock()
+            bot.copy_message = AsyncMock(return_value=sent)
             bot.send_message = AsyncMock(return_value=sent)
 
             chat = SimpleNamespace(id=-100901, type='channel', username='mych')
@@ -265,6 +275,7 @@ class TestHandlerUsesSettingsOnly:
                 video_note=None, sticker=None, animation=None, poll=None,
                 location=None, contact=None, venue=None,
                 forward_origin=None,
+                media_group_id=None,
             )
             update = SimpleNamespace(
                 channel_post=msg,
@@ -282,9 +293,9 @@ class TestHandlerUsesSettingsOnly:
                 routes.handle_sync_channel_posts(update, context)
             )
 
-            bot.send_message.assert_awaited()
-            call_kwargs = bot.send_message.await_args.kwargs
-            assert call_kwargs['text'] == 'channel post'  # no prefix
+            bot.copy_message.assert_awaited()
+            assert bot.copy_message.await_args.kwargs['message_id'] == 3
+            bot.send_message.assert_not_awaited()
             logs = SyncMessageLog.query.filter_by(source_group_id=gid).all()
             assert len(logs) == 1
             assert logs[0].status == 'success'

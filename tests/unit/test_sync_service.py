@@ -1,12 +1,16 @@
 """
 tests/unit/test_sync_service.py
 -------------------------------
-Unit tests for cross-group sync helpers (keyword blacklist, anti-loop).
+Unit tests for cross-group / channel sync helpers (keyword blacklist, anti-loop).
 """
 
 from types import SimpleNamespace
 
 from app.services.sync_service import (
+    build_channel_sender_prefix,
+    build_group_sender_prefix,
+    is_channel_chat,
+    is_group_chat,
     is_same_source_target,
     keyword_blocks_sync,
     should_skip_bot_sender,
@@ -55,3 +59,25 @@ class TestSyncFilterText:
     def test_none_when_empty(self):
         msg = SimpleNamespace(text=None, caption=None)
         assert sync_filter_text(msg) is None
+
+
+class TestChatKindHelpers:
+    def test_group_and_channel(self):
+        assert is_group_chat(SimpleNamespace(type='supergroup')) is True
+        assert is_group_chat(SimpleNamespace(type='group')) is True
+        assert is_group_chat(SimpleNamespace(type='channel')) is False
+        assert is_channel_chat(SimpleNamespace(type='channel')) is True
+        assert is_channel_chat(SimpleNamespace(type='supergroup')) is False
+        assert is_channel_chat(None) is False
+
+
+class TestSenderPrefix:
+    def test_group_prefix(self):
+        assert build_group_sender_prefix(None) == '[未知] '
+        assert build_group_sender_prefix(SimpleNamespace(first_name='Alice', last_name=None)) == '[Alice] '
+        assert build_group_sender_prefix(SimpleNamespace(first_name='A', last_name='B')) == '[A B] '
+
+    def test_channel_prefix(self):
+        assert build_channel_sender_prefix(SimpleNamespace(title='公告频道')) == '[公告频道] '
+        assert build_channel_sender_prefix(SimpleNamespace(title='  ')) == '[频道] '
+        assert build_channel_sender_prefix(None) == '[频道] '

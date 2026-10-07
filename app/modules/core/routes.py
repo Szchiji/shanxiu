@@ -8235,6 +8235,65 @@ async def handle_sync_group_messages(update: Update, context):
         print(f"Error in handle_sync_group_messages: {e}")
 
 
+
+async def _maybe_send_channel_auto_reply(bot, msg, chat, group, context):
+    """Reply in-channel when a channel post hits an AutoReply rule for this channel BotGroup.
+
+    Channel sidebar exposes 自动回复, but on_message returns early for channels;
+    channel_post updates only hit handle_sync_channel_posts. Exact keyword match
+    (comma-separated), same as group on_message path.
+    """
+    try:
+        conf = get_group_conf(group)
+        if not conf.get('auto_reply_open', True):
+            return
+        txt = (msg.text or msg.caption or '').strip()
+        if not txt:
+            return
+        auto_reply = None
+        all_auto_replies = AutoReply.query.filter_by(group_id=group.id, is_active=True).all()
+        for ar in all_auto_replies:
+            keywords = [k.strip() for k in (ar.trigger_keyword or '').split(',') if k.strip()]
+            if txt in keywords:
+                auto_reply = ar
+                break
+        if not auto_reply:
+            return
+
+        buttons = []
+        try:
+            links = json.loads(auto_reply.links or '[]')
+            buttons = build_inline_keyboard_from_links(links)
+        except Exception:
+            pass
+        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+        content = sanitize_html_for_telegram(auto_reply.content or '')
+        media_urls = auto_reply.get_media_url_list()
+        sent_reply = None
+        if auto_reply.media_type in ('image', 'video', 'media') and media_urls:
+            url_with_types = auto_reply.get_media_url_with_types()
+            sent_reply = await send_multi_media(
+                bot, chat.id, auto_reply.media_type, media_urls,
+                content=content, reply_markup=reply_markup,
+                media_url_types=[t for _, t in url_with_types] if url_with_types else None,
+            )
+        elif content:
+            sent_reply = await bot.send_message(
+                chat_id=chat.id,
+                text=content,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        if sent_reply and getattr(auto_reply, 'delete_after', 0) and auto_reply.delete_after > 0:
+            try:
+                context.job_queue.run_once(_auto_delete_msg, auto_reply.delete_after, data=sent_reply)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Channel auto reply error: {e}")
+
+
 async def handle_sync_channel_posts(update: Update, context):
     """Sync channel posts (channel_post) to configured target chats.
 
@@ -8274,6 +8333,9 @@ async def handle_sync_channel_posts(update: Update, context):
             ).first()
             if not group:
                 return
+
+            # Channel auto-reply is independent of the sync plugin gate
+            await _maybe_send_channel_auto_reply(context.bot, msg, chat, group, context)
 
             # Plugin gate (channel save API mirrors enabled → sync plugin)
             if not is_plugin_enabled(group.id, 'sync'):
@@ -9132,7 +9194,9 @@ async def check_keyword_filter(update: Update, context):
         chat = update.effective_chat
         user = update.effective_user
         
-        if not msg.text or chat.type not in ['group', 'supergroup']:
+        from app.services.channel_automation import message_filter_text
+        filter_text = message_filter_text(msg)
+        if not filter_text or chat.type not in ['group', 'supergroup']:
             return False
         
         def _check_filters():
@@ -9155,7 +9219,7 @@ async def check_keyword_filter(update: Update, context):
 
                 # Whitelist gate first (if any whitelist rules), then blacklist.
                 # See app.services.keyword_filter_service module docstring.
-                return select_filter_to_enforce(msg.text, filters_list)
+                return select_filter_to_enforce(filter_text, filters_list)
         
         matched_filter = await asyncio.get_running_loop().run_in_executor(None, _check_filters)
         
@@ -11096,42 +11160,65 @@ async def handle_channel_pin(update: Update, context):
         if not msg.sender_chat or msg.sender_chat.type != 'channel':
             return
 
+        from app.services.channel_automation import (
+            resolve_channel_automation_group_id,
+            should_delete_as_promote,
+        )
+
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return
 
+            # Discussion-group settings (pin/delete). Missing row must NOT block forward rules.
             settings = OtherSettings.query.filter_by(group_id=group.id).first()
-            if not settings:
-                return
 
-            forward_rules = [{
-                'rule_name': rule.rule_name,
-                'source_keywords': rule.source_keywords,
-                'target_chat_id': rule.target_chat_id,
-                'target_thread_id': rule.target_thread_id,
-                'forward_mode': rule.forward_mode or 'copy',
-            } for rule in ChannelForwardRule.query.filter_by(group_id=group.id, is_active=True).all()]
-            templates = [{
-                'template_name': item.template_name,
-                'trigger_keywords': item.trigger_keywords,
-                'media_type': item.media_type or 'text',
-                'media_url': item.media_url,
-                'content': item.content,
-                'links': item.links or '[]',
-                'send_as_reply': bool(item.send_as_reply),
-            } for item in ChannelMessageTemplate.query.filter_by(group_id=group.id, is_active=True).all()]
-            coupons = [{
-                'coupon_name': item.coupon_name,
-                'coupon_code': item.coupon_code,
-                'button_text': item.button_text or item.coupon_name,
-                'button_url': item.button_url,
-                'trigger_keywords': item.trigger_keywords,
-                'sort_order': item.sort_order or 0,
-            } for item in ChannelCoupon.query.filter_by(group_id=group.id, is_active=True).order_by(ChannelCoupon.sort_order.asc(), ChannelCoupon.id.asc()).all()]
+            # Channel sidebar saves forward/templates/coupons on the *channel* BotGroup.
+            channel_group = None
+            if msg.sender_chat and getattr(msg.sender_chat, 'id', None) is not None:
+                channel_group = BotGroup.query.filter_by(
+                    chat_id=str(msg.sender_chat.id),
+                    clone_id=context.application.bot_data.get('clone_id'),
+                ).first()
+            automation_gid = resolve_channel_automation_group_id(
+                channel_group.id if channel_group else None,
+                group.id,
+            )
+            # Legacy fallback: if channel has no active automation rows, also try discussion group.
+            def _load_automation(gid):
+                rules = [{
+                    'rule_name': rule.rule_name,
+                    'source_keywords': rule.source_keywords,
+                    'target_chat_id': rule.target_chat_id,
+                    'target_thread_id': rule.target_thread_id,
+                    'forward_mode': rule.forward_mode or 'copy',
+                } for rule in ChannelForwardRule.query.filter_by(group_id=gid, is_active=True).all()]
+                tmpls = [{
+                    'template_name': item.template_name,
+                    'trigger_keywords': item.trigger_keywords,
+                    'media_type': item.media_type or 'text',
+                    'media_url': item.media_url,
+                    'content': item.content,
+                    'links': item.links or '[]',
+                    'send_as_reply': bool(item.send_as_reply),
+                } for item in ChannelMessageTemplate.query.filter_by(group_id=gid, is_active=True).all()]
+                cps = [{
+                    'coupon_name': item.coupon_name,
+                    'coupon_code': item.coupon_code,
+                    'button_text': item.button_text or item.coupon_name,
+                    'button_url': item.button_url,
+                    'trigger_keywords': item.trigger_keywords,
+                    'sort_order': item.sort_order or 0,
+                } for item in ChannelCoupon.query.filter_by(group_id=gid, is_active=True).order_by(ChannelCoupon.sort_order.asc(), ChannelCoupon.id.asc()).all()]
+                return rules, tmpls, cps
+
+            forward_rules, templates, coupons = _load_automation(automation_gid)
+            if not (forward_rules or templates or coupons) and automation_gid != group.id:
+                forward_rules, templates, coupons = _load_automation(group.id)
+            stats_group_id = automation_gid
 
         # Auto-delete linked channel discussion messages (is_automatic_forward) if enabled
-        if settings.auto_delete_channel_discussion_msg and msg.is_automatic_forward:
+        if settings and settings.auto_delete_channel_discussion_msg and msg.is_automatic_forward:
             try:
                 await msg.delete()
                 return
@@ -11139,8 +11226,8 @@ async def handle_channel_pin(update: Update, context):
                 print(f"Error deleting channel discussion message {msg.message_id} in {chat.id}: {e}")
                 return
 
-        # Auto-delete promote (channel) messages if enabled
-        if settings.auto_delete_promote_msg:
+        # Auto-delete promote (channel) messages if enabled — not linked discussion posts
+        if settings and should_delete_as_promote(bool(settings.auto_delete_promote_msg), bool(msg.is_automatic_forward)):
             try:
                 await msg.delete()
                 return
@@ -11150,7 +11237,7 @@ async def handle_channel_pin(update: Update, context):
 
         content_text = (msg.text or msg.caption or '').strip()
 
-        if settings.cancel_channel_pin:
+        if settings and settings.cancel_channel_pin:
             # Wait a moment for Telegram to auto-pin the message
             await asyncio.sleep(1)
 
@@ -11163,7 +11250,7 @@ async def handle_channel_pin(update: Update, context):
             except Exception as e:
                 print(f"Error unpinning channel message: {e}")
 
-        if settings.channel_discussion_keyword_filter and text_matches_keywords(content_text, settings.channel_discussion_keyword_filter):
+        if settings and settings.channel_discussion_keyword_filter and text_matches_keywords(content_text, settings.channel_discussion_keyword_filter):
             try:
                 await msg.delete()
                 return
@@ -11219,7 +11306,7 @@ async def handle_channel_pin(update: Update, context):
                 except Exception as template_err:
                     print(f"Error sending channel template {template_data['template_name']}: {template_err}")
 
-        if settings.channel_auto_buttons:
+        if settings and settings.channel_auto_buttons:
             coupon_links = []
             coupon_lines = []
             matched_coupons = [coupon for coupon in coupons if coupon.get('button_url') and text_matches_keywords(content_text, coupon.get('trigger_keywords'))]
@@ -11267,7 +11354,7 @@ async def handle_channel_pin(update: Update, context):
 
         with global_flask_app.app_context():
             db.session.add(ChannelMessageStats(
-                group_id=group.id,
+                group_id=stats_group_id,
                 channel_chat_id=str(msg.sender_chat.id) if msg.sender_chat else None,
                 channel_message_id=getattr(msg, 'forward_from_message_id', None) or msg.message_id,
                 discussion_chat_id=str(chat.id),
@@ -12773,8 +12860,7 @@ def _sched_del(context, msg, delay: int):
 
 async def on_non_text_message(update: Update, context):
     """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
-    Applies spam-protection rules (block stickers/forwards) to media messages,
-    then runs cross-group sync when enabled."""
+    Applies spam-protection, keyword filter (captions), forced subscription, then sync."""
     if not global_flask_app:
         return
     try:
@@ -12784,6 +12870,14 @@ async def on_non_text_message(update: Update, context):
         # Re-use check_spam_protection which already handles sticker/forward blocking
         spam_detected = await check_spam_protection(update, context)
         if spam_detected:
+            return
+        # Caption keyword filter (text path already covers msg.text in on_message)
+        keyword_filtered = await check_keyword_filter(update, context)
+        if keyword_filtered:
+            return
+        # Media must not bypass forced channel subscription
+        subscription_blocked = await check_forced_subscription(update, context)
+        if subscription_blocked:
             return
         # Cross-group media sync (text path already calls this from on_message)
         await handle_sync_group_messages(update, context)

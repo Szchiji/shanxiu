@@ -12,54 +12,24 @@
         transition: all 0.3s ease;
         margin-bottom: 1.5rem;
     }
-    
-    @media (min-width: 768px) {
-        .settings-card {
-            border-radius: 10px;
-        }
-    }
-    
-    .settings-card:hover {
-        box-shadow: var(--hover-shadow);
-        
-    }
-    
-    .form-switch .form-check-input {
-        width: 3em;
-        height: 1.5em;
-        cursor: pointer;
-    }
-    
-    
-    
-    .form-label {
-        font-weight: 600;
-        font-size: 0.9rem;
-    }
-    
-    .form-control, .form-select {
-        font-size: 0.9rem;
-    }
-    
-    @media (max-width: 767px) {
-        .form-control, .form-select, textarea {
-            font-size: 0.85rem;
-        }
-    }
+    .form-switch .form-check-input { width: 3em; height: 1.5em; cursor: pointer; }
+    .form-label { font-weight: 600; font-size: 0.9rem; }
+    .form-control, .form-select { font-size: 0.9rem; }
+    .target-row td { vertical-align: middle; }
 </style>
 
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <h4 class="fw-bold mb-1"><i class="fa-solid fa-sync me-2"></i>同步群消息</h4>
-            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">设置消息同步到其他群组或频道</p>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">将本群消息同步到一个或多个目标群/频道</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
             <a href="/core/group/{{ group.id }}/sync_message_logs" class="btn btn-light fw-bold">
                 <i class="fa-solid fa-list me-2"></i>查看日志
             </a>
             <button class="btn btn-light fw-bold" onclick="saveSettings()">
-                <i class="fa-solid fa-save me-2"></i>保存设置
+                <i class="fa-solid fa-save me-2"></i>保存选项
             </button>
         </div>
     </div>
@@ -67,10 +37,9 @@
 
 {% call feature_description('sync_group') %}
 <ul>
-    <li>将本群内的消息实时转发同步到另一个群组或频道。</li>
-    <li>填写<strong>目标群组 ID</strong>（以负号开头的数字），机器人需要是目标群的管理员。</li>
-    <li>可按黑名单关键词跳过同步：包含所列关键词的消息不会转发到目标群。</li>
-    <li>同步日志记录每条消息的转发状态，便于排查问题。</li>
+    <li>将本群内的消息实时同步到<strong>多个</strong>目标群组或频道。</li>
+    <li>目标填写 Telegram chat_id（以 <code>-100</code> 开头）；添加时会自动用 getChat 拉取名称。</li>
+    <li>勾选「启用」并保存选项即可生效；机器人须是源群与各目标的管理员。</li>
 </ul>
 {% endcall %}
 
@@ -78,40 +47,78 @@
     <div class="col-12">
         <div class="settings-card card">
             <div class="card-header bg-white fw-bold py-3">
-                <i class="fa-solid fa-exchange-alt me-2 text-primary"></i>同步设置
+                <i class="fa-solid fa-sliders me-2 text-primary"></i>同步选项（对所有目标生效）
             </div>
             <div class="card-body">
                 <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="enabled" 
+                    <input class="form-check-input" type="checkbox" id="enabled"
                            {{ 'checked' if settings and settings.enabled }}>
                     <label class="fw-bold">启用消息同步</label>
                 </div>
-                
-                <div class="mb-3">
-                    <label class="form-label">目标群组ID</label>
-                    <input type="text" class="form-control" id="target_group_id" 
-                           value="{{ settings.target_group_id if settings and settings.target_group_id else '' }}" 
-                           placeholder="例如: -1001234567890">
-                    <small class="text-muted">消息将同步到这个群组</small>
-                </div>
-                
                 <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="sync_media" 
+                    <input class="form-check-input" type="checkbox" id="sync_media"
                            {{ 'checked' if (settings.sync_media if settings else True) }}>
                     <label class="form-check-label">同步媒体文件</label>
                 </div>
-                
                 <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="sync_forwards" 
+                    <input class="form-check-input" type="checkbox" id="sync_forwards"
                            {{ 'checked' if (settings.sync_forwards if settings else True) }}>
                     <label class="form-check-label">同步转发消息</label>
                 </div>
-                
                 <div class="mb-0">
                     <label class="form-label">黑名单关键词（JSON数组）</label>
-                    <textarea class="form-control" id="filter_keywords" rows="3" 
+                    <textarea class="form-control" id="filter_keywords" rows="3"
                               placeholder='["广告", "垃圾"]'>{{ settings.filter_keywords if settings and settings.filter_keywords else '[]' }}</textarea>
-                    <small class="text-muted">黑名单：包含这些关键词的文本/说明文字将不会被同步</small>
+                    <small class="text-muted">包含这些关键词的文本/说明文字不会被同步</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-card card">
+            <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center">
+                <span><i class="fa-solid fa-bullseye me-2 text-primary"></i>同步目标</span>
+                <span class="badge bg-secondary">{{ targets|length }} 个</span>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm align-middle mb-0" id="targetsTable">
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>Chat ID</th>
+                                <th style="width:140px">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for t in targets %}
+                            <tr class="target-row" data-id="{{ t.id }}">
+                                <td class="target-title">{{ t.target_title or '（未获取名称）' }}</td>
+                                <td><code>{{ t.target_group_id }}</code></td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="refreshTitle({{ t.id }})" title="刷新名称">
+                                        <i class="fa-solid fa-rotate"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteTarget({{ t.id }})" title="删除">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        {% else %}
+                            <tr id="emptyTargetsRow"><td colspan="3" class="text-muted text-center py-3">暂无目标，请在下方添加</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                        <label class="form-label">添加目标 Chat ID</label>
+                        <input type="text" class="form-control" id="new_target_id" placeholder="例如: -1001234567890">
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="btn btn-primary w-100" onclick="addTarget()">
+                            <i class="fa-solid fa-plus me-1"></i>添加目标
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -119,17 +126,40 @@
 </div>
 
 <script>
-function saveSettings() {
-    const data = {
-        group_id: {{ group.id }},
-        target_group_id: document.getElementById('target_group_id').value,
+const GROUP_ID = {{ group.id }};
+
+function optionsPayload() {
+    return {
+        group_id: GROUP_ID,
         enabled: document.getElementById('enabled').checked,
         sync_media: document.getElementById('sync_media').checked,
         sync_forwards: document.getElementById('sync_forwards').checked,
         filter_keywords: document.getElementById('filter_keywords').value
     };
-    
+}
+
+function saveSettings() {
     fetch('/core/api/save_sync_group_messages', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(optionsPayload())
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast(result.msg || '保存成功！', 'success');
+        } else {
+            alert('❌ ' + (result.msg || '保存失败'));
+        }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function addTarget() {
+    const tid = document.getElementById('new_target_id').value.trim();
+    if (!tid) { alert('请填写目标 Chat ID'); return; }
+    const data = Object.assign(optionsPayload(), { target_group_id: tid });
+    fetch('/core/api/add_sync_target', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(data)
@@ -137,15 +167,55 @@ function saveSettings() {
     .then(res => res.json())
     .then(result => {
         if (result.status === 'ok') {
-            showToast('保存成功！', 'success');
+            if (result.title_ok === false && result.title_error) {
+                showToast('已添加，但名称获取失败：' + result.title_error, 'warning');
+            } else {
+                showToast('已添加目标' + (result.target_title ? '：' + result.target_title : ''), 'success');
+            }
+            setTimeout(() => location.reload(), 600);
         } else {
-            alert('❌ ' + (result.msg || '保存失败'));
+            alert('❌ ' + (result.msg || '添加失败'));
         }
     })
-    .catch(err => {
-        console.error(err);
-        showToast('网络错误', 'error');
-    });
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function deleteTarget(id) {
+    if (!confirm('确定删除该同步目标？')) return;
+    fetch('/core/api/delete_sync_target', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ group_id: GROUP_ID, id: id })
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            showToast('已删除', 'success');
+            setTimeout(() => location.reload(), 400);
+        } else {
+            alert('❌ ' + (result.msg || '删除失败'));
+        }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
+}
+
+function refreshTitle(id) {
+    fetch('/core/api/refresh_sync_target_title', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ group_id: GROUP_ID, id: id })
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            const row = document.querySelector('tr[data-id="' + id + '"] .target-title');
+            if (row) row.textContent = result.target_title || '（未获取名称）';
+            showToast('名称已更新：' + (result.target_title || ''), 'success');
+        } else {
+            alert('❌ ' + (result.msg || '刷新失败'));
+        }
+    })
+    .catch(err => { console.error(err); showToast('网络错误', 'error'); });
 }
 </script>
 {% endblock %}

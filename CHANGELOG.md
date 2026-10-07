@@ -3,6 +3,25 @@
 
 ## [Unreleased] - 2026-10-07
 
+
+### 🐛 问题修复 (Fixed)
+
+#### 群/频道同步实际不触发 + 同步日志为空
+- **根因 1（群）**：同步设置页勾选「启用」只写 `SyncGroupMessages.enabled`，但 handler 还要求 `sync` 插件为开；群保存 API **不会**自动开插件（频道才会），插件默认关 → 消息被静默跳过、**不写任何日志**
+- **根因 2（频道）**：主 Bot `set_webhook` / `start_polling` 未显式传 `allowed_updates`；Telegram 会保留**旧 webhook 过滤列表**，可能不含 `channel_post`，频道帖根本进不来
+- **修复**：保存同步设置时群/频道一律镜像 `enabled` → 插件行；handler **只认** `SyncGroupMessages.enabled`（去掉双重门禁）；插件页开关 `sync` 时反向同步 settings.enabled；主 Bot webhook/polling 显式 `Update.ALL_TYPES`（含 channel_post）
+- 同步设置页说明改为：启用并保存即可，无需再开插件；目标 ID 需为 `-100…` Telegram chat_id
+
+### ✨ 新增功能 (Added)
+
+#### 同步多目标 + getChat 显示名称
+- 同一源群/频道可配置**多个**同步目标（多行 `SyncGroupMessages`，唯一约束 source+target）
+- 设置页目标列表：添加 / 删除 / 刷新名称；共享选项（启用、媒体、转发、黑名单）一次保存应用到全部目标
+- 新增 API：`/api/add_sync_target`、`/api/delete_sync_target`、`/api/refresh_sync_target_title`；保存选项仍走 `/api/save_sync_group_messages`
+- 添加或刷新目标时调用 Telegram `getChat` 缓存 `target_title`（机器人须能访问该 chat）
+- 群页与频道页 UI 分离保留；handler 本就按 `.all()` 投递，现与 UI 对齐
+- 迁移：`target_title` 列 + 唯一索引
+
 ### ✨ 新增功能 (Added)
 
 #### 频道帖同步 + 频道/群同步设置分离

@@ -62,8 +62,8 @@ class TestChannelSaveMirrorsPlugin:
             assert row is not None and row.enabled is True
             assert row.target_group_id == '-100999'
 
-    def test_save_group_sync_does_not_auto_enable_plugin(self, flask_app, client):
-        """Group path keeps plugin gate separate from settings.enabled."""
+    def test_save_group_sync_also_enables_plugin(self, flask_app, client):
+        """Group and channel both mirror settings.enabled → sync plugin (single gate)."""
         from app import db
         from app.models import BotGroup, SyncGroupMessages
         from app.plugins import is_plugin_enabled
@@ -93,6 +93,6 @@ class TestChannelSaveMirrorsPlugin:
         assert data.get('status') == 'ok', data
 
         with flask_app.app_context():
-            assert is_plugin_enabled(gid, 'sync') is False
+            assert is_plugin_enabled(gid, 'sync') is True
             row = SyncGroupMessages.query.filter_by(source_group_id=gid).first()
             assert row is not None and row.enabled is True

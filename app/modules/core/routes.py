@@ -25,7 +25,7 @@ from app.utils import (
     resolve_telegram_member_tag,
 )
 from app import bot_clone_manager
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, ChatMember, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, LinkPreviewOptions, InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_, cast, String, func, case
@@ -37,6 +37,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from io import BytesIO
 from functools import wraps
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
@@ -8235,56 +8236,355 @@ async def update_group_member(update: Update, context):
     except Exception as e:
         print(f"Error in update_group_member: {e}")
 
-async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool):
-    """Copy *msg* to *target_chat_id* with *sender_prefix*. Returns (sent_msg, message_type) or (None, type/skip)."""
+# --- Sync media-group (album) buffer -------------------------------------------------
+# Telegram delivers each album item as a separate update with the same media_group_id.
+# We debounce-buffer them and flush via copy_messages / send_media_group so the target
+# receives one album instead of N separate messages.
+_SYNC_MEDIA_GROUP_BUFFERS: dict = {}
+_SYNC_MEDIA_GROUP_FLUSH_DELAY = 1.2  # seconds; album parts usually arrive within <1s
+
+
+def _sync_from_chat_id(msg, fallback_chat_id=None):
+    if hasattr(msg, 'chat_id') and msg.chat_id is not None:
+        return msg.chat_id
+    chat = getattr(msg, 'chat', None)
+    if chat is not None and getattr(chat, 'id', None) is not None:
+        return chat.id
+    return fallback_chat_id
+
+
+def _sync_combined_html(sender_prefix: str, body_html: str) -> str:
+    return f"{sender_prefix or ''}{body_html or ''}"
+
+
+async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix: str, from_chat_id):
+    """Send buffered album messages as one media group. Returns (sent_msg, 'media_group')."""
+    from app.services.sync_service import album_caption_html, album_file_id, album_media_kind
+
+    if not messages:
+        return None, None
+
+    ordered = sorted(messages, key=lambda m: getattr(m, 'message_id', 0) or 0)
+    # Prefer native copy so formatting / spoiler media / etc. stay intact when no prefix.
+    if not sender_prefix and from_chat_id is not None:
+        try:
+            ids = [m.message_id for m in ordered]
+            copied = await bot.copy_messages(
+                chat_id=target_chat_id,
+                from_chat_id=from_chat_id,
+                message_ids=ids,
+            )
+            if copied:
+                first = copied[0]
+                # copy_messages returns MessageId objects
+                return SimpleNamespace(message_id=getattr(first, 'message_id', first)), 'media_group'
+        except Exception as e:
+            print(f"[sync] copy_messages album failed, fallback send_media_group: {e}")
+
+    caption_html = album_caption_html(ordered)
+    full_caption = _sync_combined_html(sender_prefix, caption_html) or None
+    media_items = []
+    for i, m in enumerate(ordered):
+        kind = album_media_kind(m)
+        file_id = album_file_id(m)
+        if not kind or not file_id:
+            continue
+        cap = full_caption if (i == 0 and full_caption) else None
+        parse_mode = 'HTML' if cap else None
+        if kind == 'photo':
+            media_items.append(InputMediaPhoto(media=file_id, caption=cap, parse_mode=parse_mode))
+        elif kind == 'video':
+            media_items.append(InputMediaVideo(media=file_id, caption=cap, parse_mode=parse_mode))
+        elif kind == 'document':
+            media_items.append(InputMediaDocument(media=file_id, caption=cap, parse_mode=parse_mode))
+        elif kind == 'audio':
+            media_items.append(InputMediaAudio(media=file_id, caption=cap, parse_mode=parse_mode))
+
+    if not media_items:
+        return None, None
+
+    sent_list = await bot.send_media_group(chat_id=target_chat_id, media=media_items)
+    sent_msg = sent_list[0] if sent_list else None
+    return sent_msg, 'media_group'
+
+
+async def _flush_sync_media_group(buffer_key):
+    """Flush one album buffer to all planned targets and write SyncMessageLog rows."""
+    buf = _SYNC_MEDIA_GROUP_BUFFERS.pop(buffer_key, None)
+    if not buf:
+        return
+
+    messages = buf.get('messages') or []
+    plans = buf.get('plans') or []
+    bot = buf.get('bot')
+    flask_app = buf.get('flask_app')
+    source_group_id = buf.get('source_group_id')
+    user = buf.get('user')
+    chat = buf.get('chat')
+    from_chat_id = buf.get('from_chat_id')
+
+    if not messages or not plans or not bot or not flask_app:
+        return
+
+    preview = None
+    for m in messages:
+        if getattr(m, 'caption', None):
+            preview = m.caption[:100]
+            break
+
+    with flask_app.app_context():
+        from app.services.sync_service import keyword_blocks_sync
+
+        for plan in plans:
+            target_chat_id = plan['target_chat_id']
+            sender_prefix = plan.get('sender_prefix') or ''
+            try:
+                if keyword_blocks_sync(preview, plan.get('filter_keywords')):
+                    log_entry = SyncMessageLog(
+                        source_group_id=source_group_id,
+                        target_group_id=target_chat_id,
+                        source_message_id=messages[0].message_id,
+                        user_id=user.id if user else None,
+                        username=user.username if user else None,
+                        message_type='media_group',
+                        content_preview=preview,
+                        status='filtered',
+                        synced_at=get_beijing_now(),
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                    continue
+                sent_msg, message_type = await _deliver_sync_media_group(
+                    bot, target_chat_id, messages, sender_prefix, from_chat_id
+                )
+                if not sent_msg:
+                    continue
+                log_entry = SyncMessageLog(
+                    source_group_id=source_group_id,
+                    target_group_id=target_chat_id,
+                    source_message_id=messages[0].message_id,
+                    target_message_id=getattr(sent_msg, 'message_id', None),
+                    user_id=user.id if user else None,
+                    username=(
+                        user.username if user else (
+                            chat.username if chat is not None and getattr(chat, 'username', None) else None
+                        )
+                    ),
+                    message_type=message_type or 'media_group',
+                    content_preview=preview,
+                    status='success',
+                    synced_at=get_beijing_now(),
+                )
+                db.session.add(log_entry)
+                db.session.commit()
+            except Exception as e:
+                print(f"[sync] album flush to {target_chat_id} failed: {e}")
+                try:
+                    log_entry = SyncMessageLog(
+                        source_group_id=source_group_id,
+                        target_group_id=target_chat_id,
+                        source_message_id=messages[0].message_id,
+                        user_id=user.id if user else None,
+                        username=user.username if user else None,
+                        status='failed',
+                        error_message=str(e),
+                        synced_at=get_beijing_now(),
+                    )
+                    db.session.add(log_entry)
+                    db.session.commit()
+                except Exception:
+                    pass
+
+
+async def _delayed_flush_sync_media_group(buffer_key, delay: float):
+    try:
+        await asyncio.sleep(delay)
+        await _flush_sync_media_group(buffer_key)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        print(f"[sync] album delayed flush error: {e}")
+
+
+def _schedule_sync_media_group_flush(buffer_key):
+    buf = _SYNC_MEDIA_GROUP_BUFFERS.get(buffer_key)
+    if not buf:
+        return
+    old = buf.get('task')
+    if old and not old.done():
+        old.cancel()
+    buf['task'] = asyncio.create_task(
+        _delayed_flush_sync_media_group(buffer_key, _SYNC_MEDIA_GROUP_FLUSH_DELAY)
+    )
+    _background_tasks.add(buf['task'])
+    buf['task'].add_done_callback(_background_tasks.discard)
+
+
+def _enqueue_sync_media_group_item(
+    *,
+    bot,
+    flask_app,
+    clone_id,
+    chat,
+    user,
+    msg,
+    source_group_id,
+    plans: list,
+):
+    """Buffer one album part. *plans* is a list of {target_chat_id, sender_prefix}."""
+    mgid = getattr(msg, 'media_group_id', None)
+    if not mgid or not plans:
+        return False
+
+    buffer_key = (clone_id, str(chat.id), str(mgid))
+    buf = _SYNC_MEDIA_GROUP_BUFFERS.get(buffer_key)
+    if not buf:
+        buf = {
+            'messages': [],
+            'plans': plans,
+            'bot': bot,
+            'flask_app': flask_app,
+            'source_group_id': source_group_id,
+            'user': user,
+            'chat': chat,
+            'from_chat_id': chat.id,
+            'task': None,
+        }
+        _SYNC_MEDIA_GROUP_BUFFERS[buffer_key] = buf
+
+    seen = {getattr(m, 'message_id', None) for m in buf['messages']}
+    if getattr(msg, 'message_id', None) not in seen:
+        buf['messages'].append(msg)
+
+    _schedule_sync_media_group_flush(buffer_key)
+    return True
+
+
+async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool, from_chat_id=None):
+    """Copy *msg* to *target_chat_id*, preserving HTML formatting when possible.
+
+    When *sender_prefix* is empty, prefers ``copy_message`` for fidelity.
+    When set (HTML mention), rebuilds text/captions with parse_mode=HTML.
+    Returns (sent_msg, message_type) or (None, None) to skip.
+    """
+    from app.services.sync_service import (
+        classify_sync_message_type,
+        is_media_sync_message,
+        sync_message_html,
+    )
+
+    from_chat_id = _sync_from_chat_id(msg, from_chat_id)
+    message_type = classify_sync_message_type(msg)
+
+    if is_media_sync_message(msg) and not sync_media:
+        return None, None
+
+    # Perfect copy when no sender prefix (keeps entities, custom emoji, spoilers, etc.)
+    if not sender_prefix and from_chat_id is not None and not getattr(msg, 'poll', None):
+        # Polls: copy_message works on recent Bot API; still ok. Location/contact/etc. too.
+        try:
+            if msg.text or msg.photo or msg.video or msg.document or msg.audio or msg.voice \
+                    or msg.video_note or msg.sticker or msg.animation or msg.location \
+                    or msg.contact or msg.venue or msg.poll:
+                sent_msg = await bot.copy_message(
+                    chat_id=target_chat_id,
+                    from_chat_id=from_chat_id,
+                    message_id=msg.message_id,
+                )
+                return sent_msg, message_type
+        except Exception as e:
+            print(f"[sync] copy_message failed, fallback rebuild: {e}")
+
     sent_msg = None
-    message_type = 'unknown'
 
     if msg.text:
         message_type = 'text'
-        synced_text = f"{sender_prefix}{msg.text}"
-        sent_msg = await bot.send_message(chat_id=target_chat_id, text=synced_text)
+        body = sync_message_html(msg, use_caption=False)
+        synced_text = _sync_combined_html(sender_prefix, body)
+        sent_msg = await bot.send_message(
+            chat_id=target_chat_id, text=synced_text, parse_mode='HTML'
+        )
     elif msg.photo and sync_media:
         message_type = 'photo'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_photo(chat_id=target_chat_id, photo=msg.photo[-1].file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_photo(
+            chat_id=target_chat_id,
+            photo=msg.photo[-1].file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.video and sync_media:
         message_type = 'video'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_video(chat_id=target_chat_id, video=msg.video.file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_video(
+            chat_id=target_chat_id,
+            video=msg.video.file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.document and sync_media:
         message_type = 'document'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_document(chat_id=target_chat_id, document=msg.document.file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_document(
+            chat_id=target_chat_id,
+            document=msg.document.file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.audio and sync_media:
         message_type = 'audio'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_audio(chat_id=target_chat_id, audio=msg.audio.file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_audio(
+            chat_id=target_chat_id,
+            audio=msg.audio.file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.voice and sync_media:
         message_type = 'voice'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_voice(chat_id=target_chat_id, voice=msg.voice.file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_voice(
+            chat_id=target_chat_id,
+            voice=msg.voice.file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.video_note and sync_media:
         message_type = 'video_note'
+        if sender_prefix:
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
         sent_msg = await bot.send_video_note(chat_id=target_chat_id, video_note=msg.video_note.file_id)
     elif msg.sticker and sync_media:
         message_type = 'sticker'
+        if sender_prefix:
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
         sent_msg = await bot.send_sticker(chat_id=target_chat_id, sticker=msg.sticker.file_id)
     elif msg.animation and sync_media:
         message_type = 'animation'
-        caption = f"{sender_prefix}{msg.caption or ''}"
-        sent_msg = await bot.send_animation(chat_id=target_chat_id, animation=msg.animation.file_id, caption=caption)
+        body = sync_message_html(msg, use_caption=True)
+        caption = _sync_combined_html(sender_prefix, body) or None
+        sent_msg = await bot.send_animation(
+            chat_id=target_chat_id,
+            animation=msg.animation.file_id,
+            caption=caption,
+            parse_mode='HTML' if caption else None,
+        )
     elif msg.poll:
         message_type = 'poll'
         sent_msg = await bot.forward_message(
             chat_id=target_chat_id,
-            from_chat_id=msg.chat_id if hasattr(msg, 'chat_id') else msg.chat.id,
+            from_chat_id=from_chat_id,
             message_id=msg.message_id,
         )
     elif msg.location:
         message_type = 'location'
         if sender_prefix:
-            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
         sent_msg = await bot.send_location(
             chat_id=target_chat_id,
             latitude=msg.location.latitude,
@@ -8293,7 +8593,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
     elif msg.contact:
         message_type = 'contact'
         if sender_prefix:
-            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
         sent_msg = await bot.send_contact(
             chat_id=target_chat_id,
             phone_number=msg.contact.phone_number,
@@ -8303,7 +8603,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
     elif msg.venue:
         message_type = 'venue'
         if sender_prefix:
-            await bot.send_message(chat_id=target_chat_id, text=sender_prefix)
+            await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
         sent_msg = await bot.send_venue(
             chat_id=target_chat_id,
             latitude=msg.venue.location.latitude,
@@ -8358,6 +8658,11 @@ async def handle_sync_group_messages(update: Update, context):
             if not sync_settings:
                 return
 
+            from app.services.sync_service import album_media_kind, is_album_message
+
+            album_plans = []
+            is_album = is_album_message(msg) and album_media_kind(msg) is not None
+
             for sync_setting in sync_settings:
                 try:
                     # target_group_id is stored as string chat_id, not database id
@@ -8389,11 +8694,25 @@ async def handle_sync_group_messages(update: Update, context):
                     if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
 
+                    if not sync_setting.sync_media and not msg.text:
+                        continue
+
                     sender_prefix = build_group_sender_prefix(
                         user, bool(getattr(sync_setting, 'include_sender_prefix', False))
                     )
+
+                    # Albums: buffer parts and flush as one media group
+                    if is_album and sync_setting.sync_media:
+                        album_plans.append({
+                            'target_chat_id': target_chat_id,
+                            'sender_prefix': sender_prefix,
+                            'filter_keywords': sync_setting.filter_keywords,
+                        })
+                        continue
+
                     sent_msg, message_type = await _deliver_sync_copy(
-                        context.bot, target_chat_id, msg, sender_prefix, bool(sync_setting.sync_media)
+                        context.bot, target_chat_id, msg, sender_prefix,
+                        bool(sync_setting.sync_media), from_chat_id=chat.id,
                     )
                     if message_type is None:
                         continue
@@ -8430,6 +8749,18 @@ async def handle_sync_group_messages(update: Update, context):
                     )
                     db.session.add(log_entry)
                     db.session.commit()
+
+            if album_plans:
+                _enqueue_sync_media_group_item(
+                    bot=context.bot,
+                    flask_app=global_flask_app,
+                    clone_id=clone_id,
+                    chat=chat,
+                    user=user,
+                    msg=msg,
+                    source_group_id=group.id,
+                    plans=album_plans,
+                )
 
     except Exception as e:
         print(f"Error in handle_sync_group_messages: {e}")
@@ -8547,7 +8878,11 @@ async def handle_sync_channel_posts(update: Update, context):
             if not sync_settings:
                 return
 
+            from app.services.sync_service import album_media_kind, is_album_message
+
             sender_prefix = build_channel_sender_prefix(chat)
+            album_plans = []
+            is_album = is_album_message(msg) and album_media_kind(msg) is not None
 
             for sync_setting in sync_settings:
                 try:
@@ -8576,8 +8911,20 @@ async def handle_sync_channel_posts(update: Update, context):
                     if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
 
+                    if not sync_setting.sync_media and not msg.text:
+                        continue
+
+                    if is_album and sync_setting.sync_media:
+                        album_plans.append({
+                            'target_chat_id': target_chat_id,
+                            'sender_prefix': sender_prefix,
+                            'filter_keywords': sync_setting.filter_keywords,
+                        })
+                        continue
+
                     sent_msg, message_type = await _deliver_sync_copy(
-                        context.bot, target_chat_id, msg, sender_prefix, bool(sync_setting.sync_media)
+                        context.bot, target_chat_id, msg, sender_prefix,
+                        bool(sync_setting.sync_media), from_chat_id=chat.id,
                     )
                     if message_type is None:
                         continue
@@ -8612,6 +8959,18 @@ async def handle_sync_channel_posts(update: Update, context):
                     )
                     db.session.add(log_entry)
                     db.session.commit()
+
+            if album_plans:
+                _enqueue_sync_media_group_item(
+                    bot=context.bot,
+                    flask_app=global_flask_app,
+                    clone_id=clone_id,
+                    chat=chat,
+                    user=user,
+                    msg=msg,
+                    source_group_id=group.id,
+                    plans=album_plans,
+                )
 
     except Exception as e:
         print(f"Error in handle_sync_channel_posts: {e}")

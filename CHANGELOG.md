@@ -3,6 +3,12 @@
 
 ## [Unreleased] - 2026-10-07
 
+### 🔧 优化改进 (Improved)
+
+#### 同步相册整组投递 + 格式保留 + 可点击发送者前缀
+- **相册**：同源 `media_group_id` 的多图/视频不再拆成一条条发送；短延迟缓冲后用 `copy_messages` / `sendMediaGroup` 整组投递到目标
+- **格式**：无前缀时优先 `copy_message(s)` 保留原文实体；有前缀或回退时用 Telegram HTML（entities → HTML / `text_html`）
+- **发送者前缀**：开启「显示发送者前缀」时渲染为可点击 `<a href="tg://user?id=…">昵称</a>`（点进私聊；受对方隐私/是否与 bot 有过互动限制）；默认仍关闭
 
 ### 🔧 优化改进 (Improved)
 

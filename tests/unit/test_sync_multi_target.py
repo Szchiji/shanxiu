@@ -220,7 +220,8 @@ class TestMultiTargetAPI:
 
             routes.global_flask_app = flask_app
             bot = AsyncMock()
-            bot.send_message = AsyncMock(side_effect=lambda **kw: SimpleNamespace(message_id=kw['chat_id']))
+            bot.copy_message = AsyncMock(side_effect=lambda **kw: SimpleNamespace(message_id=kw['chat_id']))
+            bot.send_message = AsyncMock()
 
             user = SimpleNamespace(id=1, username='u', first_name='U', last_name='', is_bot=False)
             chat = SimpleNamespace(id=-100541, type='supergroup')
@@ -229,14 +230,15 @@ class TestMultiTargetAPI:
                 photo=None, video=None, document=None, audio=None, voice=None,
                 video_note=None, sticker=None, animation=None, poll=None,
                 location=None, contact=None, venue=None, forward_origin=None,
+                media_group_id=None,
             )
             update = SimpleNamespace(effective_message=msg, effective_chat=chat, effective_user=user, channel_post=None)
             context = SimpleNamespace(bot=bot, application=SimpleNamespace(bot_data={'clone_id': None}))
 
             asyncio.get_event_loop().run_until_complete(routes.handle_sync_group_messages(update, context))
 
-            assert bot.send_message.await_count == 2
-            sent_to = {c.kwargs['chat_id'] for c in bot.send_message.await_args_list}
+            assert bot.copy_message.await_count == 2
+            sent_to = {c.kwargs['chat_id'] for c in bot.copy_message.await_args_list}
             assert sent_to == {'-100A', '-100B'}
             logs = SyncMessageLog.query.filter_by(source_group_id=gid, status='success').all()
             assert len(logs) == 2

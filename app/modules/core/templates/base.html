@@ -1279,8 +1279,8 @@
                             </div>
                         </li>
 
-                        <!-- Channel Sync Messages (accordion) -->
-                        {% set ch_sync_active = page in ['sync_group_messages', 'sync_message_logs'] %}
+                        <!-- Channel Post Sync (accordion) — not group-member sync -->
+                        {% set ch_sync_active = page in ['sync_channel_messages', 'sync_message_logs'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if ch_sync_active %}active-group{% endif %}"
                                     type="button"
@@ -1293,7 +1293,7 @@
                             </button>
                             <div class="collapse{% if ch_sync_active %} show{% endif %}" id="sg_ch_sync">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/sync_channel_messages" class="nav-link {% if page == 'sync_channel_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 频道帖同步</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>
                                 </ul>
                             </div>

@@ -5330,12 +5330,13 @@ def api_push_group_bottom_buttons():
         print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
         return jsonify({'status':'error','msg':str(e)})
 
-def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords):
+def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix=False):
     """Apply shared sync toggles to every target row for a source."""
     for row in rows:
         row.enabled = enabled
         row.sync_media = sync_media
         row.sync_forwards = sync_forwards
+        row.include_sender_prefix = include_sender_prefix
         row.filter_keywords = filter_keywords
 
 
@@ -5359,7 +5360,7 @@ def api_save_sync_group_messages():
 
     Optional ``target_group_id`` upserts that one target (legacy single-target
     clients / tests). Multi-target UIs should use add/delete target APIs and
-    call this endpoint only for enabled/media/forwards/keywords.
+    call this endpoint only for enabled/media/forwards/keywords/prefix.
     """
     if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
     d = request.json
@@ -5373,6 +5374,7 @@ def api_save_sync_group_messages():
     enabled = bool(d.get('enabled', False))
     sync_media = bool(d.get('sync_media', True))
     sync_forwards = bool(d.get('sync_forwards', True))
+    include_sender_prefix = bool(d.get('include_sender_prefix', False))
     filter_keywords = d.get('filter_keywords', '[]')
     if filter_keywords is None:
         filter_keywords = '[]'
@@ -5405,7 +5407,7 @@ def api_save_sync_group_messages():
             GroupPluginSettings.set_enabled(db.session, group.id, 'sync', enabled)
             return jsonify({'status': 'ok', 'targets': 0, 'msg': '已保存开关；请添加至少一个目标'})
 
-        _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords)
+        _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix)
         db.session.commit()
 
         from app.models import GroupPluginSettings
@@ -5447,6 +5449,10 @@ def api_add_sync_target():
         enabled = bool(d['enabled']) if 'enabled' in d else (bool(sibling.enabled) if sibling else False)
         sync_media = bool(d['sync_media']) if 'sync_media' in d else (bool(sibling.sync_media) if sibling else True)
         sync_forwards = bool(d['sync_forwards']) if 'sync_forwards' in d else (bool(sibling.sync_forwards) if sibling else True)
+        include_sender_prefix = (
+            bool(d['include_sender_prefix']) if 'include_sender_prefix' in d
+            else (bool(sibling.include_sender_prefix) if sibling else False)
+        )
         filter_keywords = d.get('filter_keywords')
         if filter_keywords is None:
             filter_keywords = sibling.filter_keywords if sibling else '[]'
@@ -5457,6 +5463,7 @@ def api_add_sync_target():
             enabled=enabled,
             sync_media=sync_media,
             sync_forwards=sync_forwards,
+            include_sender_prefix=include_sender_prefix,
             filter_keywords=filter_keywords or '[]',
         )
         ok, title_or_err = _fetch_and_set_target_title(group, row, target_group_id)
@@ -8382,7 +8389,9 @@ async def handle_sync_group_messages(update: Update, context):
                     if hasattr(msg, 'forward_origin') and msg.forward_origin and not sync_setting.sync_forwards:
                         continue
 
-                    sender_prefix = build_group_sender_prefix(user)
+                    sender_prefix = build_group_sender_prefix(
+                        user, bool(getattr(sync_setting, 'include_sender_prefix', False))
+                    )
                     sent_msg, message_type = await _deliver_sync_copy(
                         context.bot, target_chat_id, msg, sender_prefix, bool(sync_setting.sync_media)
                     )

@@ -167,10 +167,68 @@ class TestHandlerUsesSettingsOnly:
             )
 
             bot.send_message.assert_awaited()
+            call_kwargs = bot.send_message.await_args.kwargs
+            assert call_kwargs['text'] == 'hello sync'  # no [Alice] prefix by default
             logs = SyncMessageLog.query.filter_by(source_group_id=gid).all()
             assert len(logs) == 1
             assert logs[0].status == 'success'
             assert logs[0].content_preview == 'hello sync'
+
+    def test_group_sync_prefix_when_include_sender_prefix(self, flask_app):
+        from app import db
+        from app.models import BotGroup, SyncGroupMessages
+        from app.modules.core import routes
+
+        with flask_app.app_context():
+            group = BotGroup(chat_id='-100811', title='src', type='supergroup', is_active=True)
+            db.session.add(group)
+            db.session.commit()
+            gid = group.id
+            db.session.add(SyncGroupMessages(
+                source_group_id=gid,
+                target_group_id='-100812',
+                enabled=True,
+                sync_media=True,
+                sync_forwards=True,
+                include_sender_prefix=True,
+                filter_keywords='[]',
+            ))
+            db.session.commit()
+
+            routes.global_flask_app = flask_app
+
+            sent = SimpleNamespace(message_id=100)
+            bot = AsyncMock()
+            bot.send_message = AsyncMock(return_value=sent)
+
+            user = SimpleNamespace(id=42, username='alice', first_name='Alice', last_name='', is_bot=False)
+            chat = SimpleNamespace(id=-100811, type='supergroup')
+            msg = SimpleNamespace(
+                text='hello sync',
+                caption=None,
+                message_id=8,
+                photo=None, video=None, document=None, audio=None, voice=None,
+                video_note=None, sticker=None, animation=None, poll=None,
+                location=None, contact=None, venue=None,
+                forward_origin=None,
+            )
+            update = SimpleNamespace(
+                effective_message=msg,
+                effective_chat=chat,
+                effective_user=user,
+                channel_post=None,
+            )
+            context = SimpleNamespace(
+                bot=bot,
+                application=SimpleNamespace(bot_data={'clone_id': None}),
+            )
+
+            asyncio.get_event_loop().run_until_complete(
+                routes.handle_sync_group_messages(update, context)
+            )
+
+            bot.send_message.assert_awaited()
+            assert bot.send_message.await_args.kwargs['text'] == '[Alice] hello sync'
 
     def test_channel_sync_writes_log_when_enabled(self, flask_app):
         from app import db

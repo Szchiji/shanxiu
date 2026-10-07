@@ -60,8 +60,14 @@ def is_channel_chat(chat: Any) -> bool:
     return bool(chat is not None and getattr(chat, "type", None) == "channel")
 
 
-def build_group_sender_prefix(user: Any) -> str:
-    """Prefix for group member sync, e.g. ``[Alice] ``."""
+def build_group_sender_prefix(user: Any, include_prefix: bool = False) -> str:
+    """Optional prefix for group member sync, e.g. ``[Alice] ``.
+
+    Default *include_prefix* is False so synced messages look like the original
+    (same clean look as channel posts). When True, prepend ``[发送者名] ``.
+    """
+    if not include_prefix:
+        return ""
     if user is None:
         return "[未知] "
     first = getattr(user, "first_name", None) or ""
@@ -73,9 +79,8 @@ def build_group_sender_prefix(user: Any) -> str:
 def build_channel_sender_prefix(chat: Any) -> str:
     """Prefix for channel post sync.
 
-    Channel posts are copied as-is (no ``[频道名]`` prefix). Group member sync
-    still uses :func:`build_group_sender_prefix`. *chat* is accepted for API
-    stability / call-site compatibility.
+    Channel posts are always copied as-is (no ``[频道名]`` prefix). *chat* is
+    accepted for API stability / call-site compatibility.
     """
     return ""
 

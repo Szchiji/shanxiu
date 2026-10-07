@@ -1402,7 +1402,7 @@
                         </li>
 
                         <!-- Group Features (accordion) -->
-                        {% set grp_feat_active = page in ['timed_group_control', 'invitation_activity', 'member_level', 'sync_group_messages', 'sync_message_logs'] %}
+                        {% set grp_feat_active = page in ['timed_group_control', 'invitation_activity', 'member_level', 'sync_group_messages', 'sync_message_logs', 'plugins'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if grp_feat_active %}active-group{% endif %}"
                                     type="button"
@@ -1417,6 +1417,7 @@
                                 <ul class="nav flex-column sidebar-submenu">
                                     <li><a href="/core/group/{{ current_group.id }}/timed_group_control" class="nav-link {% if page == 'timed_group_control' %}active{% endif %}"><i class="fa-solid fa-clock"></i> 定时开关群</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/invitation_activity" class="nav-link {% if page == 'invitation_activity' %}active{% endif %}"><i class="fa-solid fa-user-plus"></i> 邀请活动</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/plugins" class="nav-link {% if page == 'plugins' %}active{% endif %}"><i class="fa-solid fa-puzzle-piece"></i> 插件开关</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/member_level" class="nav-link {% if page == 'member_level' %}active{% endif %}"><i class="fa-solid fa-medal"></i> 成员等级</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/sync_group_messages" class="nav-link {% if page == 'sync_group_messages' %}active{% endif %}"><i class="fa-solid fa-sync"></i> 同步设置</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/sync_message_logs" class="nav-link {% if page == 'sync_message_logs' %}active{% endif %}"><i class="fa-solid fa-list"></i> 同步日志</a></li>

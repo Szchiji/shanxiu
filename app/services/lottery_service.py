@@ -98,15 +98,24 @@ def validate_lottery_draw(
     """Validate that a lottery draw can proceed.
 
     Args:
-        lottery_type:  ``'message_count'`` or ``'message_rank'``.
+        lottery_type:  ``'message_count'``, ``'message_rank'``, or ``'random'``.
         participants:  Eligible participant list.
-        top_n_winners: Required winner count (for ``message_rank`` draws).
+        top_n_winners: Required winner count (for ``message_rank`` / ``random``).
 
     Returns:
         ``(True, '')`` if the draw is valid, or ``(False, reason)`` otherwise.
+
+    Note:
+        ``random`` allows an empty *participants* list at validate time; the
+        caller is expected to supply ``fallback_pool`` (or a non-empty
+        participants list) when calling :func:`run_lottery_draw`.
     """
-    if lottery_type not in ('message_count', 'message_rank'):
+    if lottery_type not in ('message_count', 'message_rank', 'random'):
         return False, f"未知的抽奖类型: {lottery_type}"
+    if lottery_type == 'random':
+        if top_n_winners < 1:
+            return False, f"获奖人数必须 >= 1，当前: {top_n_winners}"
+        return True, ''
     if not participants:
         return False, "没有符合条件的参与者"
     if lottery_type == 'message_rank' and top_n_winners < 1:
@@ -123,16 +132,22 @@ def run_lottery_draw(
     """Execute a lottery draw and return the winner ID list.
 
     Args:
-        lottery_type:   ``'message_count'`` or ``'message_rank'``.
+        lottery_type:   ``'message_count'``, ``'message_rank'``, or ``'random'``.
         participants:   ``(user_id, message_count)`` tuples.
-        top_n_winners:  Number of top winners (used for ``message_rank``).
+        top_n_winners:  Number of top winners (used for ``message_rank`` /
+                        ``random``).
         fallback_pool:  Plain list of user IDs used when *participants* is
-                        empty (backward-compatibility fallback).
+                        empty (backward-compatibility fallback). For
+                        ``random``, also used when participants is empty.
 
     Returns:
         List of winner user IDs (may be empty if no eligible participants
         and *fallback_pool* is also empty).
     """
+    if lottery_type == 'random':
+        pool = [uid for uid, _ in participants] if participants else (fallback_pool or [])
+        return pick_winners_random(pool, top_n_winners)
+
     if participants:
         if lottery_type == 'message_count':
             winner = pick_winner_weighted(participants)

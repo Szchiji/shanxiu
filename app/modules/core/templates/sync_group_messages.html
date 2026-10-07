@@ -40,7 +40,7 @@
     <li>将本群内的消息实时同步到<strong>多个</strong>目标群组或频道。</li>
     <li>目标填写 Telegram chat_id（以 <code>-100</code> 开头）；添加时会自动用 getChat 拉取名称。</li>
     <li>勾选「启用」并保存选项即可生效；机器人须是源群与各目标的管理员。</li>
-    <li>默认同步原文，不加 <code>[发送者名]</code> 前缀；需要时可在下方打开「显示发送者前缀」。</li>
+    <li>默认同步原文，不加发送者前缀；打开「显示发送者前缀」后会加上可点击的昵称链接（点进与发送者私聊，受 Telegram 隐私设置限制）。</li>
 </ul>
 {% endcall %}
 
@@ -69,7 +69,7 @@
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="include_sender_prefix"
                            {{ 'checked' if (settings.include_sender_prefix if settings else False) }}>
-                    <label class="form-check-label">显示发送者前缀 <span class="text-muted fw-normal">（如 [昵称]）</span></label>
+                    <label class="form-check-label">显示发送者前缀 <span class="text-muted fw-normal">（可点击跳转私聊）</span></label>
                 </div>
                 <div class="mb-0">
                     <label class="form-label">黑名单关键词（JSON数组）</label>

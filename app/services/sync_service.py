@@ -2,13 +2,15 @@
 Helpers for cross-group / channel message sync.
 
 Pure functions used by handle_sync_group_messages and handle_sync_channel_posts
-so unit tests can cover keyword filtering and anti-loop checks without a live bot.
+so unit tests can cover keyword filtering, formatting, albums, and anti-loop
+checks without a live bot.
 """
 
 from __future__ import annotations
 
+import html as html_module
 import json
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 
 def keyword_blocks_sync(text: Optional[str], filter_keywords_json: Optional[str]) -> bool:
@@ -61,10 +63,12 @@ def is_channel_chat(chat: Any) -> bool:
 
 
 def build_group_sender_prefix(user: Any, include_prefix: bool = False) -> str:
-    """Optional prefix for group member sync, e.g. ``[Alice] ``.
+    """Optional HTML prefix for group member sync.
 
-    Default *include_prefix* is False so synced messages look like the original
-    (same clean look as channel posts). When True, prepend ``[发送者名] ``.
+    Default *include_prefix* is False (empty string). When True, returns a
+    clickable ``[<a href="tg://user?id=…">name</a>] `` mention so recipients
+    can open a private chat with the sender (Telegram may still hide the link
+    for privacy-restricted users who never shared their identity with the bot).
     """
     if not include_prefix:
         return ""
@@ -73,7 +77,11 @@ def build_group_sender_prefix(user: Any, include_prefix: bool = False) -> str:
     first = getattr(user, "first_name", None) or ""
     last = getattr(user, "last_name", None) or ""
     name = f"{first} {last}".strip() or "未知"
-    return f"[{name}] "
+    safe = html_module.escape(name)
+    uid = getattr(user, "id", None)
+    if uid is not None:
+        return f'[<a href="tg://user?id={int(uid)}">{safe}</a>] '
+    return f"[{safe}] "
 
 
 def build_channel_sender_prefix(chat: Any) -> str:
@@ -83,6 +91,230 @@ def build_channel_sender_prefix(chat: Any) -> str:
     accepted for API stability / call-site compatibility.
     """
     return ""
+
+
+def _utf16_to_py_index(text: str, utf16_offset: int) -> int:
+    """Convert a Telegram UTF-16 code-unit offset to a Python str index."""
+    if utf16_offset <= 0:
+        return 0
+    encoded = text.encode("utf-16-le")
+    byte_offset = min(utf16_offset * 2, len(encoded))
+    return len(encoded[:byte_offset].decode("utf-16-le"))
+
+
+def _entity_type_name(entity: Any) -> str:
+    raw = getattr(entity, "type", None)
+    if raw is None and isinstance(entity, dict):
+        raw = entity.get("type")
+    if raw is None:
+        return ""
+    name = getattr(raw, "name", None) or str(raw)
+    if "." in name:
+        name = name.split(".")[-1]
+    return name.lower()
+
+
+def _entity_attr(entity: Any, key: str) -> Any:
+    if isinstance(entity, dict):
+        return entity.get(key)
+    return getattr(entity, key, None)
+
+
+def _entity_open_close(entity: Any, text_slice: str) -> tuple[Optional[str], Optional[str]]:
+    """Return (open_tag, close_tag) for a Telegram MessageEntity."""
+    etype = _entity_type_name(entity)
+    if etype in ("bold", "strong"):
+        return "<b>", "</b>"
+    if etype in ("italic", "em"):
+        return "<i>", "</i>"
+    if etype in ("underline", "ins"):
+        return "<u>", "</u>"
+    if etype in ("strikethrough", "strike", "del", "s"):
+        return "<s>", "</s>"
+    if etype == "spoiler":
+        return '<span class="tg-spoiler">', "</span>"
+    if etype == "code":
+        return "<code>", "</code>"
+    if etype == "pre":
+        lang = _entity_attr(entity, "language")
+        if lang:
+            safe_lang = html_module.escape(str(lang))
+            return f'<pre><code class="language-{safe_lang}">', "</code></pre>"
+        return "<pre>", "</pre>"
+    if etype == "text_link":
+        url = _entity_attr(entity, "url") or ""
+        return f'<a href="{html_module.escape(str(url), quote=True)}">', "</a>"
+    if etype == "text_mention":
+        user = _entity_attr(entity, "user")
+        uid = getattr(user, "id", None) if user is not None else None
+        if uid is None and isinstance(user, dict):
+            uid = user.get("id")
+        if uid is not None:
+            return f'<a href="tg://user?id={int(uid)}">', "</a>"
+        return None, None
+    if etype == "url":
+        href = html_module.escape(text_slice, quote=True)
+        return f'<a href="{href}">', "</a>"
+    if etype == "email":
+        href = html_module.escape(text_slice, quote=True)
+        return f'<a href="mailto:{href}">', "</a>"
+    if etype == "custom_emoji":
+        eid = _entity_attr(entity, "custom_emoji_id")
+        if eid:
+            return f'<tg-emoji emoji-id="{html_module.escape(str(eid))}">', "</tg-emoji>"
+        return None, None
+    # mention / hashtag / cashtag / bot_command / phone_number: keep escaped text
+    return None, None
+
+
+def entities_to_html(text: Optional[str], entities: Optional[Sequence[Any]] = None) -> str:
+    """Convert plain text + Telegram entities to Telegram HTML.
+
+    Entity offsets are UTF-16 code units (Telegram Bot API). Unsupported entity
+    types are left as escaped plain text.
+    """
+    if not text:
+        return ""
+    if not entities:
+        return html_module.escape(text)
+
+    insertions: list[tuple[int, int, int, int, str]] = []
+    for i, ent in enumerate(entities):
+        offset = _entity_attr(ent, "offset")
+        length = _entity_attr(ent, "length")
+        if offset is None or length is None:
+            continue
+        start = _utf16_to_py_index(text, int(offset))
+        end = _utf16_to_py_index(text, int(offset) + int(length))
+        if start >= end or start < 0 or end > len(text):
+            continue
+        open_t, close_t = _entity_open_close(ent, text[start:end])
+        if not open_t or close_t is None:
+            continue
+        # Same position: longer entity opens first; shorter closes first.
+        insertions.append((start, 0, -int(length), i, open_t))
+        insertions.append((end, 1, int(length), i, close_t))
+
+    insertions.sort()
+    parts: list[str] = []
+    prev = 0
+    for pos, _kind, _olen, _i, tag in insertions:
+        if pos < prev:
+            continue
+        parts.append(html_module.escape(text[prev:pos]))
+        parts.append(tag)
+        prev = pos
+    parts.append(html_module.escape(text[prev:]))
+    return "".join(parts)
+
+
+def sync_message_html(msg: Any, *, use_caption: bool = False) -> str:
+    """HTML body for sync: prefer PTB ``text_html`` / ``caption_html``, else entities."""
+    if msg is None:
+        return ""
+    if use_caption:
+        ready = getattr(msg, "caption_html", None)
+        if ready:
+            return ready
+        raw = getattr(msg, "caption", None) or ""
+        return entities_to_html(raw, getattr(msg, "caption_entities", None))
+    ready = getattr(msg, "text_html", None)
+    if ready:
+        return ready
+    raw = getattr(msg, "text", None) or ""
+    return entities_to_html(raw, getattr(msg, "entities", None))
+
+
+def is_album_message(msg: Any) -> bool:
+    """True when the message belongs to a Telegram media group / album."""
+    return bool(msg is not None and getattr(msg, "media_group_id", None))
+
+
+def album_media_kind(msg: Any) -> Optional[str]:
+    """Return 'photo' | 'video' | 'document' | 'audio' for album-capable media."""
+    if msg is None:
+        return None
+    if getattr(msg, "photo", None):
+        return "photo"
+    if getattr(msg, "video", None):
+        return "video"
+    if getattr(msg, "document", None):
+        return "document"
+    if getattr(msg, "audio", None):
+        return "audio"
+    return None
+
+
+def album_file_id(msg: Any) -> Optional[str]:
+    """Best file_id for an album item (largest photo size when photo)."""
+    kind = album_media_kind(msg)
+    if kind == "photo":
+        photos = getattr(msg, "photo", None) or []
+        return photos[-1].file_id if photos else None
+    if kind == "video":
+        video = getattr(msg, "video", None)
+        return getattr(video, "file_id", None) if video else None
+    if kind == "document":
+        doc = getattr(msg, "document", None)
+        return getattr(doc, "file_id", None) if doc else None
+    if kind == "audio":
+        audio = getattr(msg, "audio", None)
+        return getattr(audio, "file_id", None) if audio else None
+    return None
+
+
+def album_caption_html(messages: Sequence[Any]) -> str:
+    """First non-empty caption in the album, as Telegram HTML."""
+    for m in messages:
+        if getattr(m, "caption", None):
+            return sync_message_html(m, use_caption=True)
+    return ""
+
+
+def classify_sync_message_type(msg: Any) -> str:
+    """Rough message_type label for SyncMessageLog."""
+    if msg is None:
+        return "unknown"
+    if getattr(msg, "media_group_id", None) and album_media_kind(msg):
+        return "media_group"
+    if getattr(msg, "text", None):
+        return "text"
+    for name in (
+        "photo",
+        "video",
+        "document",
+        "audio",
+        "voice",
+        "video_note",
+        "sticker",
+        "animation",
+        "poll",
+        "location",
+        "contact",
+        "venue",
+    ):
+        if getattr(msg, name, None):
+            return name
+    return "unknown"
+
+
+def is_media_sync_message(msg: Any) -> bool:
+    """True for non-text content that respects the sync_media toggle."""
+    if msg is None or getattr(msg, "text", None):
+        return False
+    return any(
+        getattr(msg, name, None)
+        for name in (
+            "photo",
+            "video",
+            "document",
+            "audio",
+            "voice",
+            "video_note",
+            "sticker",
+            "animation",
+        )
+    )
 
 
 def fetch_chat_info(bot_token: str, chat_id: str, timeout: float = 10.0) -> dict:

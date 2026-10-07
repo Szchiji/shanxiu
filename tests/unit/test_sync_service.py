@@ -77,7 +77,8 @@ class TestSenderPrefix:
         assert build_group_sender_prefix(SimpleNamespace(first_name='Alice', last_name=None)) == '[Alice] '
         assert build_group_sender_prefix(SimpleNamespace(first_name='A', last_name='B')) == '[A B] '
 
-    def test_channel_prefix(self):
-        assert build_channel_sender_prefix(SimpleNamespace(title='公告频道')) == '[公告频道] '
-        assert build_channel_sender_prefix(SimpleNamespace(title='  ')) == '[频道] '
-        assert build_channel_sender_prefix(None) == '[频道] '
+    def test_channel_prefix_is_empty(self):
+        """Channel posts sync without a ``[频道名]`` prefix."""
+        assert build_channel_sender_prefix(SimpleNamespace(title='公告频道')) == ''
+        assert build_channel_sender_prefix(SimpleNamespace(title='  ')) == ''
+        assert build_channel_sender_prefix(None) == ''

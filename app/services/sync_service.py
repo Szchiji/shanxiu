@@ -71,6 +71,10 @@ def build_group_sender_prefix(user: Any) -> str:
 
 
 def build_channel_sender_prefix(chat: Any) -> str:
-    """Prefix for channel post sync, e.g. ``[频道名] ``."""
-    title = (getattr(chat, "title", None) or "").strip() if chat is not None else ""
-    return f"[{title}] " if title else "[频道] "
+    """Prefix for channel post sync.
+
+    Channel posts are copied as-is (no ``[频道名]`` prefix). Group member sync
+    still uses :func:`build_group_sender_prefix`. *chat* is accepted for API
+    stability / call-site compatibility.
+    """
+    return ""

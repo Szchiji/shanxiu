@@ -70,6 +70,20 @@ def is_plugin_enabled(group_id: int, plugin_name: str) -> bool:
     return GroupPluginSettings.is_enabled(group_id, plugin_name)
 
 
+
+
+def is_plugin_enabled_for_chat(chat_id, clone_id, plugin_name: str) -> bool:
+    """Resolve group by chat and return whether *plugin_name* should run.
+
+    Returns True when no BotGroup row exists (caller handles missing group)
+    or when the plugin is enabled / default-on. Requires Flask app context.
+    """
+    from app.models import BotGroup
+    group = BotGroup.query.filter_by(chat_id=str(chat_id), clone_id=clone_id).first()
+    if group is None:
+        return True
+    return is_plugin_enabled(group.id, plugin_name)
+
 # ---------------------------------------------------------------------------
 # Built-in plugin definitions
 # (registered here so they appear in the UI even before the modules are

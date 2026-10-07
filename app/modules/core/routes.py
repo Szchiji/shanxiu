@@ -7249,7 +7249,7 @@ async def handle_new_chat_member(update: Update, context):
                     else:
                         logging.info(f"👥 [入群事件] 未检测到邀请者或自行加入")
 
-                if inviter_id:
+                if inviter_id and is_plugin_enabled(group.id, 'invitation'):
                     invitation_activity = InvitationActivity.query.filter_by(group_id=group.id, enabled=True).first()
                     
                     if invitation_activity:
@@ -7412,6 +7412,34 @@ async def handle_left_chat_member(update: Update, context):
     except Exception as e:
         print(f"Error in handle_left_chat_member: {e}")
 
+from app.plugins import is_plugin_enabled, is_plugin_enabled_for_chat  # plugin gates
+
+
+async def _ensure_plugin_enabled(update: Update, context, plugin_name: str) -> bool:
+    """Return True if *plugin_name* should run for this chat (default-on).
+
+    When the plugin is explicitly disabled for the group, return False so the
+    caller can skip feature logic. Missing group / no Flask app → True
+    (preserve historical behavior until settings exist).
+    """
+    if not global_flask_app:
+        return True
+    chat = update.effective_chat
+    if not chat:
+        return True
+
+    def _check():
+        with global_flask_app.app_context():
+            from app.plugins import is_plugin_enabled_for_chat as _chat_plugin_on
+            return _chat_plugin_on(
+                chat.id,
+                context.application.bot_data.get('clone_id'),
+                plugin_name,
+            )
+
+    return await asyncio.get_running_loop().run_in_executor(None, _check)
+
+
 async def check_spam_protection(update: Update, context):
     """Monitor messages for spam protection rules"""
     if not global_flask_app or not update.effective_message:
@@ -7430,6 +7458,10 @@ async def check_spam_protection(update: Update, context):
             if not group or not group.is_active:
                 return False
             
+            # Plugin gate: only enforce when spam plugin is enabled (default-on)
+            if not is_plugin_enabled(group.id, 'spam'):
+                return False
+
             protection = SpamProtection.query.filter_by(group_id=group.id, enabled=True).first()
             if not protection:
                 return False
@@ -7572,8 +7604,27 @@ async def check_forced_subscription(update: Update, context):
                     except Exception as e:
                         print(f"Error sending subscription alert: {e}")
                     
-                    # Apply punishment if configured
-                    if settings.unsubscribe_action == 'mute':
+                    # Apply punishment if configured (align with cron check_channel_subscriptions)
+                    if settings.unsubscribe_action == 'kick':
+                        try:
+                            print(f"🔄 [实时订阅检测] 用户 {user.id} 未订阅频道，准备踢出 in group {group.id} (chat_id={chat.id})", flush=True)
+                            await context.bot.ban_chat_member(chat.id, user.id)
+                            await context.bot.unban_chat_member(chat.id, user.id)
+                            print(f"✅ [实时订阅检测] Successfully kicked unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                        except Exception as e:
+                            print(f"❌ [实时订阅检测] Failed to kick unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                            print(f"   Error type: {type(e).__name__}", flush=True)
+                            print(f"   Error details: {str(e)}", flush=True)
+                    elif settings.unsubscribe_action == 'ban':
+                        try:
+                            print(f"🔄 [实时订阅检测] 用户 {user.id} 未订阅频道，准备封禁 in group {group.id} (chat_id={chat.id})", flush=True)
+                            await context.bot.ban_chat_member(chat.id, user.id)
+                            print(f"✅ [实时订阅检测] Successfully banned unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                        except Exception as e:
+                            print(f"❌ [实时订阅检测] Failed to ban unsubscribed user {user.id} in group {group.id} (chat_id={chat.id})", flush=True)
+                            print(f"   Error type: {type(e).__name__}", flush=True)
+                            print(f"   Error details: {str(e)}", flush=True)
+                    elif settings.unsubscribe_action == 'mute':
                         try:
                             print(f"🔄 [实时订阅检测] 用户 {user.id} 未订阅频道，准备禁言 in group {group.id} (chat_id={chat.id})", flush=True)
                             await context.bot.restrict_chat_member(
@@ -7978,6 +8029,10 @@ async def handle_sync_group_messages(update: Update, context):
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
+                return
+
+            # Plugin gate: sync defaults to off in registry; only run when enabled
+            if not is_plugin_enabled(group.id, 'sync'):
                 return
             
             # Find sync settings where this group is the source
@@ -8490,7 +8545,7 @@ async def update_lottery_status(context):
                 
                 now = get_beijing_now()
                 # Find all lotteries that should be active now, across ALL groups (main + clone)
-                group_ids = [g.id for g in BotGroup.query.all()]
+                group_ids = [g.id for g in BotGroup.query.all() if is_plugin_enabled(g.id, 'lottery')]
                 
                 if not group_ids:
                     return 0
@@ -8570,6 +8625,10 @@ async def run_lottery_draws(context):
                         group = BotGroup.query.get(lottery.group_id)
                         if not group:
                             logging.warning(f"🎲 [抽奖任务] 群组 ID {lottery.group_id} 未找到")
+                            return None
+
+                        if not is_plugin_enabled(lottery.group_id, 'lottery'):
+                            logging.info(f"🎲 [抽奖任务] 群组 {lottery.group_id} 抽奖插件已关闭，跳过 '{lottery.lottery_name}' (ID: {lid})")
                             return None
                         
                         logging.info(f"🎲 [抽奖任务] 开始处理抽奖 '{lottery.lottery_name}' (ID: {lid}, 类型: {lottery.lottery_type}, 群组 ID: {lottery.group_id})")
@@ -8952,35 +9011,25 @@ async def check_keyword_filter(update: Update, context):
         
         def _check_filters():
             with global_flask_app.app_context():
+                from app.services.keyword_filter_service import select_filter_to_enforce
+
                 group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
                 if not group:
                     return None
-                
+
+                # Plugin gate: spam covers keyword filter (default-on when no settings row)
+                if not is_plugin_enabled(group.id, 'spam'):
+                    return None
+
                 # Get active keyword filters
                 filters_list = KeywordFilter.query.filter_by(
                     group_id=group.id,
                     is_active=True
                 ).all()
-                
-                for kf in filters_list:
-                    matched = False
-                    
-                    if kf.match_type == 'exact':
-                        matched = msg.text.strip().lower() == kf.keyword.lower()
-                    elif kf.match_type == 'contains':
-                        matched = kf.keyword.lower() in msg.text.lower()
-                    elif kf.match_type == 'regex':
-                        try:
-                            matched = re.search(kf.keyword, msg.text, re.IGNORECASE) is not None
-                        except re.error:
-                            # Invalid regex pattern, skip this filter
-                            pass
-                    
-                    # Blacklist: if matched, take action
-                    if matched and kf.filter_type == 'blacklist':
-                        return kf
-                    
-                return None
+
+                # Whitelist gate first (if any whitelist rules), then blacklist.
+                # See app.services.keyword_filter_service module docstring.
+                return select_filter_to_enforce(msg.text, filters_list)
         
         matched_filter = await asyncio.get_running_loop().run_in_executor(None, _check_filters)
         
@@ -9237,6 +9286,8 @@ async def cmd_vote(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'games'):
+        return
     
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
     if not is_admin:
@@ -9348,6 +9399,8 @@ async def cmd_quiz(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'games'):
+        return
     
     if not global_flask_app:
         return
@@ -9424,6 +9477,8 @@ async def cmd_redpacket(update: Update, context):
     
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'games'):
         return
 
     if not global_flask_app:
@@ -9569,6 +9624,8 @@ async def cmd_points(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
+        return
 
     if not global_flask_app:
         return
@@ -9647,6 +9704,8 @@ async def cmd_transfer(update: Update, context):
 
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
         return
 
     # Must be used as a reply to the recipient's message
@@ -9773,6 +9832,8 @@ async def cmd_rank(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
+        return
     
     # Parse limit (default 10, max 50)
     limit = 10
@@ -9864,6 +9925,8 @@ async def cmd_invite_rank(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'invitation'):
+        return
     
     # Parse limit (default 10, max 50)
     limit = 10
@@ -9950,6 +10013,8 @@ async def cmd_mylink(update: Update, context):
 
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'invitation'):
         return
 
     if not global_flask_app:
@@ -10138,6 +10203,8 @@ async def cmd_checkin(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
+        return
 
     if not global_flask_app:
         return
@@ -10244,6 +10311,8 @@ async def cmd_signin(update: Update, context):
 
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
         return
 
     if not global_flask_app:
@@ -10867,6 +10936,8 @@ async def cmd_kick(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -10913,6 +10984,8 @@ async def cmd_ban(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -10958,6 +11031,8 @@ async def cmd_unban(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -10985,6 +11060,8 @@ async def cmd_mute(update: Update, context):
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
         return
     
     # Check if user is admin
@@ -11027,6 +11104,8 @@ async def cmd_unmute(update: Update, context):
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
         return
     
     # Check if user is admin
@@ -11088,6 +11167,8 @@ async def cmd_pin(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -11115,6 +11196,8 @@ async def cmd_unpin(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -11141,6 +11224,8 @@ async def cmd_warn(update: Update, context):
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
         return
     
     # Check if user is admin
@@ -11349,6 +11434,8 @@ async def cmd_bid(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         await update.message.reply_text("❌ 此命令只能在群组中使用")
         return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
+        return
     
     # Parse arguments
     if len(context.args) < 2:
@@ -11497,6 +11584,8 @@ async def cmd_auction(update: Update, context):
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
         await update.message.reply_text("❌ 此命令只能在群组中使用")
+        return
+    if not await _ensure_plugin_enabled(update, context, 'points'):
         return
     
     def _get_auctions():
@@ -11751,6 +11840,8 @@ async def cmd_lottery_draw(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'lottery'):
+        return
     
     # Check if user is admin
     is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
@@ -11890,6 +11981,8 @@ async def cmd_lottery_history(update: Update, context):
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
         return
+    if not await _ensure_plugin_enabled(update, context, 'lottery'):
+        return
     
     if not global_flask_app:
         return
@@ -11946,6 +12039,8 @@ async def cmd_lottery(update: Update, context):
     # Only work in groups
     if chat.type not in ['group', 'supergroup']:
         _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'lottery'):
         return
     
     if not global_flask_app:
@@ -12048,6 +12143,8 @@ async def check_auction_expiration(context):
                     group = BotGroup.query.get(auction.group_id)
                     if not group:
                         continue
+                    if not is_plugin_enabled(auction.group_id, 'points'):
+                        continue
                     
                     chat_id = int(group.chat_id)
                     group_clone_id = group.clone_id
@@ -12138,6 +12235,8 @@ async def check_redpacket_expiration(context):
                     
                     group = BotGroup.query.get(packet.group_id)
                     if group is None:
+                        continue
+                    if not is_plugin_enabled(packet.group_id, 'games'):
                         continue
                     
                     # Refund remaining points to creator
@@ -13504,7 +13603,8 @@ async def on_message(update: Update, context):
             _is_checkin_msg = conf.get('checkin_open') and txt in _checkin_cmds
             _signin_cmds = [c.strip() for c in conf.get('signin_cmd', '签到').split(',')]
             _is_signin_msg = conf.get('signin_open') and txt in _signin_cmds
-            if chat.type in ['group', 'supergroup'] and not _is_checkin_msg and not _is_signin_msg:
+            _points_plugin_on = is_plugin_enabled(group.id, 'points')
+            if chat.type in ['group', 'supergroup'] and _points_plugin_on and not _is_checkin_msg and not _is_signin_msg:
                 message_rule = PointsRule.query.filter_by(
                     group_id=group.id,
                     rule_type='message',
@@ -13560,7 +13660,7 @@ async def on_message(update: Update, context):
             # Award points for forwarded messages (share rule)
             # A forwarded message has a forward_origin attribute set by PTB
             _is_forward = hasattr(msg, 'forward_origin') and msg.forward_origin is not None
-            if _is_forward and chat.type in ['group', 'supergroup']:
+            if _points_plugin_on and _is_forward and chat.type in ['group', 'supergroup']:
                 share_rule = PointsRule.query.filter_by(
                     group_id=group.id,
                     rule_type='share',
@@ -13610,7 +13710,7 @@ async def on_message(update: Update, context):
 
             # 🆕 Track messages for active lotteries (optimized for large groups)
             # ✅ Track ALL group members, not just verified users (unverified users can participate)
-            if chat.type in ['group', 'supergroup']:
+            if chat.type in ['group', 'supergroup'] and is_plugin_enabled(group.id, 'lottery'):
                 # Track for both message_count and message_rank lotteries
                 # Support both pending and active status as long as within time window
                 # Limit to 10 concurrent lotteries to prevent performance issues in large groups
@@ -13718,7 +13818,7 @@ async def on_message(update: Update, context):
                         )
             
             # 2. 打卡
-            if _is_checkin_msg:
+            if _points_plugin_on and _is_checkin_msg:
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
                 if not db_user:
                     msg_text = sanitize_html_for_telegram(conf.get('msg_not_registered', '未认证'))
@@ -13784,7 +13884,7 @@ async def on_message(update: Update, context):
                 return
 
             # 2.5 积分签到（独立于认证用户打卡）
-            if _is_signin_msg and chat.type in ['group', 'supergroup']:
+            if _points_plugin_on and _is_signin_msg and chat.type in ['group', 'supergroup']:
                 signin_rule = PointsRule.query.filter_by(
                     group_id=group.id,
                     rule_type='checkin',
@@ -14515,4 +14615,4 @@ from app.services.lottery_service import (  # noqa: E402, F401
 )
 
 # -- app.plugins --------------------------------------------------------------
-from app.plugins import is_plugin_enabled  # noqa: E402, F401
+from app.plugins import is_plugin_enabled, is_plugin_enabled_for_chat  # noqa: E402

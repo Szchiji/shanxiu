@@ -1,5 +1,21 @@
 # 更新日志 (Changelog)
 
+
+## [Unreleased] - 2026-10-07
+
+### 🐛 问题修复 (Fixed)
+
+#### 插件开关真正生效（Plugin switches gate bot logic）
+- 后台「插件开关」此前只写库、不拦逻辑；现已在消息入口 / 命令 / 相关定时任务接入 `is_plugin_enabled`
+- 原则：无设置行或开关为开 → 行为与线上一致；仅在显式关闭时跳过对应功能（积分、抽奖、消息过滤、邀请、游戏、群管理、消息同步）
+
+#### 关键词白名单真正生效（Keyword whitelist）
+- `check_keyword_filter` 此前仅处理 `blacklist`；现支持白名单门禁
+- 顺序：若存在活跃白名单规则，消息须先命中至少一条白名单，否则按该白名单规则的 action 处置；再应用黑名单命中
+
+#### 强制订阅实时路径支持踢出/封禁（Forced subscription kick/ban）
+- 实时 `check_forced_subscription` 此前仅处理 `mute`；现与定时任务一致支持 `kick` / `ban` / `mute`
+
 ## [Unreleased] - 2026-09-08
 
 ### ✨ 新增功能 (Added)

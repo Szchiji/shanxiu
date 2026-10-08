@@ -463,12 +463,16 @@ class TestTmeAlbum:
         media = bot.send_media_group.await_args.kwargs['media']
         assert [m.media for m in media] == ['s1419', 's1418', 's1417']
 
-    def test_album_failure_falls_back_to_individual_copy(self):
+    def test_album_failure_retries_then_sends_resolved_media(self):
         bot = self._album_bot()
+        # First send_media_group fails; after bytes→file_id pre-upload, retry also fails;
+        # final path sends already-resolved media via send_photo (not copy_message).
         bot.send_media_group = AsyncMock(side_effect=RuntimeError('Bad Request'))
         ids = []
         _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='cap', collected_ids=ids))
-        assert bot.copy_message.await_count == 3
+        assert bot.send_media_group.await_count >= 2
+        assert bot.send_photo.await_count >= 3  # pre-upload +/or final singles
+        assert bot.copy_message.await_count == 0
         assert bot.send_message.await_args.kwargs['text'] == 'cap'
 
     def test_scheduler_three_tme_links_one_album(self, sched):

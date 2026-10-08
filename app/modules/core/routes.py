@@ -8257,7 +8257,27 @@ async def update_group_member(update: Update, context):
 # We debounce-buffer them and flush via copy_messages / send_media_group so the target
 # receives one album instead of N separate messages.
 _SYNC_MEDIA_GROUP_BUFFERS: dict = {}
-_SYNC_MEDIA_GROUP_FLUSH_DELAY = 1.2  # seconds; album parts usually arrive within <1s
+def _album_flush_delay_default() -> float:
+    """Quiet window (seconds after the last album part) before an album is flushed.
+
+    Telegram delivers webhook updates one at a time, interleaved with every other chat
+    the bot is in, so parts of one album can arrive several seconds apart (production
+    14:18 UTC+8 2026-10-07: ~4.5s between parts in one discussion group). Buffers are keyed
+    by media_group_id, so a longer window only adds latency, never merges different albums.
+    Override with ALBUM_FLUSH_DELAY_SECONDS.
+    """
+    try:
+        return max(0.5, float(os.getenv('ALBUM_FLUSH_DELAY_SECONDS', '6')))
+    except (TypeError, ValueError):
+        return 6.0
+
+
+ALBUM_MAX_ITEMS = 10  # Telegram album limit — flush immediately once complete
+_ALBUM_FLUSH_DELAY = _album_flush_delay_default()
+_SYNC_MEDIA_GROUP_FLUSH_DELAY = _ALBUM_FLUSH_DELAY
+# Recently flushed album keys → (monotonic flush time, item count); detects late parts.
+_RECENT_ALBUM_FLUSHES: dict = {}
+_RECENT_ALBUM_TTL = 300.0
 
 
 def _sync_from_chat_id(msg, fallback_chat_id=None):
@@ -8377,6 +8397,7 @@ async def _flush_sync_media_group(buffer_key):
     buf = _SYNC_MEDIA_GROUP_BUFFERS.pop(buffer_key, None)
     if not buf:
         return
+    _note_album_flushed('sync', buffer_key, buf)
 
     messages = buf.get('messages') or []
     plans = buf.get('plans') or []
@@ -8421,6 +8442,12 @@ async def _flush_sync_media_group(buffer_key):
                     continue
                 sent_msg, message_type = await _deliver_sync_media_group(
                     bot, target_chat_id, messages, sender_prefix, from_chat_id, prefix_style
+                )
+                print(
+                    f"{_album_log_prefix('sync', buffer_key)} -> {target_chat_id} "
+                    f"items={len(messages)} prefix={'on/' + prefix_style if sender_prefix else 'off'} "
+                    f"sent={'yes' if sent_msg else 'no'}",
+                    flush=True,
                 )
                 if not sent_msg:
                     continue
@@ -8477,6 +8504,7 @@ def _schedule_media_group_flush(buffers: dict, buffer_key, flush_fn, delay: floa
 
     Shared by group/channel sync and channel forward rules: every new album part
     cancels the pending timer, so the flush runs *delay* seconds after the last part.
+    A full album (10 items) flushes right away.
     """
     buf = buffers.get(buffer_key)
     if not buf:
@@ -8484,18 +8512,52 @@ def _schedule_media_group_flush(buffers: dict, buffer_key, flush_fn, delay: floa
     old = buf.get('task')
     if old and not old.done():
         old.cancel()
+    if len(buf.get('messages') or []) >= ALBUM_MAX_ITEMS:
+        delay = 0
     buf['task'] = asyncio.create_task(_delayed_media_group_flush(flush_fn, buffer_key, delay))
     _background_tasks.add(buf['task'])
     buf['task'].add_done_callback(_background_tasks.discard)
 
 
-def _media_group_buffer_add(buffers: dict, buffer_key, msg, init: dict):
+def _album_log_prefix(kind, buffer_key):
+    clone_id, chat_id, mgid = (list(buffer_key) + [None, None, None])[:3]
+    return f"[album] kind={kind} clone={clone_id} chat={chat_id} mgid={mgid}"
+
+
+def _note_album_flushed(kind, buffer_key, buf):
+    """Log one concise line per flush and remember it to detect late parts."""
+    now = time.monotonic()
+    msgs = buf.get('messages') or []
+    ids = sorted(getattr(m, 'message_id', 0) or 0 for m in msgs)
+    waited = now - buf.get('first_seen', now)
+    print(
+        f"{_album_log_prefix(kind, buffer_key)} flush items={len(msgs)} "
+        f"ids={ids[0] if ids else '-'}..{ids[-1] if ids else '-'} span={waited:.1f}s",
+        flush=True,
+    )
+    _RECENT_ALBUM_FLUSHES[(kind,) + tuple(buffer_key)] = (now, len(msgs))
+    if len(_RECENT_ALBUM_FLUSHES) > 500:
+        cutoff = now - _RECENT_ALBUM_TTL
+        for k in [k for k, v in _RECENT_ALBUM_FLUSHES.items() if v[0] < cutoff]:
+            _RECENT_ALBUM_FLUSHES.pop(k, None)
+
+
+def _media_group_buffer_add(buffers: dict, buffer_key, msg, init: dict, kind: str = 'album'):
     """Append *msg* to the album buffer (created from *init* on first part); dedupe by id."""
     buf = buffers.get(buffer_key)
     if not buf:
+        recent = _RECENT_ALBUM_FLUSHES.get((kind,) + tuple(buffer_key))
+        if recent and time.monotonic() - recent[0] < _RECENT_ALBUM_TTL:
+            print(
+                f"{_album_log_prefix(kind, buffer_key)} LATE part msg={getattr(msg, 'message_id', None)} "
+                f"arrived {time.monotonic() - recent[0]:.1f}s after flush of {recent[1]} item(s) "
+                f"(window={_ALBUM_FLUSH_DELAY}s) — will be sent separately",
+                flush=True,
+            )
         buf = dict(init)
         buf.setdefault('messages', [])
         buf.setdefault('task', None)
+        buf['first_seen'] = time.monotonic()
         buffers[buffer_key] = buf
     if msg is not None:
         seen = {getattr(m, 'message_id', None) for m in buf['messages']}
@@ -8527,7 +8589,7 @@ def _enqueue_sync_media_group_item(
         return False
 
     buffer_key = (clone_id, str(chat.id), str(mgid))
-    _media_group_buffer_add(_SYNC_MEDIA_GROUP_BUFFERS, buffer_key, msg, {
+    _media_group_buffer_add(_SYNC_MEDIA_GROUP_BUFFERS, buffer_key, msg, kind='sync', init={
         'plans': plans,
         'bot': bot,
         'flask_app': flask_app,
@@ -8546,7 +8608,7 @@ def _enqueue_sync_media_group_item(
 # per album item. Buffer them per (clone, discussion chat, media_group_id) and send each
 # matching rule's target the whole album via forward_messages / copy_messages.
 _FORWARD_MEDIA_GROUP_BUFFERS: dict = {}
-_FORWARD_MEDIA_GROUP_FLUSH_DELAY = 1.5  # seconds after the last album part
+_FORWARD_MEDIA_GROUP_FLUSH_DELAY = _ALBUM_FLUSH_DELAY  # quiet window after the last album part
 
 
 def _forward_album_buffer_key(clone_id, chat_id, media_group_id):
@@ -8563,7 +8625,7 @@ def _enqueue_forward_media_group_item(*, bot, clone_id, chat_id, msg, rules, blo
     if not mgid:
         return False
     key = _forward_album_buffer_key(clone_id, chat_id, mgid)
-    buf = _media_group_buffer_add(_FORWARD_MEDIA_GROUP_BUFFERS, key, None if blocked else msg, {
+    buf = _media_group_buffer_add(_FORWARD_MEDIA_GROUP_BUFFERS, key, None if blocked else msg, kind='forward', init={
         'bot': bot,
         'rules': list(rules or []),
         'from_chat_id': chat_id,
@@ -8614,7 +8676,11 @@ async def _flush_forward_media_group(buffer_key):
     from app.services.channel_automation import album_filter_text, sorted_album_message_ids
 
     buf = _FORWARD_MEDIA_GROUP_BUFFERS.pop(buffer_key, None)
-    if not buf or buf.get('blocked'):
+    if not buf:
+        return
+    _note_album_flushed('forward', buffer_key, buf)
+    if buf.get('blocked'):
+        print(f"{_album_log_prefix('forward', buffer_key)} dropped (blocked by keyword filter)", flush=True)
         return
     messages = buf.get('messages') or []
     rules = buf.get('rules') or []
@@ -8629,6 +8695,13 @@ async def _flush_forward_media_group(buffer_key):
             continue
         try:
             await _send_forward_rule_album(bot, rule, buf.get('from_chat_id'), message_ids)
+            print(
+                f"{_album_log_prefix('forward', buffer_key)} rule={rule.get('rule_name')!r} "
+                f"-> {rule.get('target_chat_id')} via "
+                f"{'forward_messages' if rule.get('forward_mode') == 'forward' else 'copy_messages'} "
+                f"items={len(message_ids)}",
+                flush=True,
+            )
         except Exception as rule_err:
             print(f"Error applying forward rule {rule.get('rule_name')} to album: {rule_err}")
 

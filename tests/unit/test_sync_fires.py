@@ -237,7 +237,7 @@ class TestHandlerUsesSettingsOnly:
             bot.send_message.assert_awaited()
             kwargs = bot.send_message.await_args.kwargs
             assert kwargs['parse_mode'] == 'HTML'
-            assert kwargs['text'] == '[<a href="tg://user?id=42">Alice</a>] hello sync'
+            assert kwargs['text'] == '<a href="tg://user?id=42">Alice</a>\nhello sync'
 
     def test_channel_sync_writes_log_when_enabled(self, flask_app):
         from app import db

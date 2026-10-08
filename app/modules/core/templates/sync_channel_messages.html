@@ -63,6 +63,27 @@
                            {{ 'checked' if (settings.sync_forwards if settings else True) }}>
                     <label class="form-check-label">同步转发内容</label>
                 </div>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="include_sender_prefix"
+                           onchange="togglePrefixStyle()"
+                           {{ 'checked' if (settings.include_sender_prefix if settings else False) }}>
+                    <label class="form-check-label">显示频道名前缀 <span class="text-muted fw-normal">（默认关闭，原文同步）</span></label>
+                </div>
+                {% set _ps = (settings.sender_prefix_style if settings and settings.sender_prefix_style else 'newline') %}
+                <div class="mb-3 ps-4" id="sender_prefix_style_box"
+                     style="{{ '' if (settings and settings.include_sender_prefix) else 'display:none' }}">
+                    <label class="form-label small text-muted mb-1">前缀样式</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="sender_prefix_style" id="sps_newline" value="newline"
+                               {{ 'checked' if _ps != 'forward' }}>
+                        <label class="form-check-label" for="sps_newline">名字单独一行 <span class="text-muted">（第一行是频道名（公开频道可点击），下面是原内容）</span></label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="sender_prefix_style" id="sps_forward" value="forward"
+                               {{ 'checked' if _ps == 'forward' }}>
+                        <label class="form-check-label" for="sps_forward">转发样式（显示“转发自”） <span class="text-muted">（原生转发；开启转发隐私的用户只显示名字、无法点击）</span></label>
+                    </div>
+                </div>
                 <div class="mb-0">
                     <label class="form-label">黑名单关键词（JSON数组）</label>
                     <textarea class="form-control" id="filter_keywords" rows="3"
@@ -120,12 +141,22 @@
 
 <script>
 const GROUP_ID = {{ group.id }};
+function togglePrefixStyle() {
+    const on = document.getElementById('include_sender_prefix').checked;
+    document.getElementById('sender_prefix_style_box').style.display = on ? '' : 'none';
+}
+function selectedPrefixStyle() {
+    const el = document.querySelector('input[name="sender_prefix_style"]:checked');
+    return el ? el.value : 'newline';
+}
 function optionsPayload() {
     return {
         group_id: GROUP_ID,
         enabled: document.getElementById('enabled').checked,
         sync_media: document.getElementById('sync_media').checked,
         sync_forwards: document.getElementById('sync_forwards').checked,
+        include_sender_prefix: document.getElementById('include_sender_prefix').checked,
+        sender_prefix_style: selectedPrefixStyle(),
         filter_keywords: document.getElementById('filter_keywords').value
     };
 }

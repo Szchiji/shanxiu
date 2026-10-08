@@ -252,6 +252,8 @@ def fix_database_schema(app):
             "ALTER TABLE system_config ALTER COLUMN key DROP NOT NULL",
             # user_reports: Store dynamic question answers as JSON
             "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
+            # sync_message_logs.via: "userbot" for messages relayed by the userbot listener
+            "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly
@@ -320,6 +322,24 @@ if __name__ == '__main__':
     # ⚡️ 修复点：将 app 传入机器人线程
     bot_thread = threading.Thread(target=start_bot_process_forever, args=(app,), daemon=True)
     bot_thread.start()
+
+    # 4b. 小号监听（仅当已保存会话时启动；失败不影响主机器人）
+    try:
+        from app.userbot.manager import start_userbot_from_env, userbot_manager
+        start_userbot_from_env(app)
+
+        def _graceful_exit(signum, frame):
+            # Disconnect the userbot first so the next container can reuse the session
+            # without Telegram seeing it on two IPs at once (AUTH_KEY_DUPLICATED).
+            try:
+                userbot_manager.stop(timeout=5)
+            finally:
+                sys.exit(0)
+
+        import signal
+        signal.signal(signal.SIGTERM, _graceful_exit)
+    except Exception as e:
+        print(f"[userbot] init skipped: {type(e).__name__}", flush=True)
     
     # 5. 主线程死循环保活
     try:

@@ -15049,3 +15049,6 @@ from app.services.lottery_service import (  # noqa: E402, F401
 
 # -- app.plugins --------------------------------------------------------------
 from app.plugins import is_plugin_enabled, is_plugin_enabled_for_chat  # noqa: E402
+
+# -- 小号 (userbot) admin pages/APIs: registers routes on core_bp --------------
+import app.userbot.web  # noqa: E402,F401

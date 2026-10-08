@@ -168,6 +168,8 @@ def run_migrations():
         "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS include_sender_prefix BOOLEAN DEFAULT FALSE",
         # sync_group_messages: sender header style (newline = 名字单独一行, forward = 原生“转发自”)
         "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS sender_prefix_style VARCHAR(20) DEFAULT 'newline'",
+        # sync_message_logs.via: "userbot" for messages relayed by the userbot listener
+        "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
         # group_warnings: /warn + keyword action=warn persistence (created via db.create_all; listed for clarity)
         "CREATE TABLE IF NOT EXISTS group_warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL REFERENCES bot_groups(id), user_id BIGINT NOT NULL, admin_id BIGINT, reason TEXT, source VARCHAR(20) DEFAULT 'command', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_id ON group_warnings(group_id)",

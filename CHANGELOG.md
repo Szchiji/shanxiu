@@ -5,6 +5,14 @@
 
 ### 🔧 优化改进 (Improved)
 
+#### 同步发送者前缀：名字单独一行 / 转发样式
+- 开启「显示发送者前缀」后默认样式改为**名字单独一行**：第一行是可点击昵称 `<a href="tg://user?id=…">昵称</a>`（不再带方括号），下面是原内容（保留格式）
+- 文本 / 单媒体说明 / 相册均适用；相册把名字放在带说明的那张（无说明则第一张），其它说明保留
+- 超出 Telegram 长度（文本 4096、说明 1024）时：名字单独发一条，紧接原消息精确复制
+- 新增可选样式「转发样式（显示“转发自”）」：用原生 `forward_message(s)`；转发失败（如源群禁止转发）自动回退到名字单独一行
+- 新字段 `sender_prefix_style`（`newline` 默认 | `forward`），群同步与频道帖同步设置页均可选（仅在开启前缀时显示）；频道帖前缀默认仍关闭
+- 迁移：`sync_group_messages.sender_prefix_style VARCHAR(20) DEFAULT 'newline'`
+
 #### 日志不再泄露 Bot Token
 - `httpx` / `httpcore` 日志级别降为 WARNING（不再逐条打印带 token 的 Telegram API URL）
 - 新增 `app/log_redaction.py`：所有日志 handler 挂脱敏过滤器（消息、参数、异常堆栈），并包装 stdout/stderr，`print()` 与未捕获异常中的 `bot<id>:<token>` 统一替换为 `bot<redacted>`

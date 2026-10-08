@@ -153,6 +153,129 @@ def compute_aligned_next_send_at(start_time, repeat_interval_minutes, reference_
     # No start_time available – best-effort: offset from reference_time
     return reference_time + interval_td
 
+
+# 单次定时消息连续发送失败达到该次数后自动停用，避免每分钟无限重试
+SCHEDULED_MSG_MAX_FAILURES = 5
+
+
+def advance_next_send_at(prev_next, repeat_interval_minutes, reference_time):
+    """Advance *prev_next* by whole intervals only while it is <= *reference_time*.
+
+    If *prev_next* is already in the future it is returned unchanged, so a
+    send that happened before the listed "下次发送" slot never skips that slot.
+    """
+    if prev_next is None or not repeat_interval_minutes or repeat_interval_minutes <= 0:
+        return None
+    interval_td = timedelta(minutes=repeat_interval_minutes)
+    next_at = prev_next
+    while next_at <= reference_time:
+        next_at += interval_td
+    return next_at
+
+
+def scheduled_should_send(last_sent_at, next_send_at, repeat_interval, now):
+    """Decide whether a scheduled message is due at *now* (Beijing naive time).
+
+    * ``next_send_at`` in the future always means "wait" – including recurring
+      messages that were never sent but whose start_time is already past
+      (they wait for the aligned slot instead of firing immediately).
+    * Never sent and no pending slot → send now.
+    * Recurring → due once ``now >= next_send_at`` (legacy rows without
+      next_send_at fall back to elapsed time since last_sent_at).
+    """
+    if next_send_at is not None and now < next_send_at:
+        return False
+    if last_sent_at is None:
+        return True
+    if repeat_interval and repeat_interval > 0:
+        if next_send_at is not None:
+            return True
+        elapsed_minutes = (now - last_sent_at).total_seconds() / 60
+        return elapsed_minutes >= repeat_interval
+    return False
+
+
+_SCHED_HTML_TAG_RE = re.compile(r'<[^>]+>')
+
+
+def scheduled_message_has_payload(media_type, media_urls, content):
+    """True when the message has visible text or (for media types) at least one media URL."""
+    text = _SCHED_HTML_TAG_RE.sub('', content or '')
+    text = text.replace('&nbsp;', ' ').replace('\u200b', '').strip()
+    if text:
+        return True
+    return media_type in ('image', 'video', 'media') and bool(media_urls)
+
+
+_MEDIA_SPLIT_WS_RE = re.compile(r'\s+')
+_MEDIA_SPLIT_SEP_RE = re.compile(r'[,，;；](?=\s*(?:https?://|t\.me/|tg://))')
+
+
+def split_media_url_entry(value):
+    """Split one form entry that may contain several pasted URLs into a list."""
+    parts = []
+    for chunk in _MEDIA_SPLIT_WS_RE.split(str(value or '').strip()):
+        for piece in _MEDIA_SPLIT_SEP_RE.split(chunk):
+            piece = piece.strip().strip(',，;；')
+            if piece:
+                parts.append(piece)
+    return parts
+
+
+def apply_scheduled_media_fields(item, d):
+    """Copy media_type / media_url / media_urls from request JSON *d* onto *item*.
+
+    Multiple URLs pasted into a single input (newline / space / comma separated)
+    are split into separate entries so they are sent as one album.
+    """
+    item.media_type = d.get('media_type', 'text')
+    item.media_url = (d.get('media_url') or '').strip() or None
+    media_urls_raw = d.get('media_urls', [])
+    if not isinstance(media_urls_raw, list):
+        return
+    if item.media_type == 'media':
+        # 混合媒体类型：存储为对象数组 [{"url": "...", "type": "image|video"}, ...]
+        media_urls_clean = []
+        for u in media_urls_raw:
+            if isinstance(u, dict):
+                mtype = u.get('type', 'image')
+                for url in split_media_url_entry(u.get('url')):
+                    media_urls_clean.append({'url': url, 'type': mtype})
+            elif u and str(u).strip():
+                for url in split_media_url_entry(u):
+                    media_urls_clean.append({'url': url, 'type': 'image'})
+        item.media_urls = json.dumps(media_urls_clean)
+        if media_urls_clean:
+            item.media_url = media_urls_clean[0]['url']
+    else:
+        # 单一类型：存储为字符串数组 ["url1", "url2", ...]
+        media_urls_clean = []
+        for u in media_urls_raw:
+            if u and isinstance(u, str):
+                media_urls_clean.extend(split_media_url_entry(u))
+        item.media_urls = json.dumps(media_urls_clean)
+        if media_urls_clean:
+            item.media_url = media_urls_clean[0]
+
+
+def prepare_scheduled_message_enable(item, now):
+    """Reset scheduling state when a scheduled message is (re-)enabled.
+
+    * Recurring: next slot aligned to start_time; a never-sent message now
+      waits for that slot (the scheduler honours next_send_at) instead of
+      firing immediately.
+    * One-shot: clear last_sent_at so it can fire again – at start_time if
+      that is still in the future, otherwise on the next scheduler tick.
+    """
+    item.fail_count = 0
+    if item.repeat_interval and item.repeat_interval > 0:
+        item.next_send_at = compute_aligned_next_send_at(
+            item.start_time, item.repeat_interval, now
+        )
+    else:
+        item.next_send_at = item.start_time if (item.start_time and item.start_time > now) else None
+        item.last_sent_at = None
+
 def parse_telegram_message_link(url):
     """
     Parse a t.me message link and return (from_chat_id, message_id) or (None, None).
@@ -171,6 +294,9 @@ def parse_telegram_message_link(url):
     if m:
         return f"@{m.group(1)}", int(m.group(2))
     return None, None
+
+MAX_MEDIA_GROUP_SIZE = 10  # Telegram sendMediaGroup 每组 2–10 项
+
 
 async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None, media_url_types=None, collected_ids=None):
     """
@@ -245,38 +371,86 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
             return msg
         return None
 
-    # 多个媒体，使用 send_media_group
-    # 注意：send_media_group 本身不支持 reply_markup，且 editMessageReplyMarkup
-    # 对媒体组消息也不可靠。有按钮时通过发送跟随文字消息来携带按钮，同时
-    # 不在媒体项中嵌入 caption，避免内容在相册和跟随消息中重复显示。
-    # 无按钮时 caption 正常放在第一条媒体项上。
+    # ---------------- 多个媒体：以相册（媒体组）发送 ----------------
+    # 规则：
+    #  * 普通 URL 用 send_media_group 发送，每组最多 10 个，超出自动拆成多组；
+    #    拆分后只剩 1 个的分组改用 send_photo / send_video（媒体组至少 2 项）。
+    #  * t.me 消息链接无法作为媒体 URL 直接发送（Telegram 抓不到图片），改为
+    #    copy_messages 按原消息复制；同一来源的多个链接一次复制，原相册分组保留。
+    #  * Telegram 不支持相册带内联按钮：有按钮时，相册不带说明文字，文字+按钮
+    #    作为相册下方的一条单独消息发送（避免文字重复出现）。
+    #  * 无按钮时文字作为第一项的 caption（HTML）；文字超过 1024 字符或含
+    #    t.me 链接时同样改为单独消息发送。
     has_buttons = bool(reply_markup)
-    media_items = []
+    segments = []  # ['tme', from_chat, [ids]] | ['url', [(url, type), ...]]
     for i, url in enumerate(media_urls):
-        # 有按钮时不在媒体项中嵌入 caption（caption 通过跟随消息发送）
-        caption = content if (i == 0 and content and not has_buttons) else None
-        parse_mode = 'HTML' if caption else None
         url_type = _get_url_type(i)
-        if url_type == 'video':
-            media_items.append(InputMediaVideo(media=url, caption=caption, parse_mode=parse_mode))
+        tg_from_chat, tg_msg_id = parse_telegram_message_link(url)
+        if tg_from_chat and tg_msg_id:
+            if segments and segments[-1][0] == 'tme' and segments[-1][1] == tg_from_chat:
+                segments[-1][2].append(tg_msg_id)
+            else:
+                segments.append(['tme', tg_from_chat, [tg_msg_id]])
         else:
-            media_items.append(InputMediaPhoto(media=url, caption=caption, parse_mode=parse_mode))
+            if segments and segments[-1][0] == 'url':
+                segments[-1][1].append((url, url_type))
+            else:
+                segments.append(['url', [(url, url_type)]])
 
-    if not media_items:
+    if not segments:
         return None
 
-    sent_messages = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+    any_tme = any(seg[0] == 'tme' for seg in segments)
+    caption_on_album = bool(content) and not has_buttons and not any_tme and len(content) <= 1024
+    caption_used = False
+    sent_all = []
+
+    for seg in segments:
+        if seg[0] == 'tme':
+            # copyMessages 要求消息 ID 严格递增
+            ids = sorted(set(seg[2]))
+            copied = await bot.copy_messages(
+                chat_id=chat_id, from_chat_id=seg[1], message_ids=ids,
+                remove_caption=bool(content), **extra_kwargs
+            )
+            sent_all.extend(copied or [])
+            continue
+        items = seg[1]
+        for start in range(0, len(items), MAX_MEDIA_GROUP_SIZE):
+            chunk = items[start:start + MAX_MEDIA_GROUP_SIZE]
+            cap = content if (caption_on_album and not caption_used) else None
+            cap_mode = 'HTML' if cap else None
+            if len(chunk) == 1:
+                url, url_type = chunk[0]
+                if url_type == 'video':
+                    msg = await bot.send_video(chat_id=chat_id, video=url, caption=cap, parse_mode=cap_mode, **extra_kwargs)
+                else:
+                    msg = await bot.send_photo(chat_id=chat_id, photo=url, caption=cap, parse_mode=cap_mode, **extra_kwargs)
+                if msg:
+                    sent_all.append(msg)
+            else:
+                media_items = []
+                for j, (url, url_type) in enumerate(chunk):
+                    item_cap = cap if j == 0 else None
+                    item_mode = 'HTML' if item_cap else None
+                    if url_type == 'video':
+                        media_items.append(InputMediaVideo(media=url, caption=item_cap, parse_mode=item_mode))
+                    else:
+                        media_items.append(InputMediaPhoto(media=url, caption=item_cap, parse_mode=item_mode))
+                group_msgs = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+                sent_all.extend(group_msgs or [])
+            if cap:
+                caption_used = True
 
     # 收集所有已发送消息的ID（用于 delete_previous 整组删除）
-    if collected_ids is not None and sent_messages:
-        collected_ids.extend(msg.message_id for msg in sent_messages)
+    if collected_ids is not None and sent_all:
+        collected_ids.extend(m.message_id for m in sent_all)
 
-    last_sent = sent_messages[-1] if sent_messages else None
+    last_sent = sent_all[-1] if sent_all else None
 
-    # 如果有按钮，发送跟随文字消息携带内容+按钮
-    # sendMediaGroup 不支持内联键盘，通过跟随消息来携带按钮是最可靠的方式
-    if reply_markup and sent_messages:
-        # 有内容时用内容作为跟随消息文字，无内容时用零宽空格（不显示多余文字）
+    # 跟随消息：携带按钮，以及未能放进 caption 的文字
+    need_follow = has_buttons or (bool(content) and not caption_used)
+    if need_follow and sent_all:
         follow_text = content if content else '\u200b'
         try:
             follow_msg = await bot.send_message(
@@ -291,7 +465,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                 collected_ids.append(follow_msg.message_id)
             last_sent = follow_msg
         except Exception as e:
-            print(f"⚠️ 无法发送媒体组按钮跟随消息: {e}", flush=True)
+            print(f"⚠️ 无法发送媒体组跟随消息（文字/按钮）: {e}", flush=True)
 
     # 返回最后一条消息（用于 auto_pin、last_message_id 存储等）
     return last_sent
@@ -1877,6 +2051,7 @@ def api_export_config(gid):
             {
                 'media_type': sm.media_type,
                 'media_url': sm.media_url,
+                'media_urls': json.loads(sm.media_urls) if sm.media_urls else [],
                 'content': sm.content,
                 'links': json.loads(sm.links) if sm.links else [],
                 'repeat_interval': sm.repeat_interval,
@@ -1964,10 +2139,20 @@ def api_import_config(gid):
             for sm_data in config['scheduled_messages']:
                 if not isinstance(sm_data, dict):
                     continue
+                media_urls_val = sm_data.get('media_urls')
+                if isinstance(media_urls_val, list):
+                    media_urls_json = json.dumps(media_urls_val, ensure_ascii=False)
+                elif isinstance(media_urls_val, str) and media_urls_val.strip():
+                    media_urls_json = media_urls_val
+                elif sm_data.get('media_url'):
+                    media_urls_json = json.dumps([sm_data.get('media_url')])
+                else:
+                    media_urls_json = '[]'
                 sm = ScheduledMessage(
                     group_id=gid,
                     media_type=sm_data.get('media_type', 'text'),
                     media_url=sm_data.get('media_url'),
+                    media_urls=media_urls_json,
                     content=sm_data.get('content'),
                     links=json.dumps(sm_data.get('links', []), ensure_ascii=False),
                     repeat_interval=sm_data.get('repeat_interval', 0),
@@ -3099,37 +3284,15 @@ def api_save_scheduled_message():
             item = ScheduledMessage(group_id=group_id)
             db.session.add(item)
         
-        item.media_type = d.get('media_type', 'text')
-        item.media_url = d.get('media_url', '').strip() or None
-        # 支持多个多媒体链接
-        media_urls_raw = d.get('media_urls', [])
-        if isinstance(media_urls_raw, list):
-            if item.media_type == 'media':
-                # 混合媒体类型：存储为对象数组 [{"url": "...", "type": "image|video"}, ...]
-                media_urls_clean = []
-                for u in media_urls_raw:
-                    if isinstance(u, dict):
-                        url = (u.get('url') or '').strip()
-                        mtype = u.get('type', 'image')
-                        if url:
-                            media_urls_clean.append({'url': url, 'type': mtype})
-                    elif u and str(u).strip():
-                        media_urls_clean.append({'url': str(u).strip(), 'type': 'image'})
-                item.media_urls = json.dumps(media_urls_clean)
-                if media_urls_clean:
-                    item.media_url = media_urls_clean[0].get('url') if isinstance(media_urls_clean[0], dict) else media_urls_clean[0]
-            else:
-                # 单一类型：存储为字符串数组 ["url1", "url2", ...]
-                media_urls_clean = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
-                item.media_urls = json.dumps(media_urls_clean)
-                if media_urls_clean:
-                    item.media_url = media_urls_clean[0]
+        apply_scheduled_media_fields(item, d)
         item.content = d.get('content', '').strip() or None
+        if not scheduled_message_has_payload(item.media_type, item.get_media_url_list(), item.content):
+            return jsonify({'status':'error','msg':'请填写消息内容或至少添加一个媒体链接'})
         item.links = d.get('links', '[]')
         old_repeat_interval = item.repeat_interval
         item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
         item.delete_previous = d.get('delete_previous', False)
-        
+
         # 解析时间
         start_time_str = d.get('start_time')
         stop_time_str = d.get('stop_time')
@@ -3137,29 +3300,28 @@ def api_save_scheduled_message():
         new_start_time = datetime.fromisoformat(start_time_str) if start_time_str else None
         item.start_time = new_start_time
         item.stop_time = datetime.fromisoformat(stop_time_str) if stop_time_str else None
-        
+
         # 当开始时间或重复间隔变化时，重新计算下次发送时间
         if new_start_time != old_start_time or item.repeat_interval != old_repeat_interval:
+            now = get_beijing_now()
             if new_start_time:
-                now = get_beijing_now()
                 if new_start_time > now:
                     # 开始时间在未来，下次发送时间设为开始时间
                     item.next_send_at = new_start_time
                 elif item.repeat_interval > 0:
                     # 开始时间已过且有重复间隔，从开始时间推算下一个发送时间点
-                    interval_td = timedelta(minutes=item.repeat_interval)
-                    next_at = new_start_time
-                    while next_at <= now:
-                        next_at += interval_td
-                    item.next_send_at = next_at
+                    item.next_send_at = compute_aligned_next_send_at(
+                        new_start_time, item.repeat_interval, now
+                    )
                 else:
-                    # 开始时间已过且不重复，清空下次发送时间
+                    # 开始时间已过且不重复，清空下次发送时间（下次检查时立即发送）
                     item.next_send_at = None
             else:
                 item.next_send_at = None
             # 重置上次发送时间，让调度器重新开始
             item.last_sent_at = None
-        
+            item.fail_count = 0
+
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
         item.message_thread_id = safe_int(d.get('message_thread_id'), None)
@@ -3171,7 +3333,7 @@ def api_save_scheduled_message():
             return jsonify({'status':'error','msg':'频道ID不能为空'})
         if item.target_type == 'channel':
             item.message_thread_id = None
-        
+
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3196,30 +3358,10 @@ def api_send_scheduled_message_now(message_id):
         if err: return err
 
         # 更新消息内容（与保存逻辑相同）
-        item.media_type = d.get('media_type', 'text')
-        item.media_url = d.get('media_url', '').strip() or None
-        # 支持多个多媒体链接
-        media_urls_raw = d.get('media_urls', [])
-        if isinstance(media_urls_raw, list):
-            if item.media_type == 'media':
-                media_urls_clean = []
-                for u in media_urls_raw:
-                    if isinstance(u, dict):
-                        url = (u.get('url') or '').strip()
-                        mtype = u.get('type', 'image')
-                        if url:
-                            media_urls_clean.append({'url': url, 'type': mtype})
-                    elif u and str(u).strip():
-                        media_urls_clean.append({'url': str(u).strip(), 'type': 'image'})
-                item.media_urls = json.dumps(media_urls_clean)
-                if media_urls_clean:
-                    item.media_url = media_urls_clean[0].get('url') if isinstance(media_urls_clean[0], dict) else media_urls_clean[0]
-            else:
-                media_urls_clean = [u.strip() for u in media_urls_raw if u and isinstance(u, str) and u.strip()]
-                item.media_urls = json.dumps(media_urls_clean)
-                if media_urls_clean:
-                    item.media_url = media_urls_clean[0]
+        apply_scheduled_media_fields(item, d)
         item.content = d.get('content', '').strip() or None
+        if not scheduled_message_has_payload(item.media_type, item.get_media_url_list(), item.content):
+            return jsonify({'status':'error','msg':'请填写消息内容或至少添加一个媒体链接'})
         item.links = d.get('links', '[]')
         item.repeat_interval = safe_int(d.get('repeat_interval'), 0)
         item.delete_previous = d.get('delete_previous', False)
@@ -3361,6 +3503,7 @@ def api_send_scheduled_message_now(message_id):
             item.last_sent_at = now
             item.last_message_id = sent_message.message_id
             item.last_message_ids = json.dumps(collected_ids) if collected_ids else None
+            item.fail_count = 0
             # 手动发送后重新计算下次发送时间，以本次发送时刻为基准
             if item.repeat_interval > 0:
                 item.next_send_at = now + timedelta(minutes=item.repeat_interval)
@@ -3515,17 +3658,7 @@ def api_toggle_scheduled_message():
         item.is_active = not item.is_active
         # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
         if item.is_active:
-            now = get_beijing_now()
-            if item.repeat_interval and item.repeat_interval > 0:
-                item.next_send_at = compute_aligned_next_send_at(
-                    item.start_time, item.repeat_interval, now
-                )
-            else:
-                # 不重复的消息：如果开始时间在未来则等到那时发送，否则立即发送
-                if item.start_time and item.start_time > now:
-                    item.next_send_at = item.start_time
-                else:
-                    item.last_sent_at = None
+            prepare_scheduled_message_enable(item, get_beijing_now())
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3576,16 +3709,7 @@ def api_batch_scheduled_messages():
             elif action == 'enable':
                 item.is_active = True
                 # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
-                now = get_beijing_now()
-                if item.repeat_interval and item.repeat_interval > 0:
-                    item.next_send_at = compute_aligned_next_send_at(
-                        item.start_time, item.repeat_interval, now
-                    )
-                else:
-                    if item.start_time and item.start_time > now:
-                        item.next_send_at = item.start_time
-                    else:
-                        item.last_sent_at = None
+                prepare_scheduled_message_enable(item, get_beijing_now())
             elif action == 'pause':
                 item.is_active = False
             processed += 1
@@ -7029,6 +7153,23 @@ async def check_expired_users(context):
         if isinstance(result, Exception):
             print(f"❌ [定时任务] Exception in ban operation {idx}: {type(result).__name__}: {str(result)}", flush=True)
 
+_CLONE_SKIP_WARN_INTERVAL = 600  # seconds
+_clone_skip_last_warned = {}
+
+
+def _warn_clone_not_running_for_scheduled(clone_id, msg_id):
+    """Log (at most every 10 min per clone) that a clone's scheduled messages are skipped."""
+    now_ts = time.time()
+    last = _clone_skip_last_warned.get(clone_id)
+    if last is not None and now_ts - last < _CLONE_SKIP_WARN_INTERVAL:
+        return
+    _clone_skip_last_warned[clone_id] = now_ts
+    msg = (f"⚠️ 克隆机器人 {clone_id} 未运行，其群组的定时消息被跳过（例如消息 {msg_id}）；"
+           f"启动该克隆机器人后会自动恢复发送")
+    print(msg, flush=True)
+    logging.warning(msg)
+
+
 async def check_scheduled_messages(context):
     """
     定时检查需要发送的消息
@@ -7072,19 +7213,11 @@ async def check_scheduled_messages(context):
                         expired_msg_ids.append(msg.id)
                         continue
                     
-                    # 检查是否需要发送
-                    should_send = False
-                    if msg.last_sent_at is None:
-                        # 从未发送过
-                        should_send = True
-                    elif msg.repeat_interval > 0:
-                        if msg.next_send_at is not None:
-                            # 使用 next_send_at 精确判断，防止崩溃重启后集中爆发
-                            should_send = now >= msg.next_send_at
-                        else:
-                            # 兼容旧记录：按 elapsed 判断
-                            elapsed_minutes = (now - msg.last_sent_at).total_seconds() / 60
-                            should_send = elapsed_minutes >= msg.repeat_interval
+                    # 检查是否需要发送：next_send_at 在未来一律等待（包括开始时间已过、
+                    # 从未发送过的循环消息——等到对齐的下一个时间点再发，不再立即发送）
+                    should_send = scheduled_should_send(
+                        msg.last_sent_at, msg.next_send_at, msg.repeat_interval or 0, now
+                    )
                     
                     if should_send:
                         # 获取每个URL的类型信息
@@ -7166,7 +7299,7 @@ async def check_scheduled_messages(context):
             # Resolve which bot should send to this group
             bot = _get_bot_for_clone(msg_data.get('clone_id'), context.bot)
             if bot is None:
-                print(f"⏭️ 跳过消息 {msg_data['id']}：对应克隆机器人未运行", flush=True)
+                _warn_clone_not_running_for_scheduled(msg_data.get('clone_id'), msg_data['id'])
                 continue
 
             # Atomically claim the message before sending.
@@ -7232,6 +7365,10 @@ async def check_scheduled_messages(context):
                 if sent_message:
                     all_sent_ids.append(sent_message.message_id)
             
+            if not sent_message:
+                # 没有发出任何消息（无内容/无媒体等）：按失败处理，计入失败次数
+                raise RuntimeError('发送结果为空（没有可发送的文字或媒体）')
+
             # 更新消息ID；last_sent_at was already set by the atomic claim above.
             # For one-shot messages (repeat_interval=0), also deactivate so the UI
             # reflects the correct state and the scheduler skips them on future runs.
@@ -7244,10 +7381,10 @@ async def check_scheduled_messages(context):
                 if msg_data['repeat_interval'] > 0:
                     prev_next = msg_data.get('next_send_at')
                     if prev_next is not None:
-                        interval_td = timedelta(minutes=msg_data['repeat_interval'])
-                        new_next_send_at = prev_next + interval_td
-                        while new_next_send_at <= send_time:
-                            new_next_send_at += interval_td
+                        # 只在 <= 本次发送时间时才向后推，列表显示的下一个时间点不会被跳过
+                        new_next_send_at = advance_next_send_at(
+                            prev_next, msg_data['repeat_interval'], send_time
+                        )
                     else:
                         new_next_send_at = compute_aligned_next_send_at(
                             msg_data.get('start_time'),
@@ -7263,6 +7400,7 @@ async def check_scheduled_messages(context):
                                 scheduled_msg.last_message_id = sent_msg_id
                                 scheduled_msg.last_message_ids = json.dumps(sent_ids) if sent_ids else None
                                 scheduled_msg.next_send_at = next_send_at_val
+                                scheduled_msg.fail_count = 0
                                 if is_one_shot:
                                     scheduled_msg.is_active = False
                                 db.session.commit()
@@ -7289,39 +7427,48 @@ async def check_scheduled_messages(context):
                 print(f"✅ 定时消息已发送到群组 {chat_id}", flush=True)
                 
         except Exception as e:
-            print(f"Error sending scheduled message: {e}")
+            print(f"Error sending scheduled message {msg_data.get('id')} (chat {msg_data.get('chat_id')}): {e}", flush=True)
             # The atomic claim already set last_sent_at on the DB row.
-            # For one-shot messages (repeat_interval=0) we reset it so the
-            # scheduler retries on the next tick.
-            # For repeating messages we intentionally keep the claim timestamp:
-            # this acts as a natural cooldown so the scheduler does not hammer
-            # Telegram with retries faster than the configured repeat_interval.
+            # One-shot (repeat_interval=0): reset last_sent_at so the next tick
+            # retries, but stop after SCHEDULED_MSG_MAX_FAILURES consecutive
+            # failures (auto-disable) instead of retrying every minute forever.
+            # Repeating: keep the claim and advance next_send_at to the next slot.
             def _update_failed(msg_id):
                 with global_flask_app.app_context():
-                    scheduled_msg = ScheduledMessage.query.get(msg_id)
-                    if scheduled_msg and scheduled_msg.is_active:
-                        if scheduled_msg.repeat_interval == 0:
-                            scheduled_msg.last_sent_at = None  # allow retry
+                    try:
+                        scheduled_msg = ScheduledMessage.query.get(msg_id)
+                        if not scheduled_msg or not scheduled_msg.is_active:
+                            return
+                        scheduled_msg.fail_count = (scheduled_msg.fail_count or 0) + 1
+                        if not scheduled_msg.repeat_interval:
+                            if scheduled_msg.fail_count >= SCHEDULED_MSG_MAX_FAILURES:
+                                scheduled_msg.is_active = False
+                                print(
+                                    f"⛔ 定时消息 {msg_id} 连续发送失败 {scheduled_msg.fail_count} 次，已自动停用"
+                                    f"（请检查机器人是否仍在群/频道内并有发言权限，修改后重新启用）",
+                                    flush=True,
+                                )
+                            else:
+                                scheduled_msg.last_sent_at = None  # allow retry
+                                print(
+                                    f"⚠️ 定时消息 {msg_id} 发送失败（第 {scheduled_msg.fail_count}/{SCHEDULED_MSG_MAX_FAILURES} 次），下次检查时重试",
+                                    flush=True,
+                                )
                         else:
-                            # Advance next_send_at so the scheduler waits for the
-                            # next scheduled slot instead of retrying every tick.
-                            # Use current next_send_at as baseline to preserve
-                            # manual-send cadence; fall back to start_time.
                             now_bj = get_beijing_now()
-                            cur_next = scheduled_msg.next_send_at
-                            if cur_next is not None:
-                                interval_td = timedelta(minutes=scheduled_msg.repeat_interval)
-                                new_next = cur_next + interval_td
-                                while new_next <= now_bj:
-                                    new_next += interval_td
+                            if scheduled_msg.next_send_at is not None:
+                                new_next = advance_next_send_at(
+                                    scheduled_msg.next_send_at, scheduled_msg.repeat_interval, now_bj
+                                )
                             else:
                                 new_next = compute_aligned_next_send_at(
-                                    scheduled_msg.start_time,
-                                    scheduled_msg.repeat_interval,
-                                    now_bj,
+                                    scheduled_msg.start_time, scheduled_msg.repeat_interval, now_bj
                                 )
                             scheduled_msg.next_send_at = new_next
                         db.session.commit()
+                    except Exception as upd_err:
+                        db.session.rollback()
+                        print(f"⚠️ _update_failed 保存失败 (msg_id={msg_id}): {upd_err}", flush=True)
             await asyncio.get_running_loop().run_in_executor(None, _update_failed, msg_data['id'])
 
 # 🆕 New Feature Handlers

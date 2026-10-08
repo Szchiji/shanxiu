@@ -147,6 +147,7 @@ class ScheduledMessage(db.Model):
     is_active = db.Column(db.Boolean, default=True)  # 是否启用
     last_sent_at = db.Column(db.DateTime, nullable=True)  # 上次发送时间
     next_send_at = db.Column(db.DateTime, nullable=True)  # 下次发送时间
+    fail_count = db.Column(db.Integer, default=0)  # 连续发送失败次数（成功后清零；达上限则自动停用）
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     

@@ -16,6 +16,10 @@ logging.basicConfig(
     ]
 )
 
+# Telegram API URLs contain the bot token; httpx logs every URL at INFO.
+from app.log_redaction import install_log_redaction
+install_log_redaction()
+
 app = create_app()
 
 def init_database(app):

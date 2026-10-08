@@ -323,13 +323,15 @@ class TestAlbum:
         assert bot.send_photo.await_args.kwargs['caption'] is None
         assert len(ids) == 11
 
-    def test_tme_links_copied_as_album(self):
-        from app.modules.core.routes import send_multi_media
+    def test_tme_links_unresolvable_fall_back_to_copy_messages(self, monkeypatch):
+        from app.modules.core import routes
+        monkeypatch.setattr(routes, '_TME_MEDIA_CACHE', {})
+        monkeypatch.setattr(routes, 'resolve_tme_media', AsyncMock(return_value=None))
         bot = _make_bot()
         ids = []
-        _run(send_multi_media(bot, -1001, 'image',
-                              ['https://t.me/mychan/12', 'https://t.me/mychan/11', 'https://t.me/mychan/13'],
-                              content='cap', collected_ids=ids))
+        _run(routes.send_multi_media(bot, -1001, 'image',
+                                     ['https://t.me/mychan/12', 'https://t.me/mychan/11', 'https://t.me/mychan/13'],
+                                     content='cap', collected_ids=ids))
         bot.send_media_group.assert_not_awaited()
         kw = bot.copy_messages.await_args.kwargs
         assert kw['from_chat_id'] == '@mychan' and kw['message_ids'] == [11, 12, 13]
@@ -337,6 +339,150 @@ class TestAlbum:
         assert bot.send_message.await_args.kwargs['text'] == 'cap'
         assert len(ids) == 4
 
+
+class TestTmeAlbum:
+    """Separate t.me posts (not originally one album) must be rebuilt into ONE album."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        from app.modules.core import routes
+        monkeypatch.setattr(routes, '_TME_MEDIA_CACHE', {})
+        monkeypatch.delenv('MEDIA_STAGING_CHAT_ID', raising=False)
+        self.scraped = []
+
+        def _fake_scrape(username, msg_id):
+            self.scraped.append((username, msg_id))
+            return {'kind': 'image', 'media': b'\xff\xd8\xffjpeg' + str(msg_id).encode(),
+                    'filename': f'{username}_{msg_id}.jpg'}
+
+        monkeypatch.setattr(routes, '_scrape_public_tme_media', _fake_scrape)
+        self.routes = routes
+
+    @staticmethod
+    def _album_bot():
+        bot = _make_bot()
+        counter = itertools.count(5000)
+
+        async def _send_media_group(**kwargs):
+            return [SimpleNamespace(message_id=next(counter),
+                                    photo=[SimpleNamespace(file_id=f'FID{next(counter)}')], video=None)
+                    for _ in kwargs['media']]
+
+        bot.send_media_group = AsyncMock(side_effect=_send_media_group)
+        bot.forward_message = AsyncMock(side_effect=AssertionError('should not probe'))
+        return bot
+
+    LINKS = ['https://t.me/seriouslyaz/1419', 'https://t.me/seriouslyaz/1418', 'https://t.me/seriouslyaz/1417']
+
+    def test_three_separate_tme_posts_sent_as_one_album(self):
+        bot = self._album_bot()
+        ids = []
+        last = _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='<b>hi</b>',
+                                                 collected_ids=ids))
+        bot.send_media_group.assert_awaited_once()
+        bot.copy_messages.assert_not_awaited()
+        bot.copy_message.assert_not_awaited()
+        bot.send_photo.assert_not_awaited()
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert [type(m).__name__ for m in media] == ['InputMediaPhoto'] * 3
+        # order preserved as configured (1419, 1418, 1417)
+        assert [m.media.filename for m in media] == ['seriouslyaz_1419.jpg', 'seriouslyaz_1418.jpg',
+                                                     'seriouslyaz_1417.jpg']
+        assert media[0].caption == '<b>hi</b>' and media[0].parse_mode == 'HTML'
+        assert media[1].caption is None and media[2].caption is None
+        bot.send_message.assert_not_awaited()
+        assert len(ids) == 3 and last.message_id == ids[-1]
+
+    def test_file_ids_cached_for_next_send(self):
+        bot = self._album_bot()
+        _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='x'))
+        assert len(self.scraped) == 3
+        _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='x'))
+        assert len(self.scraped) == 3  # no re-download
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert all(isinstance(m.media, str) and m.media.startswith('FID') for m in media)
+
+    def test_tme_album_with_buttons_has_follow_message(self):
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        bot = self._album_bot()
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('go', url='https://x')]])
+        ids = []
+        _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='txt', reply_markup=kb,
+                                          collected_ids=ids))
+        bot.send_media_group.assert_awaited_once()
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert len(media) == 3 and all(m.caption is None for m in media)
+        follow = bot.send_message.await_args.kwargs
+        assert follow['text'] == 'txt' and follow['reply_markup'] is kb
+        assert len(ids) == 4
+
+    def test_tme_mixed_with_https_urls_single_album(self):
+        bot = self._album_bot()
+        _run(self.routes.send_multi_media(bot, -1001, 'media',
+                                          ['https://a/1.jpg', 'https://t.me/seriouslyaz/1418', 'https://a/2.mp4'],
+                                          content='c', media_url_types=['image', 'image', 'video']))
+        bot.send_media_group.assert_awaited_once()
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert [type(m).__name__ for m in media] == ['InputMediaPhoto', 'InputMediaPhoto', 'InputMediaVideo']
+        assert media[0].media == 'https://a/1.jpg' and media[2].media == 'https://a/2.mp4'
+        assert media[0].caption == 'c'
+
+    def test_private_channel_link_resolved_via_forward_probe(self):
+        bot = self._album_bot()
+        fwd_ids = itertools.count(9000)
+
+        async def _fwd(**kwargs):
+            return SimpleNamespace(message_id=next(fwd_ids), video=None, caption='orig', caption_entities=(),
+                                   photo=[SimpleNamespace(file_id='small'),
+                                          SimpleNamespace(file_id=f"big{kwargs['message_id']}")])
+
+        bot.forward_message = AsyncMock(side_effect=_fwd)
+        _run(self.routes.send_multi_media(bot, -1001, 'image',
+                                          ['https://t.me/c/123/5', 'https://t.me/c/123/6'], content=None))
+        assert self.scraped == []  # private links cannot be scraped
+        assert bot.forward_message.await_count == 2
+        assert bot.forward_message.await_args.kwargs['disable_notification'] is True
+        assert bot.delete_message.await_count == 2  # probe messages cleaned up
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert [m.media for m in media] == ['big5', 'big6']
+        assert media[0].caption == 'orig'  # original caption kept when no custom text
+        bot.copy_messages.assert_not_awaited()
+
+    def test_staging_chat_used_before_target_chat(self, monkeypatch):
+        monkeypatch.setenv('MEDIA_STAGING_CHAT_ID', '-100999')
+        bot = self._album_bot()
+
+        async def _fwd(**kwargs):
+            return SimpleNamespace(message_id=1, video=None, caption=None,
+                                   photo=[SimpleNamespace(file_id=f"s{kwargs['message_id']}")])
+
+        bot.forward_message = AsyncMock(side_effect=_fwd)
+        _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS))
+        assert {c.kwargs['chat_id'] for c in bot.forward_message.await_args_list} == {'-100999'}
+        assert self.scraped == []
+        media = bot.send_media_group.await_args.kwargs['media']
+        assert [m.media for m in media] == ['s1419', 's1418', 's1417']
+
+    def test_album_failure_falls_back_to_individual_copy(self):
+        bot = self._album_bot()
+        bot.send_media_group = AsyncMock(side_effect=RuntimeError('Bad Request'))
+        ids = []
+        _run(self.routes.send_multi_media(bot, -1001, 'image', self.LINKS, content='cap', collected_ids=ids))
+        assert bot.copy_message.await_count == 3
+        assert bot.send_message.await_args.kwargs['text'] == 'cap'
+
+    def test_scheduler_three_tme_links_one_album(self, sched):
+        msg_id, _ = sched.make_msg(media_type='image', content='hi', media_urls=json.dumps(self.LINKS))
+        bot = self._album_bot()
+        sched.tick(bot)
+        bot.send_media_group.assert_awaited_once()
+        assert len(bot.send_media_group.await_args.kwargs['media']) == 3
+        bot.copy_messages.assert_not_awaited()
+        m = sched.get(msg_id)
+        assert len(json.loads(m.last_message_ids)) == 3
+
+
+class TestAlbumScheduler:
     def test_scheduler_sends_multi_media_as_album(self, sched):
         msg_id, _ = sched.make_msg(media_type='image', content='hi',
                                    media_urls=json.dumps(['https://a/1.jpg', 'https://a/2.jpg']))

@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% from "components.html" import feature_description %}
+{% block content %}
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-user-secret me-2"></i>小号登录</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">用一个 Telegram 小号「旁听」群里<strong>其他机器人</strong>发的消息，由主机器人同步到目标群/频道</p>
+        </div>
+    </div>
+</div>
+
+{% call feature_description('userbot') %}
+<ul>
+    <li>Telegram 规定机器人收不到<strong>其他机器人</strong>在群里发的消息，所以需要一个普通账号（小号）加入源群来「听」。</li>
+    <li>小号<strong>只监听</strong>：不会发消息、不会自动进群、不会标记已读。真正发送的永远是主机器人。</li>
+    <li>使用步骤：① 获取 api_id / api_hash（可自动获取或手动填写）→ ② 小号登录 → ③ 把小号拉进源群 → ④ 添加同步规则。</li>
+    <li>默认只同步<strong>机器人</strong>发的消息；普通成员的消息主机器人本来就能收到，用原来的「同步设置」即可，避免重复。</li>
+    <li>主机器人也在源群时可原样复制（格式/相册完整）；不在源群时由小号下载媒体后主机器人重新上传。</li>
+    <li><strong>风险</strong>：用户账号自动化有被 Telegram 限制/封号的可能，请使用小号而不是主号；会话和 api_hash 已加密保存。</li>
+</ul>
+{% endcall %}
+
+<!-- 状态 -->
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+                <div class="fw-bold mb-1"><i class="fa-solid fa-signal me-1"></i>当前状态：<span id="ubStateBadge" class="badge bg-secondary">加载中</span></div>
+                <div class="small text-muted" id="ubAccountLine"></div>
+                <div class="small text-danger mt-1" id="ubErrorLine" style="display:none"></div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <button class="btn btn-outline-primary btn-sm" onclick="ubRestart()"><i class="fa-solid fa-rotate me-1"></i>重新连接</button>
+                <button class="btn btn-outline-warning btn-sm" onclick="ubLogout(false)"><i class="fa-solid fa-right-from-bracket me-1"></i>退出登录</button>
+                <button class="btn btn-outline-danger btn-sm" onclick="ubLogout(true)"><i class="fa-solid fa-trash me-1"></i>删除全部</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <!-- 第一步 -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header fw-bold"><i class="fa-solid fa-key me-1"></i>第一步：获取 api_id / api_hash <span class="badge bg-success ms-1" id="ubApiBadge" style="display:none"></span></div>
+            <div class="card-body">
+                <label class="form-label small fw-semibold">小号手机号（带国家区号）</label>
+                <input type="tel" class="form-control mb-2" id="ubPhone" placeholder="+8613812345678" autocomplete="off">
+                <div class="small text-muted mb-2">自动获取：会通过 my.telegram.org 登录并创建应用，验证码发到该账号的 <strong>Telegram 应用</strong>里（不是短信）。</div>
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-primary btn-sm" onclick="ubApiSendCode()"><i class="fa-solid fa-paper-plane me-1"></i>获取验证码</button>
+                </div>
+                <div id="ubApiCodeBox" style="display:none" class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" id="ubApiCode" placeholder="my.telegram.org 验证码" autocomplete="one-time-code">
+                        <button class="btn btn-success" onclick="ubApiVerify()">验证并获取 API</button>
+                    </div>
+                </div>
+                <div class="alert alert-warning small py-2" id="ubApiError" style="display:none"></div>
+                <hr>
+                <div class="small fw-semibold mb-1">或手动填写（在 my.telegram.org → API development tools 获取）</div>
+                <div class="row g-2">
+                    <div class="col-4"><input type="text" class="form-control form-control-sm" id="ubApiId" placeholder="api_id" autocomplete="off"></div>
+                    <div class="col-8"><input type="password" class="form-control form-control-sm" id="ubApiHash" placeholder="api_hash（32 位）" autocomplete="off"></div>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm mt-2" onclick="ubApiManual()"><i class="fa-solid fa-floppy-disk me-1"></i>保存</button>
+            </div>
+        </div>
+    </div>
+    <!-- 第二步 -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header fw-bold"><i class="fa-solid fa-right-to-bracket me-1"></i>第二步：小号登录</div>
+            <div class="card-body">
+                <div class="small text-muted mb-2">使用上面同一个手机号。验证码一般发到该账号已登录的 Telegram 应用里。</div>
+                <button class="btn btn-primary btn-sm mb-2" onclick="ubLoginSendCode()"><i class="fa-solid fa-paper-plane me-1"></i>发送登录验证码</button>
+                <div id="ubLoginCodeBox" style="display:none" class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" id="ubLoginCode" placeholder="登录验证码" autocomplete="one-time-code">
+                        <button class="btn btn-success" onclick="ubLoginVerifyCode()">登录</button>
+                    </div>
+                </div>
+                <div id="ubPasswordBox" style="display:none" class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="ubPassword" placeholder="两步验证密码" autocomplete="off">
+                        <button class="btn btn-success" onclick="ubLoginPassword()">确认</button>
+                    </div>
+                </div>
+                <div class="alert alert-warning small py-2" id="ubLoginError" style="display:none"></div>
+                <div class="small text-muted">登录成功后会自动开始监听。手机号、验证码、密码都不会被保存或写入日志。</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 同步规则 -->
+<div class="table-container mb-3">
+    <div class="list-section-header d-flex justify-content-between align-items-center">
+        <span><i class="fa-solid fa-sync text-primary"></i> 小号同步规则</span>
+        <button class="btn btn-primary btn-sm" onclick="ubOpenRule()"><i class="fa-solid fa-plus me-1"></i>添加规则</button>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead><tr><th class="ps-3">源群</th><th>监听谁</th><th>目标</th><th>前缀</th><th>状态</th><th class="text-end pe-3">操作</th></tr></thead>
+            <tbody id="ubRulesBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 日志 -->
+<div class="table-container mb-4">
+    <div class="list-section-header d-flex justify-content-between align-items-center">
+        <span><i class="fa-solid fa-list text-primary"></i> 最近小号同步记录</span>
+        <button class="btn btn-outline-secondary btn-sm" onclick="ubLoadLogs()"><i class="fa-solid fa-rotate"></i></button>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead><tr><th class="ps-3">时间</th><th>发送者</th><th>目标</th><th>类型</th><th>结果</th><th>内容</th></tr></thead>
+            <tbody id="ubLogsBody"><tr><td colspan="6" class="text-muted ps-3">暂无记录</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 规则弹窗 -->
+<div class="modal fade" id="ubRuleModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title"><i class="fa-solid fa-sync me-2"></i>小号同步规则</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <input type="hidden" id="ubRuleId">
+        <label class="form-label fw-semibold">源群（小号必须在群里）</label>
+        <div class="input-group mb-1">
+            <select class="form-select" id="ubSourceSelect" onchange="ubPickSource()"><option value="">— 点右侧按钮加载小号所在的群 —</option></select>
+            <button class="btn btn-outline-primary" type="button" onclick="ubLoadDialogs()"><i class="fa-solid fa-download me-1"></i>加载</button>
+        </div>
+        <input type="text" class="form-control form-control-sm mb-3" id="ubSourceId" placeholder="或手动填写源群 ID，例如 -1001234567890">
+        <input type="hidden" id="ubSourceTitle">
+
+        <label class="form-label fw-semibold">监听哪些消息</label>
+        <div class="mb-1">
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeBots" value="bots" checked onchange="ubModeChanged()"><label class="form-check-label" for="ubModeBots">所有机器人发的消息（推荐）</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeSel" value="selected" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeSel">只要指定的机器人</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeAll" value="all" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeAll">全部消息（含普通成员；主机器人已同步的目标会自动跳过，避免重复）</label></div>
+        </div>
+        <textarea class="form-control form-control-sm mb-3" id="ubSenderFilter" rows="2" placeholder="@abc_bot, 123456789（逗号或换行分隔）" style="display:none"></textarea>
+
+        <label class="form-label fw-semibold">同步到（主机器人必须在目标群/频道里并能发言）</label>
+        <div id="ubTargetList" class="border rounded p-2 mb-1" style="max-height:180px; overflow:auto"></div>
+        <input type="text" class="form-control form-control-sm mb-3" id="ubTargetsManual" placeholder="其他目标 ID（逗号分隔，可选）">
+
+        <div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" id="ubPrefix" onchange="ubPrefixChanged()"><label class="form-check-label" for="ubPrefix">带发送者名字前缀</label></div>
+        <div id="ubPrefixStyleBox" class="ms-4 mb-2" style="display:none">
+            <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="ubStyle" id="ubStyleNl" value="newline" checked><label class="form-check-label" for="ubStyleNl">名字单独一行</label></div>
+            <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="ubStyle" id="ubStyleFw" value="forward"><label class="form-check-label" for="ubStyleFw">转发样式（显示“转发自”）</label></div>
+        </div>
+        <div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" id="ubMedia" checked><label class="form-check-label" for="ubMedia">同步图片/视频/文件</label></div>
+        <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="ubEnabled" checked><label class="form-check-label" for="ubEnabled">启用</label></div>
+        <label class="form-label fw-semibold">屏蔽关键词（包含这些词的消息不同步）</label>
+        <input type="text" class="form-control form-control-sm" id="ubKeywords" placeholder="逗号分隔，可留空">
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" onclick="ubSaveRule()">保存</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const UB_RULES_INIT = {{ rules|tojson }};
+const UB_MAIN_GROUPS = {{ main_groups|tojson }};
+let ubRules = UB_RULES_INIT;
+let ubStatus = {{ status|tojson }};
+
+function ubEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function ubApi(url, body, method) {
+    const opts = { method: method || (body === undefined ? 'GET' : 'POST'), headers: {'Content-Type': 'application/json'} };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(url, opts);
+    let d = {};
+    try { d = await r.json(); } catch (e) { d = {status: 'error', msg: r.status === 429 ? '操作太频繁，请稍后再试' : '服务器错误'}; }
+    return d;
+}
+function ubShowErr(id, msg) { const el = document.getElementById(id); if (!msg) { el.style.display='none'; return; } el.textContent = msg; el.style.display = ''; }
+function ubBusy(on) { if (typeof showLoading === 'function') { on ? showLoading('处理中...') : (typeof hideLoading === 'function' && hideLoading()); } }
+
+function ubRenderStatus() {
+    const s = ubStatus || {};
+    const badge = document.getElementById('ubStateBadge');
+    const map = { active: ['监听中', 'bg-success'], starting: ['连接中', 'bg-info'], invalid: ['会话失效', 'bg-danger'],
+                  error: ['连接异常（自动重试）', 'bg-warning text-dark'], stopped: ['未运行', 'bg-secondary'] };
+    let st = s.runtime_state;
+    if (s.account_status === 'invalid') st = 'invalid';
+    if (!s.logged_in) { badge.textContent = '未登录'; badge.className = 'badge bg-secondary'; }
+    else { const m = map[st] || [st, 'bg-secondary']; badge.textContent = m[0]; badge.className = 'badge ' + m[1]; }
+    const acc = s.logged_in ? `已登录：${s.display_name ? ubEsc(s.display_name) + ' ' : ''}${s.username ? '@' + ubEsc(s.username) + ' ' : ''}(ID ${ubEsc(s.user_id)})${s.phone_masked ? ' · ' + ubEsc(s.phone_masked) : ''} · 已转入 ${s.relayed || 0} 条` : '还没有登录小号';
+    document.getElementById('ubAccountLine').innerHTML = acc;
+    ubShowErr('ubErrorLine', s.last_error || '');
+    const ab = document.getElementById('ubApiBadge');
+    if (s.has_api) { ab.textContent = '已保存 api_id ' + s.api_id; ab.style.display = ''; } else { ab.style.display = 'none'; }
+}
+async function ubRefreshStatus() { const d = await ubApi('/core/api/userbot/status'); if (d.status === 'ok') { ubStatus = d.data; ubRenderStatus(); } }
+
+async function ubApiSendCode() {
+    ubShowErr('ubApiError'); ubBusy(true);
+    const d = await ubApi('/core/api/userbot/apikey/send_code', {phone: document.getElementById('ubPhone').value});
+    ubBusy(false);
+    if (d.status === 'ok') { showToast(d.msg, 'success'); document.getElementById('ubApiCodeBox').style.display = ''; }
+    else ubShowErr('ubApiError', d.msg);
+}
+async function ubApiVerify() {
+    ubShowErr('ubApiError'); ubBusy(true);
+    const d = await ubApi('/core/api/userbot/apikey/verify', {code: document.getElementById('ubApiCode').value});
+    ubBusy(false);
+    if (d.status === 'ok') { showToast(d.msg, 'success'); document.getElementById('ubApiCodeBox').style.display = 'none'; document.getElementById('ubApiCode').value=''; ubRefreshStatus(); }
+    else ubShowErr('ubApiError', d.msg);
+}
+async function ubApiManual() {
+    ubShowErr('ubApiError');
+    const d = await ubApi('/core/api/userbot/apikey/manual', {api_id: document.getElementById('ubApiId').value, api_hash: document.getElementById('ubApiHash').value});
+    if (d.status === 'ok') { showToast(d.msg, 'success'); document.getElementById('ubApiHash').value=''; ubRefreshStatus(); }
+    else ubShowErr('ubApiError', d.msg);
+}
+async function ubLoginSendCode() {
+    ubShowErr('ubLoginError'); ubBusy(true);
+    const d = await ubApi('/core/api/userbot/login/send_code', {phone: document.getElementById('ubPhone').value});
+    ubBusy(false);
+    if (d.status === 'ok') { showToast(d.msg, 'success'); document.getElementById('ubLoginCodeBox').style.display = ''; document.getElementById('ubPasswordBox').style.display = 'none'; }
+    else ubShowErr('ubLoginError', d.msg);
+}
+async function ubLoginVerifyCode() {
+    ubShowErr('ubLoginError'); ubBusy(true);
+    const d = await ubApi('/core/api/userbot/login/verify_code', {code: document.getElementById('ubLoginCode').value});
+    ubBusy(false);
+    document.getElementById('ubLoginCode').value = '';
+    if (d.status !== 'ok') { ubShowErr('ubLoginError', d.msg); return; }
+    if (d.need_password) { document.getElementById('ubPasswordBox').style.display = ''; showToast(d.msg, 'info'); return; }
+    ubLoginDone(d);
+}
+async function ubLoginPassword() {
+    ubShowErr('ubLoginError'); ubBusy(true);
+    const d = await ubApi('/core/api/userbot/login/verify_password', {password: document.getElementById('ubPassword').value});
+    ubBusy(false);
+    document.getElementById('ubPassword').value = '';
+    if (d.status !== 'ok') { ubShowErr('ubLoginError', d.msg); return; }
+    ubLoginDone(d);
+}
+function ubLoginDone(d) {
+    showToast(d.msg, 'success');
+    ['ubLoginCodeBox', 'ubPasswordBox'].forEach(id => document.getElementById(id).style.display = 'none');
+    if (d.data) { ubStatus = d.data; ubRenderStatus(); }
+    setTimeout(ubRefreshStatus, 4000);
+}
+async function ubRestart() { const d = await ubApi('/core/api/userbot/restart', {}); showToast(d.msg, d.status === 'ok' ? 'success' : 'error'); setTimeout(ubRefreshStatus, 4000); }
+function ubLogout(forget) {
+    const msg = forget ? '确定退出小号并删除会话和 API 信息？' : '确定退出小号登录？（会在 Telegram 端终止这个会话）';
+    const go = async () => { ubBusy(true); const d = await ubApi('/core/api/userbot/logout', {forget_api: forget}); ubBusy(false); showToast(d.msg, d.status === 'ok' ? 'success' : 'error'); ubRefreshStatus(); };
+    if (typeof showConfirm === 'function') showConfirm(msg, go); else if (confirm(msg)) go();
+}
+
+// ---- rules ----
+function ubTargetsLabel(ids) {
+    return (ids || []).map(id => { const g = UB_MAIN_GROUPS.find(x => String(x.chat_id) === String(id)); return g ? ubEsc(g.title) : ubEsc(id); }).join('<br>');
+}
+function ubRenderRules() {
+    const body = document.getElementById('ubRulesBody');
+    if (!ubRules.length) { body.innerHTML = '<tr><td colspan="6" class="text-muted ps-3">暂无规则，点「添加规则」</td></tr>'; return; }
+    const modeTxt = r => r.sender_mode === 'all' ? '全部消息' : (r.sender_mode === 'selected' ? '指定：' + ubEsc(r.sender_filter) : '所有机器人');
+    body.innerHTML = ubRules.map(r => `<tr>
+        <td class="ps-3"><div class="fw-semibold">${ubEsc(r.source_title || r.source_chat_id)}</div><small class="text-muted">${ubEsc(r.source_chat_id)}</small></td>
+        <td class="small">${modeTxt(r)}</td>
+        <td class="small">${ubTargetsLabel(r.target_chat_ids)}</td>
+        <td class="small">${r.include_sender_prefix ? (r.sender_prefix_style === 'forward' ? '转发样式' : '名字单独一行') : '无'}</td>
+        <td><div class="form-check form-switch m-0"><input class="form-check-input" type="checkbox" ${r.enabled ? 'checked' : ''} onchange="ubToggleRule(${r.id})"></div></td>
+        <td class="text-end pe-3"><button class="btn btn-sm btn-outline-primary me-1" onclick="ubOpenRule(${r.id})"><i class="fa-solid fa-pen"></i></button><button class="btn btn-sm btn-outline-danger" onclick="ubDeleteRule(${r.id})"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`).join('');
+}
+function ubModeChanged() { document.getElementById('ubSenderFilter').style.display = document.getElementById('ubModeSel').checked ? '' : 'none'; }
+function ubPrefixChanged() { document.getElementById('ubPrefixStyleBox').style.display = document.getElementById('ubPrefix').checked ? '' : 'none'; }
+function ubPickSource() {
+    const sel = document.getElementById('ubSourceSelect');
+    if (!sel.value) return;
+    document.getElementById('ubSourceId').value = sel.value;
+    document.getElementById('ubSourceTitle').value = sel.options[sel.selectedIndex].dataset.title || '';
+}
+async function ubLoadDialogs() {
+    ubBusy(true); const d = await ubApi('/core/api/userbot/dialogs'); ubBusy(false);
+    if (d.status !== 'ok') { showToast(d.msg, 'error'); return; }
+    const sel = document.getElementById('ubSourceSelect');
+    sel.innerHTML = '<option value="">— 选择源群 —</option>' + d.data.map(g => `<option value="${ubEsc(g.id)}" data-title="${ubEsc(g.title)}">${ubEsc(g.title)} (${g.type === 'channel' ? '频道' : '群'} ${ubEsc(g.id)})</option>`).join('');
+    showToast(`已加载 ${d.data.length} 个群/频道`, 'success');
+}
+function ubOpenRule(id) {
+    const r = ubRules.find(x => x.id === id) || {sender_mode: 'bots', target_chat_ids: [], include_sender_prefix: false, sender_prefix_style: 'newline', sync_media: true, enabled: true, filter_keywords: []};
+    document.getElementById('ubRuleId').value = r.id || '';
+    document.getElementById('ubSourceId').value = r.source_chat_id || '';
+    document.getElementById('ubSourceTitle').value = r.source_title || '';
+    document.getElementById({bots: 'ubModeBots', selected: 'ubModeSel', all: 'ubModeAll'}[r.sender_mode] || 'ubModeBots').checked = true;
+    document.getElementById('ubSenderFilter').value = r.sender_filter || '';
+    const known = new Set(UB_MAIN_GROUPS.map(g => String(g.chat_id)));
+    document.getElementById('ubTargetList').innerHTML = UB_MAIN_GROUPS.length ? UB_MAIN_GROUPS.map((g, i) => `<div class="form-check"><input class="form-check-input ub-target" type="checkbox" id="ubT${i}" value="${ubEsc(g.chat_id)}" ${(r.target_chat_ids || []).map(String).includes(String(g.chat_id)) ? 'checked' : ''}><label class="form-check-label small" for="ubT${i}">${ubEsc(g.title)} <span class="text-muted">${ubEsc(g.chat_id)}</span></label></div>`).join('') : '<div class="small text-muted">主机器人还没有群/频道</div>';
+    document.getElementById('ubTargetsManual').value = (r.target_chat_ids || []).filter(t => !known.has(String(t))).join(', ');
+    document.getElementById('ubPrefix').checked = !!r.include_sender_prefix;
+    document.getElementById(r.sender_prefix_style === 'forward' ? 'ubStyleFw' : 'ubStyleNl').checked = true;
+    document.getElementById('ubMedia').checked = r.sync_media !== false;
+    document.getElementById('ubEnabled').checked = r.enabled !== false;
+    document.getElementById('ubKeywords').value = (r.filter_keywords || []).join(', ');
+    ubModeChanged(); ubPrefixChanged();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('ubRuleModal')).show();
+}
+async function ubSaveRule() {
+    const targets = Array.from(document.querySelectorAll('.ub-target:checked')).map(x => x.value)
+        .concat(document.getElementById('ubTargetsManual').value.split(/[\s,，]+/).filter(Boolean));
+    const payload = {
+        id: document.getElementById('ubRuleId').value || null,
+        source_chat_id: document.getElementById('ubSourceId').value.trim(),
+        source_title: document.getElementById('ubSourceTitle').value,
+        sender_mode: document.querySelector('input[name="ubMode"]:checked').value,
+        sender_filter: document.getElementById('ubSenderFilter').value,
+        target_chat_ids: targets,
+        include_sender_prefix: document.getElementById('ubPrefix').checked,
+        sender_prefix_style: document.querySelector('input[name="ubStyle"]:checked').value,
+        sync_media: document.getElementById('ubMedia').checked,
+        enabled: document.getElementById('ubEnabled').checked,
+        filter_keywords: document.getElementById('ubKeywords').value,
+    };
+    const d = await ubApi('/core/api/userbot/rules/save', payload);
+    if (d.status !== 'ok') { showToast(d.msg, 'error'); return; }
+    showToast(d.msg, 'success');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('ubRuleModal')).hide();
+    const l = await ubApi('/core/api/userbot/rules'); if (l.status === 'ok') { ubRules = l.data; ubRenderRules(); }
+}
+async function ubToggleRule(id) { const d = await ubApi(`/core/api/userbot/rules/${id}/toggle`, {}); if (d.status === 'ok') { const r = ubRules.find(x => x.id === id); if (r) r.enabled = d.enabled; } else showToast(d.msg, 'error'); }
+function ubDeleteRule(id) {
+    const go = async () => { const d = await ubApi(`/core/api/userbot/rules/${id}/delete`, {}); showToast(d.msg, d.status === 'ok' ? 'success' : 'error'); ubRules = ubRules.filter(r => r.id !== id); ubRenderRules(); };
+    if (typeof showConfirm === 'function') showConfirm('确定删除这条规则？', go); else if (confirm('确定删除这条规则？')) go();
+}
+async function ubLoadLogs() {
+    const d = await ubApi('/core/api/userbot/logs');
+    if (d.status !== 'ok') return;
+    const body = document.getElementById('ubLogsBody');
+    if (!d.data.length) { body.innerHTML = '<tr><td colspan="6" class="text-muted ps-3">暂无记录</td></tr>'; return; }
+    const st = {success: '<span class="badge bg-success">成功</span>', failed: '<span class="badge bg-danger">失败</span>', filtered: '<span class="badge bg-secondary">已过滤</span>'};
+    body.innerHTML = d.data.map(x => `<tr><td class="ps-3 small">${ubEsc(x.time)}</td><td class="small">${ubEsc(x.sender)}</td><td class="small">${ubTargetsLabel([x.target])}</td><td class="small">${ubEsc(x.type)}</td><td>${st[x.status] || ubEsc(x.status)}${x.error ? `<div class="small text-danger">${ubEsc(x.error)}</div>` : ''}</td><td class="small text-muted">${ubEsc(x.preview)}</td></tr>`).join('');
+}
+ubRenderStatus(); ubRenderRules(); ubLoadLogs();
+setInterval(ubRefreshStatus, 15000);
+</script>
+{% endblock %}

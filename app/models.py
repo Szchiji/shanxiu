@@ -621,8 +621,46 @@ class SyncMessageLog(db.Model):
     status = db.Column(db.String(20), default='success')  # success, failed, filtered
     error_message = db.Column(db.Text, nullable=True)  # 错误信息（如果同步失败）
     synced_at = db.Column(db.DateTime, default=datetime.now, index=True)
-    
+    via = db.Column(db.String(20), nullable=True)  # None = 机器人自身收到；'userbot' = 小号监听转入
+
     group = db.relationship('BotGroup', backref='sync_message_logs', lazy=True, foreign_keys=[source_group_id])
+
+
+class UserbotAccount(db.Model):
+    """小号（Telegram 用户账号）— 只监听，不发送。secrets are Fernet-encrypted (app.userbot.crypto)."""
+    __tablename__ = 'userbot_accounts'
+    id = db.Column(db.Integer, primary_key=True)
+    api_id = db.Column(db.Integer, nullable=True)
+    api_hash_enc = db.Column(db.Text, nullable=True)
+    session_enc = db.Column(db.Text, nullable=True)
+    phone_masked = db.Column(db.String(32), nullable=True)
+    tg_user_id = db.Column(db.BigInteger, nullable=True)
+    username = db.Column(db.String(255), nullable=True)
+    display_name = db.Column(db.String(255), nullable=True)
+    # none | active | invalid | stopped
+    status = db.Column(db.String(20), default='none')
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class UserbotSyncRule(db.Model):
+    """小号同步规则：小号所在的源群 → 主机器人发送到目标群/频道。"""
+    __tablename__ = 'userbot_sync_rules'
+    id = db.Column(db.Integer, primary_key=True)
+    source_chat_id = db.Column(db.String(50), nullable=False, index=True)  # Bot-API style, e.g. -100123
+    source_title = db.Column(db.String(255), nullable=True)
+    # bots = 仅机器人消息（默认）| selected = 指定机器人 | all = 全部消息
+    sender_mode = db.Column(db.String(20), default='bots')
+    sender_filter = db.Column(db.Text, default='')  # comma/newline separated @usernames or numeric ids
+    target_chat_ids = db.Column(db.Text, default='[]')  # JSON list of chat ids
+    include_sender_prefix = db.Column(db.Boolean, default=False)
+    sender_prefix_style = db.Column(db.String(20), default='newline')
+    sync_media = db.Column(db.Boolean, default=True)
+    filter_keywords = db.Column(db.Text, default='[]')
+    enabled = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class OtherSettings(db.Model):

@@ -425,7 +425,12 @@ async def _forward_probe_media(bot, probe_chat_id, from_chat, msg_id, extra_kwar
 
 
 async def resolve_tme_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs=None):
-    """把一个 t.me 消息链接解析为 {'kind','media',...}；无法放进相册时返回 None。"""
+    """把一个 t.me 消息链接解析为 {'kind','media',...}；无法放进相册时返回 None。
+
+    优先顺序：缓存 → MEDIA_STAGING_CHAT_ID 转发探测 → 目标会话转发探测
+    → 公开频道预览页下载。转发探测直接拿到 file_id，比下载再上传更稳，
+    也更适合随后用 sendMediaGroup 合成相册。
+    """
     key = _tme_cache_key(bot, from_chat, msg_id)
     cached = _TME_MEDIA_CACHE.get(key)
     if cached:
@@ -438,18 +443,21 @@ async def resolve_tme_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs
             _tme_cache_put(key, info)
             return info
 
+    # Prefer forwarding into the destination chat (public channels work without
+    # membership) so we get a reusable file_id without downloading the file.
+    info = await _forward_probe_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs)
+    if info:
+        _tme_cache_put(key, info)
+        return info
+
     if isinstance(from_chat, str) and from_chat.startswith('@'):
         try:
             info = await asyncio.to_thread(_scrape_public_tme_media, from_chat[1:], msg_id)
         except Exception:
             info = None
         if info:
+            # bytes payload — caller will upload; do not cache until we have file_id
             return info
-
-    info = await _forward_probe_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs)
-    if info:
-        _tme_cache_put(key, info)
-        return info
     return None
 
 
@@ -652,6 +660,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
         if seg[0] == 'copy':
             # copyMessages 要求消息 ID 严格递增；原本就是同一相册的会保持分组
             ids = sorted(set(seg[2]))
+            print(f"[album] method=copy_messages n={len(ids)} chat={chat_id} (未解析到可组相册的媒体，原帖若非同一相册会一张一张出现)", flush=True)
             copied = await bot.copy_messages(
                 chat_id=chat_id, from_chat_id=seg[1], message_ids=ids,
                 remove_caption=bool(content), **extra_kwargs
@@ -682,27 +691,63 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                     c, pm, ents = _entry_caption(e, cap if j == 0 else None)
                     media_items.append(_build_input_media(e['kind'], e['media'], caption=c, parse_mode=pm,
                                                           caption_entities=ents, filename=e.get('filename')))
+                group_msgs = None
                 try:
                     group_msgs = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
-                except Exception as e_group:
-                    if not any(e.get('src') for e in chunk):
-                        raise
-                    # 含 t.me 媒体的相册发送失败：逐条兜底，至少保证内容送达
-                    print(f"⚠️ [album] 相册发送失败，逐条兜底: {redact_secrets(str(e_group))}", flush=True)
-                    group_msgs = []
-                    for j, e in enumerate(chunk):
-                        if e.get('src'):
-                            group_msgs.append(await _copy_one(e))
-                        else:
-                            c, pm, ents = _entry_caption(e, cap if j == 0 else None)
-                            group_msgs.append(await _send_single_media(
-                                bot, chat_id, e['kind'], e['media'], caption=c, parse_mode=pm,
-                                caption_entities=ents, extra_kwargs=extra_kwargs))
-                    group_msgs = [m for m in group_msgs if m]
-                    if cap and chunk[0].get('src'):
-                        cap = None  # 第一项是复制的原帖，文字没放进去，交给跟随消息
-                else:
+                    print(f"[album] method=send_media_group n={len(group_msgs or [])} chat={chat_id}", flush=True)
                     _remember(chunk, group_msgs)
+                except Exception as e_group:
+                    print(f"⚠️ [album] send_media_group 失败，尝试 file_id 重传: {redact_secrets(str(e_group))}", flush=True)
+                    rebuilt = []
+                    for e in chunk:
+                        e2 = e
+                        if isinstance(e.get('media'), (bytes, bytearray)):
+                            try:
+                                up = await _send_single_media(
+                                    bot, chat_id, e['kind'], e['media'], caption=None,
+                                    filename=e.get('filename'), extra_kwargs=extra_kwargs)
+                                info = _media_info_from_message(up)
+                                if info:
+                                    e2 = dict(e, media=info['media'], kind=info.get('kind') or e['kind'])
+                                    if e2.get('src'):
+                                        _tme_cache_put(_tme_cache_key(bot, *e2['src']), info)
+                                    try:
+                                        await bot.delete_message(chat_id=chat_id, message_id=up.message_id)
+                                    except Exception:
+                                        pass
+                            except Exception as up_err:
+                                print(f"⚠️ [album] 预上传失败: {redact_secrets(str(up_err))}", flush=True)
+                        rebuilt.append(e2)
+                    retry_items = []
+                    for j, e in enumerate(rebuilt):
+                        c, pm, ents = _entry_caption(e, cap if j == 0 else None)
+                        retry_items.append(_build_input_media(
+                            e['kind'], e['media'], caption=c, parse_mode=pm,
+                            caption_entities=ents, filename=e.get('filename')))
+                    try:
+                        group_msgs = await bot.send_media_group(chat_id=chat_id, media=retry_items, **extra_kwargs)
+                        print(f"[album] method=send_media_group_retry n={len(group_msgs or [])} chat={chat_id}", flush=True)
+                        _remember(chunk, group_msgs)
+                    except Exception as e_retry:
+                        print(f"⚠️ [album] 重传相册仍失败，改为逐条发送已解析媒体: {redact_secrets(str(e_retry))}", flush=True)
+                        group_msgs = []
+                        for j, e in enumerate(rebuilt):
+                            c, pm, ents = _entry_caption(e, cap if j == 0 else None)
+                            try:
+                                msg = await _send_single_media(
+                                    bot, chat_id, e['kind'], e['media'], caption=c, parse_mode=pm,
+                                    caption_entities=ents, filename=e.get('filename'),
+                                    extra_kwargs=extra_kwargs)
+                            except Exception:
+                                if e.get('src'):
+                                    msg = await _copy_one(e)
+                                else:
+                                    raise
+                            if msg:
+                                group_msgs.append(msg)
+                        if cap:
+                            cap = None
+                        _remember(chunk, group_msgs)
                 sent_all.extend(group_msgs or [])
             if cap:
                 caption_used = True
@@ -717,6 +762,8 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
     need_follow = has_buttons or (bool(content) and not caption_used)
     if need_follow and sent_all:
         follow_text = content if content else '\u200b'
+        if content and len(follow_text) > 4096:
+            follow_text = follow_text[:4090] + '…'
         try:
             follow_msg = await bot.send_message(
                 chat_id=chat_id,

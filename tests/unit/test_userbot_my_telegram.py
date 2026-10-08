@@ -41,9 +41,16 @@ def test_parse_login():
 
 
 def test_generate_app_fields_valid():
-    f = mt.generate_app_fields()
-    assert f['app_shortname'].isalnum() and 5 <= len(f['app_shortname']) <= 32
-    assert f['app_platform'] == 'desktop'
+    import re
+    for attempt in range(3):
+        f = mt.generate_app_fields(attempt)
+        assert re.fullmatch(r'[a-z][a-z0-9]{4,31}', f['app_shortname'])
+        assert re.fullmatch(r'[A-Za-z0-9]{5,64}', f['app_title'])
+        assert f['app_url'] == '' and f['app_desc'] == ''
+        assert f['app_platform'] in ('android', 'ios', 'wp', 'bb', 'desktop', 'web', 'ubp', 'other')
+    assert mt.generate_app_fields(0)['app_platform'] == 'desktop'
+    assert mt.generate_app_fields(1)['app_platform'] == 'web'
+    assert mt.generate_app_fields(0)['app_shortname'] != mt.generate_app_fields(0)['app_shortname']
 
 
 class _FakeHttp:
@@ -52,15 +59,22 @@ class _FakeHttp:
         self.calls = []
         self.headers = {}
 
-    def _next(self, method, url, data=None, timeout=None):
-        self.calls.append((method, url.replace(mt.BASE_URL, ''), dict(data or {})))
-        return SimpleNamespace(text=self.script.pop(0))
+    def _next(self, method, url, data=None, headers=None):
+        self.calls.append((method, url.replace(mt.BASE_URL, ''), dict(data or {}), dict(headers or {})))
+        return SimpleNamespace(text=self.script.pop(0), status_code=200)
 
-    def post(self, url, data=None, timeout=None):
-        return self._next('POST', url, data, timeout)
+    def post(self, url, data=None, timeout=None, headers=None):
+        return self._next('POST', url, data, headers)
 
-    def get(self, url, timeout=None):
-        return self._next('GET', url, None, timeout)
+    def get(self, url, timeout=None, headers=None):
+        return self._next('GET', url, None, headers)
+
+
+def _flow(script):
+    http = _FakeHttp(script)
+    flow = mt.MyTelegramFlow('+1', http=http)
+    flow.retry_pause = 0
+    return flow, http
 
 
 def test_full_flow_creates_app_when_missing():
@@ -85,12 +99,53 @@ def test_existing_app_skips_create():
     assert all(c[1] != '/apps/create' for c in http.calls)
 
 
-def test_create_error_gives_manual_hint():
-    http = _FakeHttp([_fx('my_telegram_apps_create.html'), 'ERROR'])
-    flow = mt.MyTelegramFlow('+1', http=http)
+def test_create_request_mimics_web_form():
+    flow, http = _flow([_fx('my_telegram_apps_create.html'), '', _fx('my_telegram_apps_existing.html')])
+    flow.fetch_or_create_app()
+    method, path, data, headers = [c for c in http.calls if c[1] == '/apps/create'][0]
+    assert headers['X-Requested-With'] == 'XMLHttpRequest'
+    assert headers['Referer'] == 'https://my.telegram.org/apps'
+    assert headers['Content-Type'].startswith('application/x-www-form-urlencoded')
+    assert set(data) == {'hash', 'app_title', 'app_shortname', 'app_url', 'app_platform', 'app_desc'}
+    assert http.headers['Origin'] == 'https://my.telegram.org' and 'Mozilla' in http.headers['User-Agent']
+
+
+def test_error_but_app_actually_created():
+    flow, http = _flow([_fx('my_telegram_apps_create.html'), 'ERROR', _fx('my_telegram_apps_existing.html')])
+    assert flow.fetch_or_create_app() == (1234567, '0123456789abcdef0123456789abcdef')
+
+
+def test_error_retries_with_fresh_hash_new_name_and_web_platform():
+    second_form = _fx('my_telegram_apps_create.html').replace('a1b2c3d4e5f60718', 'ffff0000eeee1111')
+    flow, http = _flow([_fx('my_telegram_apps_create.html'), 'ERROR', second_form, '',
+                        _fx('my_telegram_apps_existing.html')])
+    assert flow.fetch_or_create_app()[0] == 1234567
+    creates = [c for c in http.calls if c[1] == '/apps/create']
+    assert len(creates) == 2
+    assert creates[0][2]['hash'] == 'a1b2c3d4e5f60718' and creates[1][2]['hash'] == 'ffff0000eeee1111'
+    assert creates[0][2]['app_shortname'] != creates[1][2]['app_shortname']
+    assert [c[2]['app_platform'] for c in creates] == ['desktop', 'web']
+
+
+def test_persistent_error_explains_ip_and_manual():
+    form = _fx('my_telegram_apps_create.html')
+    flow, http = _flow([form, 'ERROR', form, 'ERROR', form])
     with pytest.raises(mt.MyTelegramError) as ei:
         flow.fetch_or_create_app()
-    assert 'ERROR' in str(ei.value) and '手动' in str(ei.value)
+    msg = str(ei.value)
+    assert 'ERROR' in msg and 'IP' in msg and '手动填写' in msg
+    assert len([c for c in http.calls if c[1] == '/apps/create']) == 2
+
+
+def test_specific_validation_message_surfaced():
+    form = _fx('my_telegram_apps_create.html')
+    flow, _ = _flow([form, 'Incorrect app name!', form])
+    with pytest.raises(mt.MyTelegramError, match='Incorrect app name'):
+        flow.fetch_or_create_app()
+
+
+def test_log_snippet_masks_numbers():
+    assert mt._short('call +441234567890 now') == 'call <num> now'
 
 
 def test_network_error_is_friendly():

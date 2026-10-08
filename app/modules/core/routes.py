@@ -297,6 +297,190 @@ def parse_telegram_message_link(url):
 
 MAX_MEDIA_GROUP_SIZE = 10  # Telegram sendMediaGroup 每组 2–10 项
 
+# ---------------------------------------------------------------------------
+# t.me 消息链接 → 可放进相册的媒体
+#
+# copyMessages 只有在原消息本来就是同一个相册时才会保持分组；频道里分别发布的
+# 几条单图/单视频帖子（例如 t.me/xxx/1417、1418、1419）复制过来仍是一条一条的。
+# 想要合成一个相册，必须拿到每条帖子的媒体本身再用 sendMediaGroup 重新组装：
+#   1. 缓存：同一机器人之前解析/上传过的 file_id 直接复用；
+#   2. MEDIA_STAGING_CHAT_ID（可选）：把原帖转发到这个中转会话，读出 file_id 后删除；
+#   3. 公开频道（@username）：读取 t.me 公开预览页拿到图片/视频地址并下载上传；
+#   4. 以上都不行：转发到目标会话（静音）读出 file_id 后立即删除；
+#   5. 仍然失败：退回 copyMessages 逐条复制（旧行为）。
+# ---------------------------------------------------------------------------
+_TME_MEDIA_CACHE = {}
+_TME_MEDIA_CACHE_MAX = 2000
+_TME_SCRAPE_MAX_BYTES = 20 * 1024 * 1024
+_TME_SCRAPE_TIMEOUT = 15
+
+
+def _tme_bot_key(bot):
+    try:
+        bid = bot.id
+        if isinstance(bid, int):
+            return bid
+    except Exception:
+        pass
+    return id(bot)
+
+
+def _tme_cache_key(bot, from_chat, msg_id):
+    return (_tme_bot_key(bot), str(from_chat).lower(), int(msg_id))
+
+
+def _tme_cache_put(key, info):
+    if not info or not isinstance(info.get('media'), str):
+        return
+    if len(_TME_MEDIA_CACHE) >= _TME_MEDIA_CACHE_MAX:
+        try:
+            _TME_MEDIA_CACHE.pop(next(iter(_TME_MEDIA_CACHE)))
+        except Exception:
+            _TME_MEDIA_CACHE.clear()
+    _TME_MEDIA_CACHE[key] = dict(info)
+
+
+def _media_info_from_message(msg, with_caption=False):
+    """从 Telegram Message 中读出可放进相册的媒体（仅图片/视频）。"""
+    if msg is None:
+        return None
+    info = None
+    photo = getattr(msg, 'photo', None)
+    if isinstance(photo, (list, tuple)) and photo:
+        fid = getattr(photo[-1], 'file_id', None)
+        if isinstance(fid, str) and fid:
+            info = {'kind': 'image', 'media': fid}
+    if info is None:
+        video = getattr(msg, 'video', None)
+        fid = getattr(video, 'file_id', None) if video is not None else None
+        if isinstance(fid, str) and fid:
+            info = {'kind': 'video', 'media': fid}
+    if info and with_caption:
+        cap = getattr(msg, 'caption', None)
+        if isinstance(cap, str) and cap:
+            info['caption'] = cap
+            ents = getattr(msg, 'caption_entities', None)
+            if isinstance(ents, (list, tuple)) and ents:
+                info['caption_entities'] = tuple(ents)
+    return info
+
+
+def _scrape_public_tme_media(username, msg_id):
+    """读取公开频道帖子的预览页，下载其中的单张图片/单个视频。失败返回 None。"""
+    import html as _html
+    url = f"https://t.me/{username}/{int(msg_id)}?embed=1&mode=tme&single=1"
+    try:
+        r = requests.get(url, timeout=_TME_SCRAPE_TIMEOUT, headers={'User-Agent': 'Mozilla/5.0'})
+        if r.status_code != 200 or 'tgme_widget_message' not in r.text:
+            return None
+        page = r.text
+    except Exception:
+        return None
+    kind = media_url = None
+    m = re.search(r'<video[^>]+src="(https://[^"]+)"', page)
+    if m and 'tgme_widget_message_video' in page:
+        kind, media_url = 'video', _html.unescape(m.group(1))
+    else:
+        photos = re.findall(r"tgme_widget_message_photo_wrap[^>]*background-image:url\('(https://[^']+)'\)", page)
+        if len(photos) == 1:
+            kind, media_url = 'image', _html.unescape(photos[0])
+    if not media_url:
+        return None
+    try:
+        with requests.get(media_url, timeout=_TME_SCRAPE_TIMEOUT, stream=True) as resp:
+            if resp.status_code != 200:
+                return None
+            buf = bytearray()
+            for chunk in resp.iter_content(64 * 1024):
+                buf.extend(chunk)
+                if len(buf) > _TME_SCRAPE_MAX_BYTES:
+                    return None
+        if not buf:
+            return None
+    except Exception:
+        return None
+    ext = 'mp4' if kind == 'video' else 'jpg'
+    return {'kind': kind, 'media': bytes(buf), 'filename': f"{username}_{int(msg_id)}.{ext}"}
+
+
+async def _forward_probe_media(bot, probe_chat_id, from_chat, msg_id, extra_kwargs=None):
+    """转发原帖到 probe 会话以读取 file_id（含原说明文字），然后立即删除转发的消息。"""
+    fwd = None
+    try:
+        fwd = await bot.forward_message(
+            chat_id=probe_chat_id, from_chat_id=from_chat, message_id=msg_id,
+            disable_notification=True, **(extra_kwargs or {})
+        )
+        return _media_info_from_message(fwd, with_caption=True)
+    except Exception as e:
+        print(f"⚠️ [album] 读取 t.me 媒体失败 from={from_chat} id={msg_id} via={probe_chat_id}: {redact_secrets(str(e))}", flush=True)
+        return None
+    finally:
+        mid = getattr(fwd, 'message_id', None) if fwd is not None else None
+        if isinstance(mid, int):
+            try:
+                await bot.delete_message(chat_id=probe_chat_id, message_id=mid)
+            except Exception:
+                pass
+
+
+async def resolve_tme_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs=None):
+    """把一个 t.me 消息链接解析为 {'kind','media',...}；无法放进相册时返回 None。"""
+    key = _tme_cache_key(bot, from_chat, msg_id)
+    cached = _TME_MEDIA_CACHE.get(key)
+    if cached:
+        return dict(cached)
+
+    staging = (os.environ.get('MEDIA_STAGING_CHAT_ID') or '').strip()
+    if staging:
+        info = await _forward_probe_media(bot, staging, from_chat, msg_id)
+        if info:
+            _tme_cache_put(key, info)
+            return info
+
+    if isinstance(from_chat, str) and from_chat.startswith('@'):
+        try:
+            info = await asyncio.to_thread(_scrape_public_tme_media, from_chat[1:], msg_id)
+        except Exception:
+            info = None
+        if info:
+            return info
+
+    info = await _forward_probe_media(bot, target_chat_id, from_chat, msg_id, extra_kwargs)
+    if info:
+        _tme_cache_put(key, info)
+        return info
+    return None
+
+
+def _build_input_media(kind, media, caption=None, parse_mode=None, caption_entities=None, filename=None):
+    from telegram import InputFile
+    if isinstance(media, (bytes, bytearray)):
+        media = InputFile(bytes(media), filename=filename or ('video.mp4' if kind == 'video' else 'photo.jpg'))
+    kw = {'media': media, 'caption': caption}
+    if caption_entities:
+        kw['caption_entities'] = list(caption_entities)
+    else:
+        kw['parse_mode'] = parse_mode
+    if kind == 'video':
+        return InputMediaVideo(**kw)
+    return InputMediaPhoto(**kw)
+
+
+async def _send_single_media(bot, chat_id, kind, media, caption=None, parse_mode=None,
+                             caption_entities=None, filename=None, extra_kwargs=None):
+    from telegram import InputFile
+    if isinstance(media, (bytes, bytearray)):
+        media = InputFile(bytes(media), filename=filename or ('video.mp4' if kind == 'video' else 'photo.jpg'))
+    kw = dict(chat_id=chat_id, caption=caption, **(extra_kwargs or {}))
+    if caption_entities:
+        kw['caption_entities'] = list(caption_entities)
+    else:
+        kw['parse_mode'] = parse_mode
+    if kind == 'video':
+        return await bot.send_video(video=media, **kw)
+    return await bot.send_photo(photo=media, **kw)
+
 
 async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, reply_markup=None, message_thread_id=None, media_url_types=None, collected_ids=None):
     """
@@ -373,41 +557,100 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
 
     # ---------------- 多个媒体：以相册（媒体组）发送 ----------------
     # 规则：
-    #  * 普通 URL 用 send_media_group 发送，每组最多 10 个，超出自动拆成多组；
-    #    拆分后只剩 1 个的分组改用 send_photo / send_video（媒体组至少 2 项）。
-    #  * t.me 消息链接无法作为媒体 URL 直接发送（Telegram 抓不到图片），改为
-    #    copy_messages 按原消息复制；同一来源的多个链接一次复制，原相册分组保留。
+    #  * 普通 URL 与 t.me 链接按原顺序合并成相册，用 send_media_group 发送，
+    #    每组最多 10 个，超出自动拆成多组；只剩 1 个的分组改用 send_photo/send_video。
+    #  * t.me 消息链接先解析出媒体本身（见 resolve_tme_media），这样频道里分别
+    #    发布的多条帖子也能合成一个相册；解析不了的链接才退回 copy_messages。
     #  * Telegram 不支持相册带内联按钮：有按钮时，相册不带说明文字，文字+按钮
     #    作为相册下方的一条单独消息发送（避免文字重复出现）。
-    #  * 无按钮时文字作为第一项的 caption（HTML）；文字超过 1024 字符或含
-    #    t.me 链接时同样改为单独消息发送。
+    #  * 无按钮时文字作为第一项的 caption（HTML）；文字超过 1024 字符时改为单独消息。
     has_buttons = bool(reply_markup)
-    segments = []  # ['tme', from_chat, [ids]] | ['url', [(url, type), ...]]
+
+    parsed = []
     for i, url in enumerate(media_urls):
-        url_type = _get_url_type(i)
         tg_from_chat, tg_msg_id = parse_telegram_message_link(url)
-        if tg_from_chat and tg_msg_id:
-            if segments and segments[-1][0] == 'tme' and segments[-1][1] == tg_from_chat:
-                segments[-1][2].append(tg_msg_id)
+        parsed.append((url, _get_url_type(i), tg_from_chat, tg_msg_id))
+
+    tme_targets = [(fc, mid) for _, _, fc, mid in parsed if fc and mid]
+    resolved = {}
+    if tme_targets:
+        unique = list(dict.fromkeys(tme_targets))
+        results = await asyncio.gather(
+            *[resolve_tme_media(bot, chat_id, fc, mid, extra_kwargs) for fc, mid in unique],
+            return_exceptions=True
+        )
+        for target, res in zip(unique, results):
+            if isinstance(res, dict) and res.get('media') is not None:
+                resolved[target] = res
+        print(f"[album] t.me 链接 {len(unique)} 个，可合并为相册 {len(resolved)} 个 chat={chat_id}", flush=True)
+
+    # entries: {'t': 'media', kind, media, src, caption, caption_entities, filename} | {'t': 'copy', from_chat, msg_id}
+    entries = []
+    for url, url_type, fc, mid in parsed:
+        if fc and mid:
+            info = resolved.get((fc, mid))
+            if info:
+                entries.append({'t': 'media', 'kind': info.get('kind') or 'image', 'media': info['media'],
+                                'src': (fc, mid), 'caption': info.get('caption'),
+                                'caption_entities': info.get('caption_entities'),
+                                'filename': info.get('filename')})
             else:
-                segments.append(['tme', tg_from_chat, [tg_msg_id]])
+                entries.append({'t': 'copy', 'from_chat': fc, 'msg_id': mid})
         else:
-            if segments and segments[-1][0] == 'url':
-                segments[-1][1].append((url, url_type))
+            entries.append({'t': 'media', 'kind': url_type if url_type in ('image', 'video') else 'image',
+                            'media': url, 'src': None})
+
+    # 连续的同类条目分段
+    segments = []  # ('media', [entries]) | ('copy', from_chat, [ids])
+    for e in entries:
+        if e['t'] == 'media':
+            if segments and segments[-1][0] == 'media':
+                segments[-1][1].append(e)
             else:
-                segments.append(['url', [(url, url_type)]])
+                segments.append(('media', [e]))
+        else:
+            if segments and segments[-1][0] == 'copy' and segments[-1][1] == e['from_chat']:
+                segments[-1][2].append(e['msg_id'])
+            else:
+                segments.append(('copy', e['from_chat'], [e['msg_id']]))
 
     if not segments:
         return None
 
-    any_tme = any(seg[0] == 'tme' for seg in segments)
-    caption_on_album = bool(content) and not has_buttons and not any_tme and len(content) <= 1024
+    has_media_segment = any(seg[0] == 'media' for seg in segments)
+    caption_on_album = bool(content) and not has_buttons and has_media_segment and len(content) <= 1024
     caption_used = False
     sent_all = []
 
+    def _entry_caption(e, cap):
+        """返回 (caption, parse_mode, caption_entities)。有自定义文字时不保留原说明。"""
+        if cap:
+            return cap, 'HTML', None
+        if not content and e.get('caption'):
+            return e['caption'], None, e.get('caption_entities')
+        return None, None, None
+
+    def _remember(chunk, msgs):
+        # 下载上传的 t.me 媒体：记住返回的 file_id，下次直接复用
+        try:
+            for e, m in zip(chunk, msgs or []):
+                if e.get('src') and not isinstance(e['media'], str):
+                    info = _media_info_from_message(m)
+                    if info:
+                        _tme_cache_put(_tme_cache_key(bot, *e['src']), info)
+        except Exception:
+            pass
+
+    async def _copy_one(e):
+        fc, mid = e['src']
+        kw = dict(chat_id=chat_id, from_chat_id=fc, message_id=mid, **extra_kwargs)
+        if content:
+            kw['caption'] = ''  # 有自定义文字时去掉原说明（文字由跟随消息发送）
+        return await bot.copy_message(**kw)
+
     for seg in segments:
-        if seg[0] == 'tme':
-            # copyMessages 要求消息 ID 严格递增
+        if seg[0] == 'copy':
+            # copyMessages 要求消息 ID 严格递增；原本就是同一相册的会保持分组
             ids = sorted(set(seg[2]))
             copied = await bot.copy_messages(
                 chat_id=chat_id, from_chat_id=seg[1], message_ids=ids,
@@ -419,25 +662,47 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
         for start in range(0, len(items), MAX_MEDIA_GROUP_SIZE):
             chunk = items[start:start + MAX_MEDIA_GROUP_SIZE]
             cap = content if (caption_on_album and not caption_used) else None
-            cap_mode = 'HTML' if cap else None
             if len(chunk) == 1:
-                url, url_type = chunk[0]
-                if url_type == 'video':
-                    msg = await bot.send_video(chat_id=chat_id, video=url, caption=cap, parse_mode=cap_mode, **extra_kwargs)
-                else:
-                    msg = await bot.send_photo(chat_id=chat_id, photo=url, caption=cap, parse_mode=cap_mode, **extra_kwargs)
+                e = chunk[0]
+                c, pm, ents = _entry_caption(e, cap)
+                try:
+                    msg = await _send_single_media(bot, chat_id, e['kind'], e['media'], caption=c, parse_mode=pm,
+                                                   caption_entities=ents, filename=e.get('filename'),
+                                                   extra_kwargs=extra_kwargs)
+                except Exception:
+                    if not e.get('src'):
+                        raise
+                    msg = await _copy_one(e)
                 if msg:
                     sent_all.append(msg)
+                    _remember(chunk, [msg])
             else:
                 media_items = []
-                for j, (url, url_type) in enumerate(chunk):
-                    item_cap = cap if j == 0 else None
-                    item_mode = 'HTML' if item_cap else None
-                    if url_type == 'video':
-                        media_items.append(InputMediaVideo(media=url, caption=item_cap, parse_mode=item_mode))
-                    else:
-                        media_items.append(InputMediaPhoto(media=url, caption=item_cap, parse_mode=item_mode))
-                group_msgs = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+                for j, e in enumerate(chunk):
+                    c, pm, ents = _entry_caption(e, cap if j == 0 else None)
+                    media_items.append(_build_input_media(e['kind'], e['media'], caption=c, parse_mode=pm,
+                                                          caption_entities=ents, filename=e.get('filename')))
+                try:
+                    group_msgs = await bot.send_media_group(chat_id=chat_id, media=media_items, **extra_kwargs)
+                except Exception as e_group:
+                    if not any(e.get('src') for e in chunk):
+                        raise
+                    # 含 t.me 媒体的相册发送失败：逐条兜底，至少保证内容送达
+                    print(f"⚠️ [album] 相册发送失败，逐条兜底: {redact_secrets(str(e_group))}", flush=True)
+                    group_msgs = []
+                    for j, e in enumerate(chunk):
+                        if e.get('src'):
+                            group_msgs.append(await _copy_one(e))
+                        else:
+                            c, pm, ents = _entry_caption(e, cap if j == 0 else None)
+                            group_msgs.append(await _send_single_media(
+                                bot, chat_id, e['kind'], e['media'], caption=c, parse_mode=pm,
+                                caption_entities=ents, extra_kwargs=extra_kwargs))
+                    group_msgs = [m for m in group_msgs if m]
+                    if cap and chunk[0].get('src'):
+                        cap = None  # 第一项是复制的原帖，文字没放进去，交给跟随消息
+                else:
+                    _remember(chunk, group_msgs)
                 sent_all.extend(group_msgs or [])
             if cap:
                 caption_used = True

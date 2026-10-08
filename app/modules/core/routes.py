@@ -8396,28 +8396,53 @@ async def _flush_sync_media_group(buffer_key):
                     pass
 
 
-async def _delayed_flush_sync_media_group(buffer_key, delay: float):
+async def _delayed_media_group_flush(flush_fn, buffer_key, delay: float):
+    """Sleep *delay* then call ``await flush_fn(buffer_key)`` (debounced album flush)."""
     try:
         await asyncio.sleep(delay)
-        await _flush_sync_media_group(buffer_key)
+        await flush_fn(buffer_key)
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        print(f"[sync] album delayed flush error: {e}")
+        print(f"[album] delayed flush error ({getattr(flush_fn, '__name__', flush_fn)}): {e}")
 
 
-def _schedule_sync_media_group_flush(buffer_key):
-    buf = _SYNC_MEDIA_GROUP_BUFFERS.get(buffer_key)
+def _schedule_media_group_flush(buffers: dict, buffer_key, flush_fn, delay: float):
+    """(Re)start the debounce timer for one album buffer in *buffers*.
+
+    Shared by group/channel sync and channel forward rules: every new album part
+    cancels the pending timer, so the flush runs *delay* seconds after the last part.
+    """
+    buf = buffers.get(buffer_key)
     if not buf:
         return
     old = buf.get('task')
     if old and not old.done():
         old.cancel()
-    buf['task'] = asyncio.create_task(
-        _delayed_flush_sync_media_group(buffer_key, _SYNC_MEDIA_GROUP_FLUSH_DELAY)
-    )
+    buf['task'] = asyncio.create_task(_delayed_media_group_flush(flush_fn, buffer_key, delay))
     _background_tasks.add(buf['task'])
     buf['task'].add_done_callback(_background_tasks.discard)
+
+
+def _media_group_buffer_add(buffers: dict, buffer_key, msg, init: dict):
+    """Append *msg* to the album buffer (created from *init* on first part); dedupe by id."""
+    buf = buffers.get(buffer_key)
+    if not buf:
+        buf = dict(init)
+        buf.setdefault('messages', [])
+        buf.setdefault('task', None)
+        buffers[buffer_key] = buf
+    if msg is not None:
+        seen = {getattr(m, 'message_id', None) for m in buf['messages']}
+        if getattr(msg, 'message_id', None) not in seen:
+            buf['messages'].append(msg)
+    return buf
+
+
+def _schedule_sync_media_group_flush(buffer_key):
+    _schedule_media_group_flush(
+        _SYNC_MEDIA_GROUP_BUFFERS, buffer_key, _flush_sync_media_group, _SYNC_MEDIA_GROUP_FLUSH_DELAY
+    )
 
 
 def _enqueue_sync_media_group_item(
@@ -8437,27 +8462,110 @@ def _enqueue_sync_media_group_item(
         return False
 
     buffer_key = (clone_id, str(chat.id), str(mgid))
-    buf = _SYNC_MEDIA_GROUP_BUFFERS.get(buffer_key)
-    if not buf:
-        buf = {
-            'messages': [],
-            'plans': plans,
-            'bot': bot,
-            'flask_app': flask_app,
-            'source_group_id': source_group_id,
-            'user': user,
-            'chat': chat,
-            'from_chat_id': chat.id,
-            'task': None,
-        }
-        _SYNC_MEDIA_GROUP_BUFFERS[buffer_key] = buf
-
-    seen = {getattr(m, 'message_id', None) for m in buf['messages']}
-    if getattr(msg, 'message_id', None) not in seen:
-        buf['messages'].append(msg)
+    _media_group_buffer_add(_SYNC_MEDIA_GROUP_BUFFERS, buffer_key, msg, {
+        'plans': plans,
+        'bot': bot,
+        'flask_app': flask_app,
+        'source_group_id': source_group_id,
+        'user': user,
+        'chat': chat,
+        'from_chat_id': chat.id,
+    })
 
     _schedule_sync_media_group_flush(buffer_key)
     return True
+
+
+# --- Channel forward-rule album buffer ---------------------------------------------
+# Linked-channel posts arrive in the discussion group as one automatic-forward message
+# per album item. Buffer them per (clone, discussion chat, media_group_id) and send each
+# matching rule's target the whole album via forward_messages / copy_messages.
+_FORWARD_MEDIA_GROUP_BUFFERS: dict = {}
+_FORWARD_MEDIA_GROUP_FLUSH_DELAY = 1.5  # seconds after the last album part
+
+
+def _forward_album_buffer_key(clone_id, chat_id, media_group_id):
+    return (clone_id, str(chat_id), str(media_group_id))
+
+
+def _enqueue_forward_media_group_item(*, bot, clone_id, chat_id, msg, rules, blocked=False):
+    """Buffer one album part for channel forward rules.
+
+    *blocked* marks the whole album as dropped (e.g. the captioned part was deleted
+    by the discussion keyword filter) so the remaining parts are not forwarded.
+    """
+    mgid = getattr(msg, 'media_group_id', None)
+    if not mgid:
+        return False
+    key = _forward_album_buffer_key(clone_id, chat_id, mgid)
+    buf = _media_group_buffer_add(_FORWARD_MEDIA_GROUP_BUFFERS, key, None if blocked else msg, {
+        'bot': bot,
+        'rules': list(rules or []),
+        'from_chat_id': chat_id,
+        'blocked': False,
+    })
+    if blocked:
+        buf['blocked'] = True
+    elif rules and not buf.get('rules'):
+        buf['rules'] = list(rules)
+    _schedule_media_group_flush(
+        _FORWARD_MEDIA_GROUP_BUFFERS, key, _flush_forward_media_group, _FORWARD_MEDIA_GROUP_FLUSH_DELAY
+    )
+    return True
+
+
+async def _send_forward_rule_album(bot, rule, from_chat_id, message_ids):
+    """Deliver an album to one forward rule target as a single group.
+
+    Uses forward_messages / copy_messages (Bot API 7.0+), which keep the album grouped
+    and preserve captions/entities. Falls back to per-message calls on failure.
+    """
+    kwargs = {
+        'chat_id': rule['target_chat_id'],
+        'from_chat_id': from_chat_id,
+        'message_ids': list(message_ids),
+    }
+    if rule.get('target_thread_id'):
+        kwargs['message_thread_id'] = rule['target_thread_id']
+    is_forward = rule.get('forward_mode') == 'forward'
+    try:
+        if is_forward:
+            return await bot.forward_messages(**kwargs)
+        return await bot.copy_messages(**kwargs)
+    except Exception as batch_err:
+        print(f"[forward] batch album send failed for {rule.get('rule_name')}, per-message fallback: {batch_err}")
+    single = {k: v for k, v in kwargs.items() if k != 'message_ids'}
+    results = []
+    for mid in message_ids:
+        if is_forward:
+            results.append(await bot.forward_message(message_id=mid, **single))
+        else:
+            results.append(await bot.copy_message(message_id=mid, **single))
+    return results
+
+
+async def _flush_forward_media_group(buffer_key):
+    """Evaluate forward rules once against the album caption and send the whole album."""
+    from app.services.channel_automation import album_filter_text, sorted_album_message_ids
+
+    buf = _FORWARD_MEDIA_GROUP_BUFFERS.pop(buffer_key, None)
+    if not buf or buf.get('blocked'):
+        return
+    messages = buf.get('messages') or []
+    rules = buf.get('rules') or []
+    bot = buf.get('bot')
+    if not messages or not rules or bot is None:
+        return
+
+    album_text = album_filter_text(messages)
+    message_ids = sorted_album_message_ids(messages)
+    for rule in rules:
+        if not text_matches_keywords(album_text, rule.get('source_keywords')):
+            continue
+        try:
+            await _send_forward_rule_album(bot, rule, buf.get('from_chat_id'), message_ids)
+        except Exception as rule_err:
+            print(f"Error applying forward rule {rule.get('rule_name')} to album: {rule_err}")
 
 
 async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool, from_chat_id=None):
@@ -11806,21 +11914,34 @@ async def handle_channel_pin(update: Update, context):
         content_text = (msg.text or msg.caption or '').strip()
 
         if settings and settings.cancel_channel_pin:
-            # Wait a moment for Telegram to auto-pin the message
-            await asyncio.sleep(1)
+            # Wait a moment for Telegram to auto-pin, then unpin — in the background so
+            # sequential update processing is not stalled (album parts must arrive within
+            # the forward-rule debounce window).
+            async def _delayed_unpin(bot=context.bot, chat_id=chat.id, message_id=msg.message_id):
+                await asyncio.sleep(1)
+                try:
+                    await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+                    print(f"Unpinned channel message {message_id} in chat {chat_id}")
+                except Exception as e:
+                    print(f"Error unpinning channel message: {e}")
 
-            try:
-                await context.bot.unpin_chat_message(
-                    chat_id=chat.id,
-                    message_id=msg.message_id
-                )
-                print(f"Unpinned channel message {msg.message_id} in chat {chat.id}")
-            except Exception as e:
-                print(f"Error unpinning channel message: {e}")
+            _unpin_task = asyncio.create_task(_delayed_unpin())
+            _background_tasks.add(_unpin_task)
+            _unpin_task.add_done_callback(_background_tasks.discard)
 
         if settings and settings.channel_discussion_keyword_filter and text_matches_keywords(content_text, settings.channel_discussion_keyword_filter):
             try:
                 await msg.delete()
+                # Deleted album caption → drop the whole album from forward rules
+                if getattr(msg, 'media_group_id', None) and forward_rules:
+                    _enqueue_forward_media_group_item(
+                        bot=context.bot,
+                        clone_id=context.application.bot_data.get('clone_id'),
+                        chat_id=chat.id,
+                        msg=msg,
+                        rules=forward_rules,
+                        blocked=True,
+                    )
                 return
             except Exception as e:
                 print(f"Error deleting channel discussion message by keyword filter: {e}")
@@ -11901,7 +12022,21 @@ async def handle_channel_pin(update: Update, context):
                 except Exception as coupon_err:
                     print(f"Error sending channel coupon buttons: {coupon_err}")
 
-        for rule in forward_rules:
+        if forward_rules and getattr(msg, 'media_group_id', None):
+            # Album part: buffer and send as one group after the last part arrives.
+            # Keyword rules are evaluated once on the album caption (see _flush_forward_media_group).
+            _enqueue_forward_media_group_item(
+                bot=context.bot,
+                clone_id=context.application.bot_data.get('clone_id'),
+                chat_id=chat.id,
+                msg=msg,
+                rules=forward_rules,
+            )
+            forward_rules_for_msg = []
+        else:
+            forward_rules_for_msg = forward_rules
+
+        for rule in forward_rules_for_msg:
             if not text_matches_keywords(content_text, rule.get('source_keywords')):
                 continue
             try:

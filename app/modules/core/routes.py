@@ -5332,13 +5332,16 @@ def api_push_group_bottom_buttons():
         print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
         return jsonify({'status':'error','msg':str(e)})
 
-def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix=False):
+def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix=False,
+                                sender_prefix_style=None):
     """Apply shared sync toggles to every target row for a source."""
     for row in rows:
         row.enabled = enabled
         row.sync_media = sync_media
         row.sync_forwards = sync_forwards
         row.include_sender_prefix = include_sender_prefix
+        if sender_prefix_style is not None:
+            row.sender_prefix_style = sender_prefix_style
         row.filter_keywords = filter_keywords
 
 
@@ -5377,6 +5380,10 @@ def api_save_sync_group_messages():
     sync_media = bool(d.get('sync_media', True))
     sync_forwards = bool(d.get('sync_forwards', True))
     include_sender_prefix = bool(d.get('include_sender_prefix', False))
+    from app.services.sync_service import normalize_prefix_style
+    sender_prefix_style = (
+        normalize_prefix_style(d.get('sender_prefix_style')) if 'sender_prefix_style' in d else None
+    )
     filter_keywords = d.get('filter_keywords', '[]')
     if filter_keywords is None:
         filter_keywords = '[]'
@@ -5409,7 +5416,9 @@ def api_save_sync_group_messages():
             GroupPluginSettings.set_enabled(db.session, group.id, 'sync', enabled)
             return jsonify({'status': 'ok', 'targets': 0, 'msg': '已保存开关；请添加至少一个目标'})
 
-        _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix)
+        _apply_sync_options_to_rows(
+            rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix, sender_prefix_style
+        )
         db.session.commit()
 
         from app.models import GroupPluginSettings
@@ -5455,6 +5464,11 @@ def api_add_sync_target():
             bool(d['include_sender_prefix']) if 'include_sender_prefix' in d
             else (bool(sibling.include_sender_prefix) if sibling else False)
         )
+        from app.services.sync_service import normalize_prefix_style
+        sender_prefix_style = normalize_prefix_style(
+            d['sender_prefix_style'] if 'sender_prefix_style' in d
+            else (getattr(sibling, 'sender_prefix_style', None) if sibling else None)
+        )
         filter_keywords = d.get('filter_keywords')
         if filter_keywords is None:
             filter_keywords = sibling.filter_keywords if sibling else '[]'
@@ -5466,6 +5480,7 @@ def api_add_sync_target():
             sync_media=sync_media,
             sync_forwards=sync_forwards,
             include_sender_prefix=include_sender_prefix,
+            sender_prefix_style=sender_prefix_style,
             filter_keywords=filter_keywords or '[]',
         )
         ok, title_or_err = _fetch_and_set_target_title(group, row, target_group_id)
@@ -8255,42 +8270,90 @@ def _sync_from_chat_id(msg, fallback_chat_id=None):
 
 
 def _sync_combined_html(sender_prefix: str, body_html: str) -> str:
-    return f"{sender_prefix or ''}{body_html or ''}"
+    from app.services.sync_service import combine_prefix_html
+    return combine_prefix_html(sender_prefix, body_html)
 
 
-async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix: str, from_chat_id):
-    """Send buffered album messages as one media group. Returns (sent_msg, 'media_group')."""
-    from app.services.sync_service import album_caption_html, album_file_id, album_media_kind
+async def _send_sync_header(bot, target_chat_id, sender_prefix: str):
+    """Send the sender header line as its own message (used when it can't be attached)."""
+    return await bot.send_message(
+        chat_id=target_chat_id,
+        text=(sender_prefix or '').rstrip('\n') or '未知',
+        parse_mode='HTML',
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
+def _first_message_id_obj(result):
+    """copy_messages / forward_messages return a tuple; normalise to an object with message_id."""
+    if not result:
+        return None
+    first = result[0]
+    return SimpleNamespace(message_id=getattr(first, 'message_id', first))
+
+
+async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix: str, from_chat_id,
+                                    prefix_style: str = 'newline'):
+    """Send buffered album messages as one media group. Returns (sent_msg, 'media_group').
+
+    * no header → ``copy_messages`` (perfect copy);
+    * header + ``forward`` style → ``forward_messages`` (native "Forwarded from"), falls back to newline;
+    * header + ``newline`` style → name line prepended to the caption-bearing item (or first item);
+      if that would exceed the 1024 caption limit, the name is sent as its own message right
+      before an exact ``copy_messages`` of the album.
+    """
+    from app.services.sync_service import (
+        CAPTION_LIMIT,
+        album_file_id,
+        album_media_kind,
+        album_prefix_index,
+        prefix_fits,
+        sync_message_html,
+    )
 
     if not messages:
         return None, None
 
     ordered = sorted(messages, key=lambda m: getattr(m, 'message_id', 0) or 0)
-    # Prefer native copy so formatting / spoiler media / etc. stay intact when no prefix.
-    if not sender_prefix and from_chat_id is not None:
+    ids = [m.message_id for m in ordered]
+
+    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None:
         try:
-            ids = [m.message_id for m in ordered]
-            copied = await bot.copy_messages(
-                chat_id=target_chat_id,
-                from_chat_id=from_chat_id,
-                message_ids=ids,
-            )
-            if copied:
-                first = copied[0]
-                # copy_messages returns MessageId objects
-                return SimpleNamespace(message_id=getattr(first, 'message_id', first)), 'media_group'
+            fwd = await bot.forward_messages(chat_id=target_chat_id, from_chat_id=from_chat_id, message_ids=ids)
+            sent = _first_message_id_obj(fwd)
+            if sent:
+                return sent, 'media_group'
+        except Exception as e:
+            print(f"[sync] forward_messages album failed, fallback newline header: {e}")
+
+    header_separate = False
+    if sender_prefix:
+        idx = album_prefix_index(ordered)
+        header_separate = not prefix_fits(sender_prefix, getattr(ordered[idx], 'caption', None), CAPTION_LIMIT)
+        if header_separate:
+            await _send_sync_header(bot, target_chat_id, sender_prefix)
+
+    # Prefer native copy so formatting / spoiler media / etc. stay intact when captions are unchanged.
+    if (not sender_prefix or header_separate) and from_chat_id is not None:
+        try:
+            copied = await bot.copy_messages(chat_id=target_chat_id, from_chat_id=from_chat_id, message_ids=ids)
+            sent = _first_message_id_obj(copied)
+            if sent:
+                return sent, 'media_group'
         except Exception as e:
             print(f"[sync] copy_messages album failed, fallback send_media_group: {e}")
 
-    caption_html = album_caption_html(ordered)
-    full_caption = _sync_combined_html(sender_prefix, caption_html) or None
+    prefix_idx = album_prefix_index(ordered) if (sender_prefix and not header_separate) else -1
     media_items = []
     for i, m in enumerate(ordered):
         kind = album_media_kind(m)
         file_id = album_file_id(m)
         if not kind or not file_id:
             continue
-        cap = full_caption if (i == 0 and full_caption) else None
+        cap = sync_message_html(m, use_caption=True) if getattr(m, 'caption', None) else ''
+        if i == prefix_idx:
+            cap = _sync_combined_html(sender_prefix, cap)
+        cap = cap or None
         parse_mode = 'HTML' if cap else None
         if kind == 'photo':
             media_items.append(InputMediaPhoto(media=file_id, caption=cap, parse_mode=parse_mode))
@@ -8339,6 +8402,7 @@ async def _flush_sync_media_group(buffer_key):
         for plan in plans:
             target_chat_id = plan['target_chat_id']
             sender_prefix = plan.get('sender_prefix') or ''
+            prefix_style = plan.get('prefix_style') or 'newline'
             try:
                 if keyword_blocks_sync(preview, plan.get('filter_keywords')):
                     log_entry = SyncMessageLog(
@@ -8356,7 +8420,7 @@ async def _flush_sync_media_group(buffer_key):
                     db.session.commit()
                     continue
                 sent_msg, message_type = await _deliver_sync_media_group(
-                    bot, target_chat_id, messages, sender_prefix, from_chat_id
+                    bot, target_chat_id, messages, sender_prefix, from_chat_id, prefix_style
                 )
                 if not sent_msg:
                     continue
@@ -8569,16 +8633,25 @@ async def _flush_forward_media_group(buffer_key):
             print(f"Error applying forward rule {rule.get('rule_name')} to album: {rule_err}")
 
 
-async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool, from_chat_id=None):
-    """Copy *msg* to *target_chat_id*, preserving HTML formatting when possible.
+async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool, from_chat_id=None,
+                             prefix_style: str = 'newline'):
+    """Copy *msg* to *target_chat_id*, preserving formatting.
 
-    When *sender_prefix* is empty, prefers ``copy_message`` for fidelity.
-    When set (HTML mention), rebuilds text/captions with parse_mode=HTML.
+    * no header → ``copy_message`` (perfect copy);
+    * header + ``forward`` style → ``forward_message`` (native "Forwarded from" header);
+      falls back to the newline style if forwarding is not allowed;
+    * header + ``newline`` style → name on its own first line, original content (HTML) below.
+      Text/captions that would exceed Telegram's 4096/1024 limits get the name as a separate
+      message followed by an exact copy. Non-captionable content (sticker, location, …) gets
+      the name line first, then the copy.
     Returns (sent_msg, message_type) or (None, None) to skip.
     """
     from app.services.sync_service import (
+        CAPTION_LIMIT,
+        TEXT_LIMIT,
         classify_sync_message_type,
         is_media_sync_message,
+        prefix_fits,
         sync_message_html,
     )
 
@@ -8588,21 +8661,64 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
     if is_media_sync_message(msg) and not sync_media:
         return None, None
 
-    # Perfect copy when no sender prefix (keeps entities, custom emoji, spoilers, etc.)
-    if not sender_prefix and from_chat_id is not None and not getattr(msg, 'poll', None):
-        # Polls: copy_message works on recent Bot API; still ok. Location/contact/etc. too.
+    has_content = bool(
+        msg.text or msg.photo or msg.video or msg.document or msg.audio or msg.voice
+        or msg.video_note or msg.sticker or msg.animation or msg.location
+        or msg.contact or msg.venue or msg.poll
+    )
+    if not has_content:
+        return None, None
+
+    async def _copy(**extra):
+        return await bot.copy_message(
+            chat_id=target_chat_id, from_chat_id=from_chat_id, message_id=msg.message_id, **extra
+        )
+
+    # Native forward ("Forwarded from …") when the header uses the forward style
+    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None:
         try:
-            if msg.text or msg.photo or msg.video or msg.document or msg.audio or msg.voice \
-                    or msg.video_note or msg.sticker or msg.animation or msg.location \
-                    or msg.contact or msg.venue or msg.poll:
-                sent_msg = await bot.copy_message(
-                    chat_id=target_chat_id,
-                    from_chat_id=from_chat_id,
-                    message_id=msg.message_id,
-                )
-                return sent_msg, message_type
+            sent_msg = await bot.forward_message(
+                chat_id=target_chat_id, from_chat_id=from_chat_id, message_id=msg.message_id
+            )
+            return sent_msg, message_type
+        except Exception as e:
+            print(f"[sync] forward_message failed, fallback newline header: {e}")
+
+    header_sent = False
+    if from_chat_id is not None:
+        try:
+            if not sender_prefix:
+                return await _copy(), message_type
+
+            captionable = bool(
+                msg.photo or msg.video or msg.document or msg.audio or msg.voice or msg.animation
+            )
+            if msg.text:
+                if prefix_fits(sender_prefix, msg.text, TEXT_LIMIT):
+                    sent_msg = await bot.send_message(
+                        chat_id=target_chat_id,
+                        text=_sync_combined_html(sender_prefix, sync_message_html(msg, use_caption=False)),
+                        parse_mode='HTML',
+                    )
+                    return sent_msg, 'text'
+                await _send_sync_header(bot, target_chat_id, sender_prefix)
+                header_sent = True
+                return await _copy(), 'text'
+            if captionable:
+                if prefix_fits(sender_prefix, msg.caption, CAPTION_LIMIT):
+                    caption = _sync_combined_html(sender_prefix, sync_message_html(msg, use_caption=True))
+                    return await _copy(caption=caption, parse_mode='HTML'), message_type
+                await _send_sync_header(bot, target_chat_id, sender_prefix)
+                header_sent = True
+                return await _copy(), message_type
+            # sticker / video_note / location / contact / venue / poll: header line, then copy
+            await _send_sync_header(bot, target_chat_id, sender_prefix)
+            header_sent = True
+            return await _copy(), message_type
         except Exception as e:
             print(f"[sync] copy_message failed, fallback rebuild: {e}")
+            if header_sent:
+                sender_prefix = ''  # name line already delivered
 
     sent_msg = None
 
@@ -8734,6 +8850,7 @@ async def handle_sync_group_messages(update: Update, context):
     try:
         from app.services.sync_service import (
             build_group_sender_prefix,
+            normalize_prefix_style,
             is_group_chat,
             is_same_source_target,
             keyword_blocks_sync,
@@ -8809,12 +8926,14 @@ async def handle_sync_group_messages(update: Update, context):
                     sender_prefix = build_group_sender_prefix(
                         user, bool(getattr(sync_setting, 'include_sender_prefix', False))
                     )
+                    prefix_style = normalize_prefix_style(getattr(sync_setting, 'sender_prefix_style', None))
 
                     # Albums: buffer parts and flush as one media group
                     if is_album and sync_setting.sync_media:
                         album_plans.append({
                             'target_chat_id': target_chat_id,
                             'sender_prefix': sender_prefix,
+                            'prefix_style': prefix_style,
                             'filter_keywords': sync_setting.filter_keywords,
                         })
                         continue
@@ -8822,6 +8941,7 @@ async def handle_sync_group_messages(update: Update, context):
                     sent_msg, message_type = await _deliver_sync_copy(
                         context.bot, target_chat_id, msg, sender_prefix,
                         bool(sync_setting.sync_media), from_chat_id=chat.id,
+                        prefix_style=prefix_style,
                     )
                     if message_type is None:
                         continue
@@ -8947,6 +9067,7 @@ async def handle_sync_channel_posts(update: Update, context):
     try:
         from app.services.sync_service import (
             build_channel_sender_prefix,
+            normalize_prefix_style,
             is_channel_chat,
             is_same_source_target,
             keyword_blocks_sync,
@@ -8989,7 +9110,6 @@ async def handle_sync_channel_posts(update: Update, context):
 
             from app.services.sync_service import album_media_kind, is_album_message
 
-            sender_prefix = build_channel_sender_prefix(chat)
             album_plans = []
             is_album = is_album_message(msg) and album_media_kind(msg) is not None
 
@@ -9023,10 +9143,17 @@ async def handle_sync_channel_posts(update: Update, context):
                     if not sync_setting.sync_media and not msg.text:
                         continue
 
+                    # Default off (clean copy, no [频道名]); optional channel-name header / forward style
+                    sender_prefix = build_channel_sender_prefix(
+                        chat, bool(getattr(sync_setting, 'include_sender_prefix', False))
+                    )
+                    prefix_style = normalize_prefix_style(getattr(sync_setting, 'sender_prefix_style', None))
+
                     if is_album and sync_setting.sync_media:
                         album_plans.append({
                             'target_chat_id': target_chat_id,
                             'sender_prefix': sender_prefix,
+                            'prefix_style': prefix_style,
                             'filter_keywords': sync_setting.filter_keywords,
                         })
                         continue
@@ -9034,6 +9161,7 @@ async def handle_sync_channel_posts(update: Update, context):
                     sent_msg, message_type = await _deliver_sync_copy(
                         context.bot, target_chat_id, msg, sender_prefix,
                         bool(sync_setting.sync_media), from_chat_id=chat.id,
+                        prefix_style=prefix_style,
                     )
                     if message_type is None:
                         continue

@@ -593,7 +593,8 @@ class SyncGroupMessages(db.Model):
     enabled = db.Column(db.Boolean, default=False)
     sync_media = db.Column(db.Boolean, default=True)  # 是否同步媒体文件
     sync_forwards = db.Column(db.Boolean, default=True)  # 是否同步转发消息
-    include_sender_prefix = db.Column(db.Boolean, default=False)  # 群同步是否加 [发送者名] 前缀；默认关
+    include_sender_prefix = db.Column(db.Boolean, default=False)  # 群同步是否加 发送者名前缀；默认关
+    sender_prefix_style = db.Column(db.String(20), default='newline')  # newline=名字单独一行 | forward=原生转发
     filter_keywords = db.Column(db.Text, default='[]')  # JSON blacklist: messages containing these are not synced
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)

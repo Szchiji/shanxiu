@@ -62,35 +62,97 @@ def is_channel_chat(chat: Any) -> bool:
     return bool(chat is not None and getattr(chat, "type", None) == "channel")
 
 
-def build_group_sender_prefix(user: Any, include_prefix: bool = False) -> str:
-    """Optional HTML prefix for group member sync.
+SENDER_PREFIX_STYLES = ("newline", "forward")
+DEFAULT_SENDER_PREFIX_STYLE = "newline"
+TEXT_LIMIT = 4096
+CAPTION_LIMIT = 1024
 
-    Default *include_prefix* is False (empty string). When True, returns a
-    clickable ``[<a href="tg://user?id=…">name</a>] `` mention so recipients
-    can open a private chat with the sender (Telegram may still hide the link
-    for privacy-restricted users who never shared their identity with the bot).
+
+def normalize_prefix_style(style: Any) -> str:
+    """Coerce a stored/posted style to a supported value (default ``newline``)."""
+    s = (str(style).strip().lower() if style is not None else "")
+    return s if s in SENDER_PREFIX_STYLES else DEFAULT_SENDER_PREFIX_STYLE
+
+
+def build_group_sender_prefix(user: Any, include_prefix: bool = False) -> str:
+    """Optional HTML header line for group member sync.
+
+    Default *include_prefix* is False (empty string). When True, returns the
+    sender's name on its own line as a clickable ``tg://user?id=`` mention, e.g.
+    ``<a href="tg://user?id=42">Alice</a>\n`` — the original content follows on
+    the next line. (Telegram may not open a chat for privacy-restricted users.)
     """
     if not include_prefix:
         return ""
     if user is None:
-        return "[未知] "
+        return "未知\n"
     first = getattr(user, "first_name", None) or ""
     last = getattr(user, "last_name", None) or ""
     name = f"{first} {last}".strip() or "未知"
     safe = html_module.escape(name)
     uid = getattr(user, "id", None)
     if uid is not None:
-        return f'[<a href="tg://user?id={int(uid)}">{safe}</a>] '
-    return f"[{safe}] "
+        return f'<a href="tg://user?id={int(uid)}">{safe}</a>\n'
+    return f"{safe}\n"
 
 
-def build_channel_sender_prefix(chat: Any) -> str:
-    """Prefix for channel post sync.
+def build_channel_sender_prefix(chat: Any, include_prefix: bool = False) -> str:
+    """Optional header line for channel post sync (default off — clean copy).
 
-    Channel posts are always copied as-is (no ``[频道名]`` prefix). *chat* is
-    accepted for API stability / call-site compatibility.
+    When enabled: channel title on its own line, linked to ``https://t.me/<username>``
+    for public channels (plain bold title for private ones).
     """
-    return ""
+    if not include_prefix or chat is None:
+        return ""
+    title = (getattr(chat, "title", None) or "").strip()
+    username = getattr(chat, "username", None)
+    if not title:
+        title = f"@{username}" if username else "频道"
+    safe = html_module.escape(title)
+    if username:
+        return f'<a href="https://t.me/{html_module.escape(str(username), quote=True)}">{safe}</a>\n'
+    return f"<b>{safe}</b>\n"
+
+
+def utf16_len(text: Optional[str]) -> int:
+    """Length in UTF-16 code units (how Telegram counts message limits)."""
+    if not text:
+        return 0
+    return len(text.encode("utf-16-le")) // 2
+
+
+def html_visible_len(html_text: Optional[str]) -> int:
+    """Visible length of a small Telegram-HTML snippet (tags stripped, entities decoded)."""
+    if not html_text:
+        return 0
+    import re as _re
+
+    plain = html_module.unescape(_re.sub(r"<[^>]+>", "", html_text))
+    return utf16_len(plain)
+
+
+def prefix_fits(prefix_html: str, raw_body: Optional[str], limit: int) -> bool:
+    """True when header line + original (plain) body stays within Telegram's *limit*."""
+    return html_visible_len(prefix_html) + utf16_len(raw_body) <= limit
+
+
+def combine_prefix_html(prefix_html: str, body_html: Optional[str]) -> str:
+    """Header line + body; with no body, just the name (no trailing newline)."""
+    prefix_html = prefix_html or ""
+    if not body_html:
+        return prefix_html.rstrip("\n")
+    return f"{prefix_html}{body_html}"
+
+
+def album_prefix_index(messages: Sequence[Any]) -> int:
+    """Index of the album item that should carry the sender header.
+
+    The caption-bearing item (first one with a caption), else the first item.
+    """
+    for i, m in enumerate(messages or []):
+        if getattr(m, "caption", None):
+            return i
+    return 0
 
 
 def _utf16_to_py_index(text: str, utf16_offset: int) -> int:

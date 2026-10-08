@@ -5,6 +5,12 @@
 
 ### 🔧 优化改进 (Improved)
 
+#### 日志不再泄露 Bot Token
+- `httpx` / `httpcore` 日志级别降为 WARNING（不再逐条打印带 token 的 Telegram API URL）
+- 新增 `app/log_redaction.py`：所有日志 handler 挂脱敏过滤器（消息、参数、异常堆栈），并包装 stdout/stderr，`print()` 与未捕获异常中的 `bot<id>:<token>` 统一替换为 `bot<redacted>`
+- 在 `run.py`、`create_app()`、主 Bot `run_bot`、克隆 Bot `start_clone_bot` 均安装（幂等）
+- 显式脱敏 requests 异常（含 URL）的打印/返回：resync getMe/getChat、点赞反应、成员标签、`fetch_chat_info`
+
 #### 频道转发规则：相册整组转发
 - 关联频道的相册在讨论群里是一条条自动转发消息；转发规则现在按 `media_group_id` 缓冲（最后一张到达后约 1.5s），对每个命中规则的目标用 `copy_messages` / `forward_messages` **整组**发送，不再拆成一条条
 - 关键词规则对整组**按相册说明文字**判断一次（相册说明只挂在其中一张上）：命中则整组转发，不命中则整组不转

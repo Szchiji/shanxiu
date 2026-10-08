@@ -53,7 +53,7 @@ class TestDeliverSyncMediaGroup:
                 _photo_msg(1, 'mg2', file_id='a'),
                 _photo_msg(2, 'mg2', caption='hello', file_id='b'),
             ]
-            prefix = '[<a href="tg://user?id=1">U</a>] '
+            prefix = '<a href="tg://user?id=1">U</a>\n'
             sent, mtype = await routes._deliver_sync_media_group(
                 bot, '-100T', msgs, prefix, from_chat_id=-100555
             )
@@ -62,9 +62,10 @@ class TestDeliverSyncMediaGroup:
             bot.send_media_group.assert_awaited()
             media = bot.send_media_group.await_args.kwargs['media']
             assert len(media) == 2
-            assert media[0].caption.startswith('[<a href="tg://user?id=1">U</a>]')
-            assert media[0].parse_mode == 'HTML'
-            assert media[1].caption is None
+            # Header goes on the caption-bearing item (index 1), name on its own line
+            assert media[0].caption is None
+            assert media[1].caption == '<a href="tg://user?id=1">U</a>\nhello'
+            assert media[1].parse_mode == 'HTML'
 
         asyncio.get_event_loop().run_until_complete(_run())
 

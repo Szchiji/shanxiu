@@ -87,28 +87,36 @@ class TestSenderPrefix:
             SimpleNamespace(first_name='A', last_name='B', id=1), include_prefix=False
         ) == ''
 
-    def test_group_prefix_clickable_when_enabled(self):
-        assert build_group_sender_prefix(None, include_prefix=True) == '[未知] '
+    def test_group_prefix_name_on_own_line(self):
+        assert build_group_sender_prefix(None, include_prefix=True) == '未知\n'
         assert build_group_sender_prefix(
             SimpleNamespace(first_name='Alice', last_name=None, id=42), include_prefix=True
-        ) == '[<a href="tg://user?id=42">Alice</a>] '
+        ) == '<a href="tg://user?id=42">Alice</a>\n'
         assert build_group_sender_prefix(
             SimpleNamespace(first_name='A', last_name='B', id=7), include_prefix=True
-        ) == '[<a href="tg://user?id=7">A B</a>] '
+        ) == '<a href="tg://user?id=7">A B</a>\n'
         # Escape HTML in names
         assert build_group_sender_prefix(
             SimpleNamespace(first_name='A<b>', last_name=None, id=1), include_prefix=True
-        ) == '[<a href="tg://user?id=1">A&lt;b&gt;</a>] '
-        # No user id → plain escaped brackets
+        ) == '<a href="tg://user?id=1">A&lt;b&gt;</a>\n'
+        # No user id → plain escaped name
         assert build_group_sender_prefix(
             SimpleNamespace(first_name='Bob', last_name=None), include_prefix=True
-        ) == '[Bob] '
+        ) == 'Bob\n'
 
     def test_channel_prefix_is_empty(self):
         """Channel posts sync without a ``[频道名]`` prefix."""
         assert build_channel_sender_prefix(SimpleNamespace(title='公告频道')) == ''
         assert build_channel_sender_prefix(SimpleNamespace(title='  ')) == ''
         assert build_channel_sender_prefix(None) == ''
+
+    def test_channel_prefix_when_enabled(self):
+        assert build_channel_sender_prefix(
+            SimpleNamespace(title='公告', username='news'), include_prefix=True
+        ) == '<a href="https://t.me/news">公告</a>\n'
+        assert build_channel_sender_prefix(
+            SimpleNamespace(title='私密<x>', username=None), include_prefix=True
+        ) == '<b>私密&lt;x&gt;</b>\n'
 
 
 class TestEntitiesToHtml:

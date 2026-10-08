@@ -37,6 +37,12 @@ def is_main_instance():
     return get_bot_instance_role() == 'main'
 
 def create_app():
+    # Keep Telegram bot tokens out of logs for every entrypoint (run.py, migrate_database.py, ...).
+    # httpx/httpcore → WARNING, redaction filter on all handlers, stdout/stderr scrubbed.
+    import sys as _sys
+    from app.log_redaction import install_log_redaction
+    install_log_redaction(wrap_std_streams='pytest' not in _sys.modules)
+
     app = Flask(__name__)
     
     # 数据库配置

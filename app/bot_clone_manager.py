@@ -46,6 +46,10 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
         bool: 成功返回True, 失败返回False
     """
     global active_clones
+
+    # Clone tokens appear in Telegram API URLs; make sure log scrubbing is active.
+    from app.log_redaction import install_log_redaction
+    install_log_redaction(wrap_std_streams=False)
     
     # Check if already running
     if clone_id in active_clones:

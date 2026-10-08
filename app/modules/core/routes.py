@@ -10,6 +10,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
+from app.log_redaction import redact_secrets
 from app.services.points_service import clamp_award_to_daily_cap
 from app.utils import (
     encrypt_token,
@@ -5916,7 +5917,7 @@ def api_resync_clone_groups():
         if me_data.get('ok'):
             bot_username = me_data['result'].get('username')
     except Exception as e:
-        logging.warning(f"api_resync_clone_groups: getMe failed for clone {clone_id}: {e}")
+        logging.warning(f"api_resync_clone_groups: getMe failed for clone {clone_id}: {redact_secrets(str(e))}")
 
     bot_hint = f"（请确认已将 @{bot_username} 添加为群组/频道管理员）" if bot_username else ""
 
@@ -5929,7 +5930,7 @@ def api_resync_clone_groups():
         )
         data = resp.json()
     except Exception as e:
-        logging.error(f"api_resync_clone_groups: Telegram API error: {e}")
+        logging.error(f"api_resync_clone_groups: Telegram API error: {redact_secrets(str(e))}")
         return jsonify({'status': 'error', 'msg': '调用 Telegram API 失败，请检查网络'})
 
     if not data.get('ok'):
@@ -11070,6 +11071,10 @@ async def run_bot(app_instance):
     """
     初始化机器人，接收 Flask App 实例以便在回调中使用 Context
     """
+    # Bot token is embedded in every Telegram API URL — keep it out of logs.
+    from app.log_redaction import install_log_redaction
+    install_log_redaction(wrap_std_streams=False)
+
     token = os.getenv('TG_BOT_TOKEN')
     if not token: 
         print("⚠️ 未设置 TG_BOT_TOKEN")
@@ -11449,7 +11454,7 @@ def do_like(chat_id, message_id, emoji, token=None):
                 flush=True,
             )
     except Exception as e:
-        print(f"❌ [Like] 请求异常: {e}", flush=True)
+        print(f"❌ [Like] 请求异常: {redact_secrets(str(e))}", flush=True)
 
 
 def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
@@ -11484,7 +11489,7 @@ def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
             return False
         return True
     except Exception as e:
-        print(f"❌ [MemberTag] 请求异常: {e}", flush=True)
+        print(f"❌ [MemberTag] 请求异常: {redact_secrets(str(e))}", flush=True)
         return False
 
 

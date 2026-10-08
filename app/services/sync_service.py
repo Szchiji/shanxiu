@@ -339,7 +339,9 @@ def fetch_chat_info(bot_token: str, chat_id: str, timeout: float = 10.0) -> dict
         )
         data = resp.json()
     except Exception as e:
-        return {"ok": False, "error": f"网络错误: {e}"}
+        # requests errors include the URL (with the bot token) — never surface it
+        from app.log_redaction import redact_secrets
+        return {"ok": False, "error": f"网络错误: {redact_secrets(str(e))}"}
 
     if not data.get("ok"):
         return {"ok": False, "error": data.get("description") or "getChat 失败"}

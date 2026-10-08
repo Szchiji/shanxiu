@@ -8915,9 +8915,21 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
     return sent_msg, message_type
 
 
+def _is_edit_update(update) -> bool:
+    """True for edited_message / edited_channel_post updates.
+
+    PTB MessageHandler filters match ``effective_message``, which includes edits. Sync must
+    not treat an edit as a new post: editing an old album (caption / buttons) arrives as one
+    edited update per item, seconds apart, and each used to be copied again as a lone photo.
+    """
+    return bool(getattr(update, 'edited_message', None) or getattr(update, 'edited_channel_post', None))
+
+
 async def handle_sync_group_messages(update: Update, context):
     """Sync messages from source group to target groups - Enhanced to sync all message types"""
     if not global_flask_app or not update.effective_message:
+        return
+    if _is_edit_update(update):
         return
 
     try:
@@ -9148,8 +9160,17 @@ async def handle_sync_channel_posts(update: Update, context):
             sync_filter_text,
         )
 
-        # Prefer channel_post; effective_message also covers it
-        msg = update.channel_post or update.effective_message
+        # Only brand-new posts. Edits of old posts are NOT re-synced (they used to arrive one
+        # album item at a time and were copied again as lone photos / duplicates).
+        if _is_edit_update(update):
+            ep = update.edited_channel_post or update.edited_message
+            print(
+                f"[sync] skip edited post chat={getattr(update.effective_chat, 'id', None)} "
+                f"msg={getattr(ep, 'message_id', None)} mgid={getattr(ep, 'media_group_id', None)}",
+                flush=True,
+            )
+            return
+        msg = update.channel_post
         chat = update.effective_chat
         user = update.effective_user
 

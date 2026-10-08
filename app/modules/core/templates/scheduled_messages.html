@@ -593,7 +593,7 @@
                     <td>{{ item.stop_time.strftime('%m-%d %H:%M:%S') if item.stop_time else '-' }}</td>
                     <td>{{ item.last_sent_at.strftime('%m-%d %H:%M:%S') if item.last_sent_at else '-' }}</td>
                     <td>
-                        {% if item.is_active and item.repeat_interval > 0 %}
+                        {% if item.is_active %}
                             {% if item.next_send_at %}
                                 {{ item.next_send_at.strftime('%m-%d %H:%M:%S') }}
                             {% elif item.last_sent_at is none %}
@@ -698,7 +698,7 @@
                         <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="addMediaUrl()">
                             <i class="fa-solid fa-plus me-1"></i>添加更多
                         </button>
-                        <div class="form-text">支持直接链接，可添加多个图片或视频</div>
+                        <div class="form-text">支持直接链接或 t.me 消息链接；可点「添加更多」加入多张。多个链接会按<strong>媒体组（相册）</strong>发送。一个输入框里粘贴多个链接（换行/空格/逗号分隔）也会自动拆成多行。每组最多 10 个，超出自动分组。t.me 链接每个只复制那一条消息，转发整组相册请把每张的链接都填上。设置了按钮时，文字和按钮会在相册下方单独发一条（Telegram 不支持相册带按钮）。</div>
                     </div>
                     
                     <!-- 富文本编辑器 -->
@@ -810,6 +810,7 @@
                 <button type="button" class="btn btn-success btn-sm" id="sendNowBtn" onclick="sendNow()" style="display:none;">
                     <i class="fa-solid fa-paper-plane me-1"></i>保存并立即发送
                 </button>
+                <div class="w-100 small text-muted" id="sendNowHint" style="display:none;">提示：立即发送会以「当前时刻」重新计算后续循环节奏，不再严格对齐开始时间的整点/整时。</div>
             </div>
         </div>
     </div>
@@ -953,6 +954,36 @@
             '<i class="fa-solid fa-times"></i></button>';
         container.appendChild(row);
     }
+
+    // 粘贴多个链接到一个输入框时，自动拆成多行（每行一个媒体）
+    document.addEventListener('paste', function (e) {
+        const input = e.target;
+        if (!input || !input.classList || !input.classList.contains('media-url-input')) return;
+        const text = ((e.clipboardData || window.clipboardData) || {getData: () => ''}).getData('text') || '';
+        const parts = [];
+        text.split(/\s+/).forEach(chunk => {
+            chunk.split(/[,，;；](?=\s*(?:https?:\/\/|t\.me\/|tg:\/\/))/).forEach(p => {
+                p = p.trim().replace(/^[,，;；]+|[,，;；]+$/g, '');
+                if (p) parts.push(p);
+            });
+        });
+        if (parts.length < 2) return;
+        e.preventDefault();
+        const row = input.closest('.media-url-row');
+        const typeSel = row.querySelector('.media-url-type-select');
+        input.value = parts[0];
+        let anchor = row;
+        for (let k = 1; k < parts.length; k++) {
+            addMediaUrl();
+            const container = document.getElementById('mediaUrlsContainer');
+            const newRow = container.lastElementChild;
+            newRow.querySelector('.media-url-input').value = parts[k];
+            const newSel = newRow.querySelector('.media-url-type-select');
+            if (typeSel && newSel) newSel.value = typeSel.value;
+            container.insertBefore(newRow, anchor.nextSibling);
+            anchor = newRow;
+        }
+    });
 
     function removeMediaUrl(btn) {
         const container = document.getElementById('mediaUrlsContainer');
@@ -1284,6 +1315,7 @@
         renderLinksContainer();
         updateTargetFields();
         document.getElementById('sendNowBtn').style.display = 'none';
+        document.getElementById('sendNowHint').style.display = 'none';
         
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
         modal.show();
@@ -1349,6 +1381,7 @@
         }
         renderLinksContainer();
         document.getElementById('sendNowBtn').style.display = '';
+        document.getElementById('sendNowHint').style.display = '';
         
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
         modal.show();

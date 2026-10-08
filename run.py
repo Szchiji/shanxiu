@@ -223,6 +223,7 @@ def fix_database_schema(app):
             "CREATE UNIQUE INDEX IF NOT EXISTS _bot_group_chat_clone_uc ON bot_groups(chat_id, clone_id)",
             # ScheduledMessages: Add message_thread_id for topic/thread support
             "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS message_thread_id INTEGER NULL",
+            "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS fail_count INTEGER DEFAULT 0",
             # PointsExchangeItem: Add announcement_msg_id to track per-item channel announcement
             "ALTER TABLE points_exchange_items ADD COLUMN IF NOT EXISTS announcement_msg_id BIGINT NULL",
             # system_config: Ensure id column exists.

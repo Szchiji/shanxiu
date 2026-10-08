@@ -68,6 +68,8 @@ def run_migrations():
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS media_urls TEXT DEFAULT '[]'",
         # Scheduled messages: all sent message IDs for delete_previous (media group support)
         "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS last_message_ids TEXT",
+        # Scheduled messages: consecutive send failure counter
+        "ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS fail_count INTEGER DEFAULT 0",
         # Points auto reply: multiple media URLs
         "ALTER TABLE points_auto_reply ADD COLUMN IF NOT EXISTS media_urls TEXT DEFAULT '[]'",
         # Start messages table columns

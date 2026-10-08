@@ -175,3 +175,87 @@ class TestHandleChannelPinAlbum:
         _run(routes.handle_channel_pin(SimpleNamespace(message=m, effective_message=m, effective_chat=chat), context))
         bot.copy_message.assert_awaited_once()
         assert bot.copy_message.await_args.kwargs['message_id'] == 5
+
+
+class TestAlbumWindowAndLateParts:
+    """Regression (prod 14:18 UTC+8): album parts arrived ~4.5s apart; 1.5s window split one off."""
+
+    def test_default_window_covers_observed_gap(self):
+        from app.modules.core import routes
+        assert routes._FORWARD_MEDIA_GROUP_FLUSH_DELAY >= 5
+        assert routes._SYNC_MEDIA_GROUP_FLUSH_DELAY >= 5
+
+    def test_env_override(self, monkeypatch):
+        from app.modules.core import routes
+        monkeypatch.setenv('ALBUM_FLUSH_DELAY_SECONDS', '9')
+        assert routes._album_flush_delay_default() == 9.0
+        monkeypatch.setenv('ALBUM_FLUSH_DELAY_SECONDS', 'junk')
+        assert routes._album_flush_delay_default() == 6.0
+
+    def test_parts_4_5s_apart_stay_one_album(self):
+        """Simulate prod timing: 1 part, 4.5s gap, 4 more parts → one copy_messages with 5 ids."""
+        from app.modules.core import routes
+        routes._FORWARD_MEDIA_GROUP_BUFFERS.clear()
+        bot = AsyncMock()
+        rules = [{'rule_name': 'r', 'source_keywords': '', 'target_chat_id': '-1001',
+                  'target_thread_id': None, 'forward_mode': 'copy'}]
+
+        async def _go():
+            # shrink time: scale both window and gap by 1/10, keeping the same ratio as prod
+            # (gap 4.5s vs window 6s)
+            orig = routes._FORWARD_MEDIA_GROUP_FLUSH_DELAY
+            routes._FORWARD_MEDIA_GROUP_FLUSH_DELAY = orig / 10
+            try:
+                routes._enqueue_forward_media_group_item(
+                    bot=bot, clone_id=None, chat_id=-100222, msg=_album_part(7369, 'late'), rules=rules)
+                await asyncio.sleep(0.45)
+                for mid in (7370, 7371, 7372, 7373):
+                    routes._enqueue_forward_media_group_item(
+                        bot=bot, clone_id=None, chat_id=-100222, msg=_album_part(mid, 'late'), rules=rules)
+                await asyncio.sleep(orig / 10 + 0.3)
+            finally:
+                routes._FORWARD_MEDIA_GROUP_FLUSH_DELAY = orig
+
+        _run(_go())
+        bot.copy_messages.assert_awaited_once()
+        assert bot.copy_messages.await_args.kwargs['message_ids'] == [7369, 7370, 7371, 7372, 7373]
+        bot.copy_message.assert_not_awaited()
+
+    def test_full_album_flushes_immediately(self):
+        from app.modules.core import routes
+        routes._FORWARD_MEDIA_GROUP_BUFFERS.clear()
+        bot = AsyncMock()
+        rules = [{'rule_name': 'r', 'source_keywords': '', 'target_chat_id': '-1001',
+                  'target_thread_id': None, 'forward_mode': 'copy'}]
+
+        async def _go():
+            for mid in range(1, 11):
+                routes._enqueue_forward_media_group_item(
+                    bot=bot, clone_id=None, chat_id=-100223, msg=_album_part(mid, 'full'), rules=rules)
+            await asyncio.sleep(0.05)
+
+        _run(_go())
+        bot.copy_messages.assert_awaited_once()
+        assert len(bot.copy_messages.await_args.kwargs['message_ids']) == 10
+
+    def test_late_part_is_logged(self, capsys):
+        from app.modules.core import routes
+        routes._FORWARD_MEDIA_GROUP_BUFFERS.clear()
+        routes._RECENT_ALBUM_FLUSHES.clear()
+        bot = AsyncMock()
+        rules = [{'rule_name': 'r', 'source_keywords': '', 'target_chat_id': '-1001',
+                  'target_thread_id': None, 'forward_mode': 'copy'}]
+
+        async def _go():
+            routes._enqueue_forward_media_group_item(
+                bot=bot, clone_id=None, chat_id=-100224, msg=_album_part(1, 'lp'), rules=rules)
+            key = routes._forward_album_buffer_key(None, -100224, 'lp')
+            await routes._flush_forward_media_group(key)
+            routes._enqueue_forward_media_group_item(
+                bot=bot, clone_id=None, chat_id=-100224, msg=_album_part(2, 'lp'), rules=rules)
+
+        _run(_go())
+        out = capsys.readouterr().out
+        assert 'kind=forward' in out and 'flush items=1' in out
+        assert 'LATE part msg=2' in out
+        routes._FORWARD_MEDIA_GROUP_BUFFERS.clear()

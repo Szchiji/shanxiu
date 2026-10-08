@@ -26,16 +26,22 @@ _TOKEN_RE = re.compile(r"bot\d{5,}:[A-Za-z0-9_-]{30,}")
 # Bare tokens (e.g. printed without the "bot" prefix): <id>:<secret>
 _BARE_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])\d{6,}:AA[A-Za-z0-9_-]{30,}")
 
+# Telethon StringSession: "1" + urlsafe-base64(dc, ip, port, 256-byte auth key) ≈ 353 chars.
+_SESSION_RE = re.compile(r"(?<![A-Za-z0-9_\-])1[A-Za-z0-9_\-]{300,}={0,2}")
+SESSION_REDACTED = "<redacted-session>"
+
 REDACTED = "bot<redacted>"
 BARE_REDACTED = "<redacted-token>"
 
-NOISY_HTTP_LOGGERS = ("httpx", "httpcore")
+NOISY_HTTP_LOGGERS = ("httpx", "httpcore", "telethon")
 
 
 def redact_secrets(value: Any) -> Any:
     """Return *value* with any Telegram bot token replaced. Non-str values pass through."""
     if not isinstance(value, str) or not value:
         return value
+    if len(value) >= 300:
+        value = _SESSION_RE.sub(SESSION_REDACTED, value)
     if "bot" not in value and ":AA" not in value:
         return value
     value = _TOKEN_RE.sub(REDACTED, value)

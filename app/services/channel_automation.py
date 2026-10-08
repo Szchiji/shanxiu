@@ -46,3 +46,27 @@ def message_filter_text(msg: Any) -> Optional[str]:
     if text:
         return text
     return getattr(msg, "caption", None) or None
+
+
+def album_filter_text(messages: Any) -> Optional[str]:
+    """Keyword-filter text for a whole album: first non-empty text/caption.
+
+    Telegram puts an album's caption on one item only (usually the first), so
+    forward rules are evaluated once per album on that caption instead of per
+    item — otherwise caption-less items would never match a keyword rule.
+    """
+    for m in messages or []:
+        text = message_filter_text(m)
+        if text:
+            return text
+    return None
+
+
+def sorted_album_message_ids(messages: Any) -> list:
+    """Unique message ids of buffered album parts in ascending (send) order."""
+    ids = []
+    for m in messages or []:
+        mid = getattr(m, "message_id", None)
+        if mid is not None and mid not in ids:
+            ids.append(mid)
+    return sorted(ids)

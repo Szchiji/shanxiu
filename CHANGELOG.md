@@ -5,6 +5,13 @@
 
 ### 🔧 优化改进 (Improved)
 
+#### 小号登录：自动获取 API 创建应用失败（ERROR）
+- 创建应用请求改成和官网表单（jQuery ajax）完全一致：带 `X-Requested-With: XMLHttpRequest`、`Referer: https://my.telegram.org/apps`、表单 Content-Type 和 Accept 头
+- 应用名改为纯字母数字（不含空格）；短名为小写字母开头 + 小写字母/数字，长度 12，随机不重复；URL、描述留空
+- 返回 ERROR 后先重新读取 /apps（应用可能其实已建好），没有的话用页面上的新 hash、新名字、平台改 Web 再试一次
+- 如果仍然 ERROR，提示多半是 Telegram 不接受服务器机房 IP 发出的创建请求，请用自己的手机或电脑浏览器创建后手动填写；如果返回的是具体校验信息（如 Incorrect app name），原样显示
+- 新增排查日志 `[my.telegram.org] …`（只记录状态码、页面标题和响应摘要，不记录手机号、验证码、hash）
+
 #### 新功能：小号登录（同步其他机器人发的消息）
 - Bot API 收不到其他机器人在群里发的消息，所以新增「小号」（Telegram 用户账号，Telethon）只负责监听，发送仍由主机器人完成
 - 后台入口：侧边栏「小号登录」(`/core/userbot`)，仅主后台管理员可见

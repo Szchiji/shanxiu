@@ -114,15 +114,40 @@ def parse_apps_page(page_html: str) -> AppsPage:
     return res
 
 
-def generate_app_fields() -> dict:
-    suffix = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+_PLATFORMS = ('desktop', 'web')  # exact radio values of the web form; 'web' as the retry
+
+
+def generate_app_fields(attempt: int = 0) -> dict:
+    """Form fields that pass my.telegram.org's (undocumented) validation.
+
+    * title: letters + digits only, 5–64 chars (no spaces/symbols);
+    * short name: lowercase letters + digits, starts with a letter, 5–32 chars, random so it
+      is unique per account (a taken/invalid short name is a classic cause of bare ``ERROR``);
+    * url / description: empty (both optional in the web form).
+    """
+    letters = string.ascii_lowercase
+    suffix = secrets.choice(letters) + ''.join(secrets.choice(letters + string.digits) for _ in range(7))
     return {
-        'app_title': f'Shanxiu Sync {suffix}',
-        'app_shortname': f'shanxiu{suffix}',
+        'app_title': f'Sync{suffix.capitalize()}',
+        'app_shortname': f'sync{suffix}',
         'app_url': '',
-        'app_platform': 'desktop',
-        'app_desc': 'Group message sync helper',
+        'app_platform': _PLATFORMS[min(attempt, len(_PLATFORMS) - 1)],
+        'app_desc': '',
     }
+
+
+def _short(text: Optional[str], n: int = 60) -> str:
+    """Safe-to-log snippet of a my.telegram.org response (they never echo phone/code)."""
+    s = re.sub(r'\s+', ' ', (text or '')).strip()
+    s = re.sub(r'\+?\d{7,}', '<num>', s)
+    return s[:n]
+
+
+IP_HINT = ('my.telegram.org 拒绝创建应用（返回 ERROR）。请求格式已按官网表单发送并重试过，'
+           '多个账号都这样时通常是 Telegram 不接受来自服务器机房 IP 的创建请求'
+           '（也常见于新号，或登录 IP 与手机号国家不一致）。'
+           '建议用自己的手机或电脑浏览器（不开 VPN）打开 https://my.telegram.org → API development tools '
+           '创建应用，再把 api_id / api_hash 填到下方「手动填写」。')
 
 
 # ---------------------------------------------------------------------------
@@ -133,25 +158,46 @@ class MyTelegramFlow:
     def __init__(self, phone: str, http: Optional[requests.Session] = None, timeout: float = 20.0):
         self.phone = phone
         self.http = http or requests.Session()
-        self.http.headers.update({'User-Agent': USER_AGENT, 'Origin': BASE_URL, 'Referer': BASE_URL + '/auth'})
+        # Mirror what the site's jQuery $.ajax calls send.
+        self.http.headers.update({
+            'User-Agent': USER_AGENT,
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Origin': BASE_URL,
+        })
         self.timeout = timeout
         self.random_hash: Optional[str] = None
         self.created_at = time.monotonic()
+        self.retry_pause = 1.5
 
-    def _post(self, path: str, data: dict) -> requests.Response:
+    @staticmethod
+    def _ajax_headers(referer_path: str) -> dict:
+        return {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Referer': BASE_URL + referer_path,
+        }
+
+    def _post(self, path: str, data: dict, referer_path: str = '/auth') -> requests.Response:
         try:
-            return self.http.post(BASE_URL + path, data=data, timeout=self.timeout)
+            return self.http.post(BASE_URL + path, data=data, timeout=self.timeout,
+                                  headers=self._ajax_headers(referer_path))
         except requests.RequestException:
             raise MyTelegramError('无法连接 my.telegram.org（网络超时或被拒绝）。' + MANUAL_HINT) from None
 
-    def _get(self, path: str) -> requests.Response:
+    def _get(self, path: str, referer_path: str = '/') -> requests.Response:
         try:
-            return self.http.get(BASE_URL + path, timeout=self.timeout)
+            return self.http.get(BASE_URL + path, timeout=self.timeout, headers={
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Referer': BASE_URL + referer_path,
+            })
         except requests.RequestException:
             raise MyTelegramError('无法连接 my.telegram.org（网络超时或被拒绝）。' + MANUAL_HINT) from None
 
     def send_password(self) -> None:
         r = self._post('/auth/send_password', {'phone': self.phone})
+        print(f"[my.telegram.org] send_password status={getattr(r, 'status_code', '?')} "
+              f"ok={'random_hash' in (r.text or '')}", flush=True)
         self.random_hash = parse_send_password_response(r.text)
 
     def login(self, code: str) -> None:
@@ -159,23 +205,43 @@ class MyTelegramFlow:
             raise MyTelegramError('请先获取验证码。')
         r = self._post('/auth/login', {'phone': self.phone, 'random_hash': self.random_hash,
                                         'password': (code or '').strip()})
+        print(f"[my.telegram.org] login status={getattr(r, 'status_code', '?')} body={_short(r.text, 30)!r}",
+              flush=True)
         parse_login_response(r.text)
 
-    def fetch_or_create_app(self) -> tuple[int, str]:
-        page = parse_apps_page(self._get('/apps').text)
+    def _apps(self) -> AppsPage:
+        r = self._get('/apps')
+        page = parse_apps_page(r.text)
+        print(f"[my.telegram.org] GET /apps status={getattr(r, 'status_code', '?')} title={page.raw_title!r} "
+              f"has_app={bool(page.api_id and page.api_hash)} has_form={bool(page.create_hash)}", flush=True)
+        return page
+
+    def fetch_or_create_app(self, max_attempts: int = 2) -> tuple[int, str]:
+        page = self._apps()
         if page.api_id and page.api_hash:
             return page.api_id, page.api_hash
         if page.logged_out or not page.create_hash:
             raise MyTelegramError('已登录 my.telegram.org，但无法读取应用页面（可能页面已变化）。' + MANUAL_HINT)
-        fields = generate_app_fields()
-        fields['hash'] = page.create_hash
-        r = self._post('/apps/create', fields)
-        body = (r.text or '').strip()
-        if body.upper() == 'ERROR' or (body and 'error' in body.lower() and len(body) < 200):
-            raise MyTelegramError(
-                'my.telegram.org 拒绝创建应用（返回 ERROR）。新注册或受限账号经常这样，'
-                '可换用老账号、关闭代理/VPN 或过几天再试。' + MANUAL_HINT)
-        page = parse_apps_page(self._get('/apps').text)
-        if page.api_id and page.api_hash:
-            return page.api_id, page.api_hash
+        last_body = ''
+        for attempt in range(max_attempts):
+            fields = generate_app_fields(attempt)
+            fields['hash'] = page.create_hash  # fresh hash from the latest /apps page
+            r = self._post('/apps/create', fields, referer_path='/apps')
+            body = (r.text or '').strip()
+            last_body = body
+            print(f"[my.telegram.org] POST /apps/create attempt={attempt + 1} "
+                  f"status={getattr(r, 'status_code', '?')} platform={fields['app_platform']} "
+                  f"body={_short(body)!r}", flush=True)
+            # Always re-read /apps: the app may exist even when the response says ERROR.
+            page = self._apps()
+            if page.api_id and page.api_hash:
+                return page.api_id, page.api_hash
+            if not page.create_hash:
+                break
+            if body and 'error' not in body.lower():
+                # A specific validation message (e.g. "Incorrect app name!") — surface it.
+                raise MyTelegramError(f'my.telegram.org 返回：{_short(body, 120)}。' + MANUAL_HINT)
+            time.sleep(self.retry_pause)
+        if not last_body or 'error' in last_body.lower():
+            raise MyTelegramError(IP_HINT)
         raise MyTelegramError('应用已提交，但没能读取到 api_id / api_hash。' + MANUAL_HINT)

@@ -126,6 +126,81 @@ def media_kind_of(msg) -> Optional[str]:
     return None
 
 
+
+def telethon_reply_markup_to_rows(reply_markup) -> Optional[list]:
+    """ReplyInlineMarkup → [[button_dict, …], …] for the PTB send path.
+
+    Supported: url / web_app / callback_data / switch_inline_query /
+    switch_inline_query_current_chat / copy_text. Buy/Game/UrlAuth/etc. skipped.
+    Works with Telethon 1.45 KeyboardInlineButton(.type) and legacy KeyboardButton*.
+    """
+    rows_in = getattr(reply_markup, 'rows', None) if reply_markup is not None else None
+    if not rows_in:
+        return None
+    out = []
+    for row in rows_in:
+        buttons = getattr(row, 'buttons', None) or ()
+        out_row = []
+        for btn in buttons:
+            text = getattr(btn, 'text', None) or ''
+            if not text:
+                continue
+            mapped = _map_telethon_button(btn, text)
+            if mapped:
+                out_row.append(mapped)
+        if out_row:
+            out.append(out_row)
+    return out or None
+
+
+def _map_telethon_button(btn, text: str) -> Optional[dict]:
+    typ = getattr(btn, 'type', None)
+    if typ is not None:
+        name = type(typ).__name__
+        if name == 'InlineButtonTypeUrl':
+            return {'text': text, 'url': typ.url}
+        if name == 'InlineButtonTypeWebView':
+            return {'text': text, 'web_app': typ.url}
+        if name == 'InlineButtonTypeCallback':
+            data = typ.data
+            if isinstance(data, bytes):
+                try:
+                    data = data.decode('utf-8')
+                except UnicodeDecodeError:
+                    data = data.hex()
+            raw = data if isinstance(data, (bytes, bytearray)) else str(data).encode('utf-8')
+            if len(raw) > 64:
+                return None
+            return {'text': text, 'callback_data': data if isinstance(data, str) else data.decode('latin-1')}
+        if name == 'InlineButtonTypeSwitchInline':
+            if getattr(typ, 'same_peer', None):
+                return {'text': text, 'switch_inline_query_current_chat': typ.query or ''}
+            return {'text': text, 'switch_inline_query': typ.query or ''}
+        if name == 'InlineButtonTypeCopy':
+            return {'text': text, 'copy_text': typ.copy_text}
+        return None
+    # Legacy KeyboardButton* (pre-1.45 / custom fakes)
+    url = getattr(btn, 'url', None)
+    if url:
+        return {'text': text, 'url': url}
+    data = getattr(btn, 'data', None)
+    if data is not None:
+        if isinstance(data, bytes):
+            try:
+                data = data.decode('utf-8')
+            except UnicodeDecodeError:
+                data = data.hex()
+        raw = str(data).encode('utf-8')
+        if len(raw) > 64:
+            return None
+        return {'text': text, 'callback_data': str(data)}
+    if getattr(btn, 'query', None) is not None and type(btn).__name__ == 'KeyboardButtonSwitchInline':
+        if getattr(btn, 'same_peer', False):
+            return {'text': text, 'switch_inline_query_current_chat': btn.query or ''}
+        return {'text': text, 'switch_inline_query': btn.query or ''}
+    return None
+
+
 def to_ub_message(msg, chat_id: int, sender, chat_title: str = ''):
     from app.services.sync_service import entities_to_html
     from app.services.userbot_sync import UbMessage
@@ -154,6 +229,7 @@ def to_ub_message(msg, chat_id: int, sender, chat_title: str = ''):
         file_size=getattr(f, 'size', None) if (f is not None and kind) else None,
         sender_id=sender_id, sender_name=sender_name or '', sender_username=sender_username,
         sender_is_bot=is_bot, is_forward=bool(getattr(msg, 'fwd_from', None)),
+        buttons=telethon_reply_markup_to_rows(getattr(msg, 'reply_markup', None)),
     )
 
 

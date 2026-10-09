@@ -171,3 +171,91 @@ class TestAlbumGroupingAndLogs:
         with flask_app.app_context():
             st = sorted(l.status for l in SyncMessageLog.query.filter_by(target_group_id='-100932').all())
             assert st == ['filtered', 'success']
+
+
+class TestButtons:
+    def test_telethon_url_and_callback_rows(self):
+        from telethon.tl.types import (
+            InlineButtonTypeCallback, InlineButtonTypeUrl, KeyboardInlineButton,
+            KeyboardInlineButtonRow, ReplyInlineMarkup,
+        )
+        from app.userbot.manager import telethon_reply_markup_to_rows, to_ub_message
+        markup = ReplyInlineMarkup(rows=[
+            KeyboardInlineButtonRow(buttons=[
+                KeyboardInlineButton(text='去看看', type=InlineButtonTypeUrl('https://t.me/x')),
+                KeyboardInlineButton(text='点我', type=InlineButtonTypeCallback(b'act:1')),
+            ]),
+        ])
+        rows = telethon_reply_markup_to_rows(markup)
+        assert rows == [[
+            {'text': '去看看', 'url': 'https://t.me/x'},
+            {'text': '点我', 'callback_data': 'act:1'},
+        ]]
+        msg = SimpleNamespace(id=3, message='hi', grouped_id=None, entities=None, file=None,
+                              fwd_from=None, reply_markup=markup, photo=object())
+        sender = SimpleNamespace(id=9, first_name='B', last_name=None, username='b_bot', bot=True)
+        item = to_ub_message(msg, -1001, sender)
+        assert item.buttons == rows and item.media_kind == 'photo'
+
+    def test_legacy_url_button_fake(self):
+        from app.userbot.manager import telethon_reply_markup_to_rows
+        row = SimpleNamespace(buttons=[SimpleNamespace(text='L', url='https://ex.am', type=None, data=None)])
+        # type=None path uses getattr url
+        btn = SimpleNamespace(text='L', url='https://ex.am')
+        rows = telethon_reply_markup_to_rows(SimpleNamespace(rows=[SimpleNamespace(buttons=[btn])]))
+        assert rows == [[{'text': 'L', 'url': 'https://ex.am'}]]
+
+    def test_buttons_to_markup(self):
+        from telegram import InlineKeyboardButton
+        markup = us.buttons_to_markup([[
+            {'text': 'A', 'url': 'https://a.example'},
+            {'text': 'B', 'callback_data': 'cb'},
+        ]])
+        assert markup is not None
+        assert isinstance(markup.inline_keyboard[0][0], InlineKeyboardButton)
+        assert markup.inline_keyboard[0][0].url == 'https://a.example'
+        assert markup.inline_keyboard[0][1].callback_data == 'cb'
+
+    def test_reupload_passes_reply_markup(self):
+        bot = AsyncMock()
+        bot.copy_message.side_effect = Exception('Message to copy not found')
+        bot.send_photo.return_value = SimpleNamespace(message_id=88)
+        download = AsyncMock(return_value=(b'\xff', 'a.jpg'))
+        item = _item(media_kind='photo', text='cap', html='cap',
+                     buttons=[[{'text': '开', 'url': 'https://open.example'}]])
+        mid, method = _run(us.deliver_single(bot, item, {'target_chat_id': '-100900'}, download))
+        assert (mid, method) == (88, 'reupload')
+        kw = bot.send_photo.await_args.kwargs
+        assert kw['reply_markup'] is not None
+        assert kw['reply_markup'].inline_keyboard[0][0].url == 'https://open.example'
+
+    def test_copy_passes_reply_markup(self):
+        bot = AsyncMock()
+        bot.copy_message.return_value = SimpleNamespace(message_id=5)
+        item = _item(media_kind='photo', buttons=[[{'text': 'X', 'url': 'https://x.example'}]])
+        mid, method = _run(us.deliver_single(bot, item, {'target_chat_id': '-100900'}))
+        assert method == 'copy'
+        assert bot.copy_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url == 'https://x.example'
+
+    def test_album_reattaches_buttons_after_reupload(self):
+        bot = AsyncMock()
+        bot.copy_messages.side_effect = Exception('no access')
+        bot.send_media_group.return_value = [
+            SimpleNamespace(message_id=20), SimpleNamespace(message_id=21),
+        ]
+        bot.edit_message_reply_markup.return_value = True
+        download = AsyncMock(return_value=(b'img', 'x.jpg'))
+        items = [
+            _item(2, media_kind='photo', text='cap', html='cap',
+                  buttons=[[{'text': '一', 'url': 'https://one.example'}]]),
+            _item(3, media_kind='photo', text='', html='', buttons=None),
+        ]
+        mid, method = _run(us.deliver_album(bot, items, {'target_chat_id': '-100900'}, download))
+        assert method == 'reupload_album' and mid == 20
+        bot.edit_message_reply_markup.assert_awaited()
+        kw = bot.edit_message_reply_markup.await_args.kwargs
+        assert kw['message_id'] == 20
+        assert kw['reply_markup'].inline_keyboard[0][0].url == 'https://one.example'
+
+    def test_own_bot_still_skipped(self):
+        assert us.plans_for_item([_rule()], _item(sender_id=777), own_bot_ids={777}) == []

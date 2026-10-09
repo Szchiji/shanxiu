@@ -8796,7 +8796,10 @@ async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix
     ordered = sorted(messages, key=lambda m: getattr(m, 'message_id', 0) or 0)
     ids = [m.message_id for m in ordered]
 
-    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None:
+    # Any album item with an inline keyboard? forward_messages cannot re-attach them.
+    album_has_buttons = any(getattr(m, 'reply_markup', None) for m in ordered)
+
+    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None and not album_has_buttons:
         try:
             fwd = await bot.forward_messages(chat_id=target_chat_id, from_chat_id=from_chat_id, message_ids=ids)
             sent = _first_message_id_obj(fwd)
@@ -8813,11 +8816,14 @@ async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix
             await _send_sync_header(bot, target_chat_id, sender_prefix)
 
     # Prefer native copy so formatting / spoiler media / etc. stay intact when captions are unchanged.
+    # copyMessages drops reply markup — re-attach afterwards when needed.
     if (not sender_prefix or header_separate) and from_chat_id is not None:
         try:
             copied = await bot.copy_messages(chat_id=target_chat_id, from_chat_id=from_chat_id, message_ids=ids)
             sent = _first_message_id_obj(copied)
             if sent:
+                if album_has_buttons:
+                    await _reattach_album_reply_markups(bot, target_chat_id, ordered, copied)
                 return sent, 'media_group'
         except Exception as e:
             print(f"[sync] copy_messages album failed, fallback send_media_group: {e}")
@@ -8848,6 +8854,8 @@ async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix
 
     sent_list = await bot.send_media_group(chat_id=target_chat_id, media=media_items)
     sent_msg = sent_list[0] if sent_list else None
+    if album_has_buttons and sent_list:
+        await _reattach_album_reply_markups(bot, target_chat_id, ordered, sent_list)
     return sent_msg, 'media_group'
 
 
@@ -9100,11 +9108,12 @@ def _enqueue_forward_media_group_item(*, bot, clone_id, chat_id, msg, rules, blo
     return True
 
 
-async def _send_forward_rule_album(bot, rule, from_chat_id, message_ids):
+async def _send_forward_rule_album(bot, rule, from_chat_id, message_ids, source_messages=None):
     """Deliver an album to one forward rule target as a single group.
 
     Uses forward_messages / copy_messages (Bot API 7.0+), which keep the album grouped
     and preserve captions/entities. Falls back to per-message calls on failure.
+    Inline keyboards are re-attached afterwards (copy/forward never keep them).
     """
     kwargs = {
         'chat_id': rule['target_chat_id'],
@@ -9113,20 +9122,33 @@ async def _send_forward_rule_album(bot, rule, from_chat_id, message_ids):
     }
     if rule.get('target_thread_id'):
         kwargs['message_thread_id'] = rule['target_thread_id']
-    is_forward = rule.get('forward_mode') == 'forward'
+    ordered = []
+    if source_messages:
+        ordered = sorted(source_messages, key=lambda m: getattr(m, 'message_id', 0) or 0)
+    album_has_buttons = any(getattr(m, 'reply_markup', None) for m in ordered)
+    # forward_messages cannot carry a new keyboard — force copy when buttons exist
+    is_forward = rule.get('forward_mode') == 'forward' and not album_has_buttons
     try:
         if is_forward:
-            return await bot.forward_messages(**kwargs)
-        return await bot.copy_messages(**kwargs)
+            result = await bot.forward_messages(**kwargs)
+        else:
+            result = await bot.copy_messages(**kwargs)
+        if album_has_buttons:
+            await _reattach_album_reply_markups(bot, rule['target_chat_id'], ordered, result)
+        return result
     except Exception as batch_err:
         print(f"[forward] batch album send failed for {rule.get('rule_name')}, per-message fallback: {batch_err}")
     single = {k: v for k, v in kwargs.items() if k != 'message_ids'}
     results = []
-    for mid in message_ids:
+    for i, mid in enumerate(message_ids):
+        markup = getattr(ordered[i], 'reply_markup', None) if i < len(ordered) else None
         if is_forward:
             results.append(await bot.forward_message(message_id=mid, **single))
         else:
-            results.append(await bot.copy_message(message_id=mid, **single))
+            copy_kw = dict(single)
+            if markup is not None:
+                copy_kw['reply_markup'] = markup
+            results.append(await bot.copy_message(message_id=mid, **copy_kw))
     return results
 
 
@@ -9153,7 +9175,9 @@ async def _flush_forward_media_group(buffer_key):
         if not text_matches_keywords(album_text, rule.get('source_keywords')):
             continue
         try:
-            await _send_forward_rule_album(bot, rule, buf.get('from_chat_id'), message_ids)
+            await _send_forward_rule_album(
+                bot, rule, buf.get('from_chat_id'), message_ids, source_messages=messages,
+            )
             print(
                 f"{_album_log_prefix('forward', buffer_key)} rule={rule.get('rule_name')!r} "
                 f"-> {rule.get('target_chat_id')} via "
@@ -9163,6 +9187,41 @@ async def _flush_forward_media_group(buffer_key):
             )
         except Exception as rule_err:
             print(f"Error applying forward rule {rule.get('rule_name')} to album: {rule_err}")
+
+
+async def _sync_reply_markup(msg):
+    """Inline keyboard from the source message, or None.
+
+    Telegram ``copyMessage`` / ``copyMessages`` do **not** copy reply markup unless
+    it is passed again. URL buttons keep working; callback buttons will hit *our*
+    bot (other bots' callbacks cannot be proxied — Telegram limitation).
+    """
+    return getattr(msg, 'reply_markup', None) or None
+
+
+async def _reattach_album_reply_markups(bot, target_chat_id, ordered_src, sent_list):
+    """After album copy/send, put original inline keyboards back on matching items."""
+    if not ordered_src or not sent_list:
+        return
+    # Normalise sent_list to a sequence of objects with message_id
+    if not isinstance(sent_list, (list, tuple)):
+        sent_list = [sent_list]
+    n = min(len(ordered_src), len(sent_list))
+    for i in range(n):
+        src = ordered_src[i]
+        markup = getattr(src, 'reply_markup', None)
+        if not markup:
+            continue
+        sent = sent_list[i]
+        mid = getattr(sent, 'message_id', None)
+        if mid is None:
+            continue
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=target_chat_id, message_id=mid, reply_markup=markup,
+            )
+        except Exception as e:
+            print(f"[sync] reattach album reply_markup failed msg={mid}: {e}", flush=True)
 
 
 async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_media: bool, from_chat_id=None,
@@ -9201,13 +9260,21 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
     if not has_content:
         return None, None
 
+    reply_markup = await _sync_reply_markup(msg)
+
     async def _copy(**extra):
-        return await bot.copy_message(
+        kw = dict(
             chat_id=target_chat_id, from_chat_id=from_chat_id, message_id=msg.message_id, **extra
         )
+        # Always re-pass markup: Bot API copyMessage drops the original keyboard otherwise.
+        if reply_markup is not None and 'reply_markup' not in kw:
+            kw['reply_markup'] = reply_markup
+        return await bot.copy_message(**kw)
 
-    # Native forward ("Forwarded from …") when the header uses the forward style
-    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None:
+    # Native forward ("Forwarded from …") when the header uses the forward style.
+    # forward_message cannot carry a new reply_markup — if the source has buttons,
+    # fall through to copy so media + keyboard stay together.
+    if sender_prefix and prefix_style == 'forward' and from_chat_id is not None and not reply_markup:
         try:
             sent_msg = await bot.forward_message(
                 chat_id=target_chat_id, from_chat_id=from_chat_id, message_id=msg.message_id
@@ -9231,6 +9298,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
                         chat_id=target_chat_id,
                         text=_sync_combined_html(sender_prefix, sync_message_html(msg, use_caption=False)),
                         parse_mode='HTML',
+                        reply_markup=reply_markup,
                     )
                     return sent_msg, 'text'
                 await _send_sync_header(bot, target_chat_id, sender_prefix)
@@ -9259,7 +9327,8 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
         body = sync_message_html(msg, use_caption=False)
         synced_text = _sync_combined_html(sender_prefix, body)
         sent_msg = await bot.send_message(
-            chat_id=target_chat_id, text=synced_text, parse_mode='HTML'
+            chat_id=target_chat_id, text=synced_text, parse_mode='HTML',
+            reply_markup=reply_markup,
         )
     elif msg.photo and sync_media:
         message_type = 'photo'
@@ -9270,6 +9339,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             photo=msg.photo[-1].file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.video and sync_media:
         message_type = 'video'
@@ -9280,6 +9350,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             video=msg.video.file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.document and sync_media:
         message_type = 'document'
@@ -9290,6 +9361,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             document=msg.document.file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.audio and sync_media:
         message_type = 'audio'
@@ -9300,6 +9372,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             audio=msg.audio.file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.voice and sync_media:
         message_type = 'voice'
@@ -9310,17 +9383,22 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             voice=msg.voice.file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.video_note and sync_media:
         message_type = 'video_note'
         if sender_prefix:
             await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
-        sent_msg = await bot.send_video_note(chat_id=target_chat_id, video_note=msg.video_note.file_id)
+        sent_msg = await bot.send_video_note(
+            chat_id=target_chat_id, video_note=msg.video_note.file_id, reply_markup=reply_markup,
+        )
     elif msg.sticker and sync_media:
         message_type = 'sticker'
         if sender_prefix:
             await bot.send_message(chat_id=target_chat_id, text=sender_prefix, parse_mode='HTML')
-        sent_msg = await bot.send_sticker(chat_id=target_chat_id, sticker=msg.sticker.file_id)
+        sent_msg = await bot.send_sticker(
+            chat_id=target_chat_id, sticker=msg.sticker.file_id, reply_markup=reply_markup,
+        )
     elif msg.animation and sync_media:
         message_type = 'animation'
         body = sync_message_html(msg, use_caption=True)
@@ -9330,6 +9408,7 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
             animation=msg.animation.file_id,
             caption=caption,
             parse_mode='HTML' if caption else None,
+            reply_markup=reply_markup,
         )
     elif msg.poll:
         message_type = 'poll'
@@ -9615,7 +9694,7 @@ async def handle_sync_channel_posts(update: Update, context):
             is_channel_chat,
             is_same_source_target,
             keyword_blocks_sync,
-            should_skip_bot_sender,
+            should_skip_own_bot_sender,
             sync_filter_text,
         )
 
@@ -9636,8 +9715,15 @@ async def handle_sync_channel_posts(update: Update, context):
         if not msg or not is_channel_chat(chat):
             return
 
-        # Anti-loop if a bot account authored the post (signatures / linked bots)
-        if should_skip_bot_sender(user):
+        # Anti-loop: only skip posts *we* authored (would bounce after channel automation).
+        # Other bots' channel posts must sync — media + inline buttons included.
+        own_bot_id = getattr(getattr(context, 'bot', None), 'id', None)
+        if should_skip_own_bot_sender(user, own_bot_id):
+            print(
+                f"[sync] skip own-bot channel post chat={getattr(chat, 'id', None)} "
+                f"msg={getattr(msg, 'message_id', None)} bot={own_bot_id}",
+                flush=True,
+            )
             return
 
         with global_flask_app.app_context():
@@ -12733,9 +12819,12 @@ async def handle_channel_pin(update: Update, context):
                 }
                 if rule.get('target_thread_id'):
                     kwargs['message_thread_id'] = rule['target_thread_id']
-                if rule.get('forward_mode') == 'forward':
+                if rule.get('forward_mode') == 'forward' and not getattr(msg, 'reply_markup', None):
                     await context.bot.forward_message(**kwargs)
                 else:
+                    # copyMessage drops inline keyboards unless reply_markup is passed again
+                    if getattr(msg, 'reply_markup', None):
+                        kwargs['reply_markup'] = msg.reply_markup
                     await context.bot.copy_message(**kwargs)
                 matched_rule_names.append(f"转发:{rule['rule_name']}")
             except Exception as rule_err:

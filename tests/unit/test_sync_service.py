@@ -20,6 +20,7 @@ from app.services.sync_service import (
     is_same_source_target,
     keyword_blocks_sync,
     should_skip_bot_sender,
+    should_skip_own_bot_sender,
     sync_filter_text,
     sync_message_html,
 )
@@ -47,6 +48,13 @@ class TestAntiLoop:
         assert should_skip_bot_sender(SimpleNamespace(is_bot=True)) is True
         assert should_skip_bot_sender(SimpleNamespace(is_bot=False)) is False
         assert should_skip_bot_sender(None) is False
+
+    def test_skip_own_bot_sender_only(self):
+        other = SimpleNamespace(id=1, is_bot=True)
+        own = SimpleNamespace(id=42, is_bot=True)
+        assert should_skip_own_bot_sender(other, 42) is False
+        assert should_skip_own_bot_sender(own, 42) is True
+        assert should_skip_own_bot_sender(SimpleNamespace(id=42, is_bot=False), 42) is False
 
     def test_same_source_target(self):
         assert is_same_source_target(-100123, '-100123') is True

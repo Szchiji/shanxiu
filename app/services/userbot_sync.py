@@ -114,6 +114,8 @@ class UbMessage:
     is_forward: bool = False
     # [[ {'text','url'|'callback_data'|'web_app'|…}, …], …] — serializable inline keyboard
     buttons: Optional[list] = None
+    # Sent by our main bot / a clone bot. Synced like any bot, unless it is a sync output.
+    from_own_bot: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +180,14 @@ def plans_for_item(rules: Iterable[dict], item: UbMessage, *, own_bot_ids: Itera
                    main_synced_pairs: Iterable[tuple] = ()) -> list:
     """Return per-target send plans for *item* (deduped by target).
 
-    * messages from our own main/clone bots are never relayed (anti-loop);
+    * messages from our own main/clone bots ARE relayed like other bots' messages; loops are
+      prevented precisely in :func:`process_item` (skip only sync / forward outputs).
+      ``own_bot_ids`` is kept for API compatibility and only marks ``item.from_own_bot``;
     * in 'all' mode, non-bot messages are skipped for targets the main bot already syncs
       itself from the same source (the Bot API delivers those to us directly).
     """
     if item.sender_id is not None and item.sender_id in set(own_bot_ids or ()):
-        return []
+        item.from_own_bot = True
     synced = {(str(s), str(t)) for s, t in (main_synced_pairs or ())}
     src = str(item.chat_id)
     plans, seen = [], set()
@@ -306,6 +310,8 @@ async def _reupload_single(bot, target, item: UbMessage, prefix: str, download: 
 
 async def deliver_single(bot, item: UbMessage, plan: dict, download: Optional[DownloadFn] = None):
     """Returns (target_message_id, method)."""
+    from app.services.sync_loop_guard import track_bot
+    bot = track_bot(bot)  # record outputs → precise anti-loop
     target = plan['target_chat_id']
     prefix = plan.get('sender_prefix') or ''
     style = plan.get('prefix_style') or 'newline'
@@ -388,6 +394,8 @@ async def _reupload_album(bot, target, items: list, prefix: str, download: Optio
 
 async def deliver_album(bot, items: list, plan: dict, download: Optional[DownloadFn] = None):
     """Send buffered album *items* to one target as ONE media group. Returns (first_id, method)."""
+    from app.services.sync_loop_guard import track_bot
+    bot = track_bot(bot)  # record outputs → precise anti-loop
     items = sorted(items, key=lambda m: m.message_id)
     target = plan['target_chat_id']
     prefix = plan.get('sender_prefix') or ''
@@ -500,6 +508,15 @@ async def process_item(bot, flask_app, item: UbMessage, plans: list, download: O
     """Entry point on the bot loop."""
     if not plans:
         return
+    if item.from_own_bot:
+        # Precise loop guard: our own bot's message is skipped only if WE produced it via
+        # sync / forward (registered per target chat). The userbot can hear it before the
+        # send response is parsed, so re-check after a short delay.
+        from app.services.sync_loop_guard import wait_is_sync_output
+        if await wait_is_sync_output(item.chat_id, item.message_id, flask_app):
+            print(f"[userbot-sync] skip sync output chat={item.chat_id} msg={item.message_id} (loop guard)",
+                  flush=True)
+            return
     if item.grouped_id and item.media_kind in ALBUM_KINDS:
         from app.modules.core import routes
         key = _album_key(item)

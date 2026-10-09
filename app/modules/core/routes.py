@@ -8781,6 +8781,8 @@ async def _deliver_sync_media_group(bot, target_chat_id, messages, sender_prefix
       if that would exceed the 1024 caption limit, the name is sent as its own message right
       before an exact ``copy_messages`` of the album.
     """
+    from app.services.sync_loop_guard import track_bot
+    bot = track_bot(bot)  # record outputs → precise anti-loop
     from app.services.sync_service import (
         CAPTION_LIMIT,
         album_file_id,
@@ -8874,6 +8876,16 @@ async def _flush_sync_media_group(buffer_key):
     user = buf.get('user')
     chat = buf.get('chat')
     from_chat_id = buf.get('from_chat_id')
+
+    # Loop guard: album parts that are our own sync outputs are never re-synced.
+    from app.services.sync_loop_guard import filter_out_sync_outputs
+    src_chat_id = from_chat_id if from_chat_id is not None else getattr(chat, 'id', None)
+    if src_chat_id is not None and messages:
+        kept = filter_out_sync_outputs(src_chat_id, messages)
+        if len(kept) != len(messages):
+            print(f"{_album_log_prefix('sync', buffer_key)} loop guard dropped "
+                  f"{len(messages) - len(kept)} sync-output part(s)", flush=True)
+        messages = kept
 
     if not messages or not plans or not bot or not flask_app:
         return
@@ -9115,6 +9127,8 @@ async def _send_forward_rule_album(bot, rule, from_chat_id, message_ids, source_
     and preserve captions/entities. Falls back to per-message calls on failure.
     Inline keyboards are re-attached afterwards (copy/forward never keep them).
     """
+    from app.services.sync_loop_guard import track_bot
+    bot = track_bot(bot)  # record outputs → precise anti-loop
     kwargs = {
         'chat_id': rule['target_chat_id'],
         'from_chat_id': from_chat_id,
@@ -9237,6 +9251,8 @@ async def _deliver_sync_copy(bot, target_chat_id, msg, sender_prefix: str, sync_
       the name line first, then the copy.
     Returns (sent_msg, message_type) or (None, None) to skip.
     """
+    from app.services.sync_loop_guard import track_bot
+    bot = track_bot(bot)  # record outputs → precise anti-loop
     from app.services.sync_service import (
         CAPTION_LIMIT,
         TEXT_LIMIT,
@@ -9488,8 +9504,13 @@ async def handle_sync_group_messages(update: Update, context):
         if not is_group_chat(chat):
             return
 
-        # Anti-loop: do not re-sync bot messages (own bot / clones / other bots)
+        # Bot API never delivers bot-authored group messages (ours or others') to bots; those
+        # (incl. our own bot's posts) are synced via the userbot (小号). Keep the bot skip here
+        # and additionally drop anything that is itself a sync / forward output (loop guard).
         if should_skip_bot_sender(user):
+            return
+        from app.services.sync_loop_guard import is_sync_output_memory
+        if is_sync_output_memory(chat.id, msg.message_id):
             return
 
         with global_flask_app.app_context():
@@ -9694,7 +9715,6 @@ async def handle_sync_channel_posts(update: Update, context):
             is_channel_chat,
             is_same_source_target,
             keyword_blocks_sync,
-            should_skip_own_bot_sender,
             sync_filter_text,
         )
 
@@ -9715,13 +9735,14 @@ async def handle_sync_channel_posts(update: Update, context):
         if not msg or not is_channel_chat(chat):
             return
 
-        # Anti-loop: only skip posts *we* authored (would bounce after channel automation).
-        # Other bots' channel posts must sync — media + inline buttons included.
-        own_bot_id = getattr(getattr(context, 'bot', None), 'id', None)
-        if should_skip_own_bot_sender(user, own_bot_id):
+        # Anti-loop (precise): skip only posts that are themselves sync / forward-rule outputs.
+        # Posts by any bot — including our own (scheduled posts, broadcasts …) — are synced.
+        # Updates are processed sequentially, so an output is registered before its echo arrives.
+        from app.services.sync_loop_guard import is_sync_output
+        if is_sync_output(chat.id, msg.message_id, global_flask_app):
             print(
-                f"[sync] skip own-bot channel post chat={getattr(chat, 'id', None)} "
-                f"msg={getattr(msg, 'message_id', None)} bot={own_bot_id}",
+                f"[sync] skip sync-output channel post chat={getattr(chat, 'id', None)} "
+                f"msg={getattr(msg, 'message_id', None)} (loop guard)",
                 flush=True,
             )
             return
@@ -12819,13 +12840,15 @@ async def handle_channel_pin(update: Update, context):
                 }
                 if rule.get('target_thread_id'):
                     kwargs['message_thread_id'] = rule['target_thread_id']
+                from app.services.sync_loop_guard import track_bot
+                fwd_bot = track_bot(context.bot)  # record outputs → precise anti-loop
                 if rule.get('forward_mode') == 'forward' and not getattr(msg, 'reply_markup', None):
-                    await context.bot.forward_message(**kwargs)
+                    await fwd_bot.forward_message(**kwargs)
                 else:
                     # copyMessage drops inline keyboards unless reply_markup is passed again
                     if getattr(msg, 'reply_markup', None):
                         kwargs['reply_markup'] = msg.reply_markup
-                    await context.bot.copy_message(**kwargs)
+                    await fwd_bot.copy_message(**kwargs)
                 matched_rule_names.append(f"转发:{rule['rule_name']}")
             except Exception as rule_err:
                 print(f"Error applying forward rule {rule['rule_name']}: {rule_err}")

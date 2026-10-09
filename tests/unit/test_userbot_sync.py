@@ -50,8 +50,11 @@ class TestSelection:
         plans = us.plans_for_item([rule], _item(), main_synced_pairs={('-100555', '-100900')})
         assert len(plans) == 2
 
-    def test_own_bots_never_relayed(self):
-        assert us.plans_for_item([_rule()], _item(sender_id=777), own_bot_ids={777}) == []
+    def test_own_bot_messages_are_relayed_and_marked(self):
+        item = _item(sender_id=777)
+        plans = us.plans_for_item([_rule()], item, own_bot_ids={777})
+        assert [p['target_chat_id'] for p in plans] == ['-100900']
+        assert item.from_own_bot is True
 
     def test_other_source_disabled_media_and_dedupe(self):
         assert us.plans_for_item([_rule(source_chat_id='-1')], _item()) == []
@@ -257,5 +260,3 @@ class TestButtons:
         assert kw['message_id'] == 20
         assert kw['reply_markup'].inline_keyboard[0][0].url == 'https://one.example'
 
-    def test_own_bot_still_skipped(self):
-        assert us.plans_for_item([_rule()], _item(sender_id=777), own_bot_ids={777}) == []

@@ -12,7 +12,7 @@ def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
-class TestSkipOwnBotOnly:
+class TestSkipOwnBotOnly:  # helper kept; channel sync now uses the precise loop guard
     def test_should_skip_own_bot_sender(self):
         from app.services.sync_service import should_skip_bot_sender, should_skip_own_bot_sender
 
@@ -156,7 +156,7 @@ class TestChannelSyncOtherBotMediaButtons:
             assert len(logs) == 1
             assert logs[0].message_type == 'photo'
 
-    def test_own_bot_channel_post_still_skipped(self, flask_app):
+    def test_own_bot_channel_post_synced_but_sync_output_skipped(self, flask_app):
         from app import db
         from app.models import BotGroup, SyncGroupMessages, SyncMessageLog
         from app.modules.core import routes
@@ -180,7 +180,7 @@ class TestChannelSyncOtherBotMediaButtons:
 
             bot = AsyncMock()
             bot.id = 555001
-            bot.copy_message = AsyncMock()
+            bot.copy_message = AsyncMock(return_value=SimpleNamespace(message_id=301))
 
             own = SimpleNamespace(id=555001, is_bot=True, username='our_bot')
             chat = SimpleNamespace(id=-1008811, type='channel', username='srcch2')
@@ -209,10 +209,23 @@ class TestChannelSyncOtherBotMediaButtons:
                 job_queue=MagicMock(),
             )
 
-            _run(routes.handle_sync_channel_posts(update, context))
+            from app.services import sync_loop_guard as g
+            g.reset()
 
-            bot.copy_message.assert_not_awaited()
-            assert SyncMessageLog.query.filter_by(source_group_id=gid).count() == 0
+            # 1) A normal post by OUR bot (e.g. scheduled message) is synced now.
+            _run(routes.handle_sync_channel_posts(update, context))
+            bot.copy_message.assert_awaited_once()
+            assert SyncMessageLog.query.filter_by(source_group_id=gid, status='success').count() == 1
+            assert g.is_sync_output_memory(-1008812, 301)
+
+            # 2) A post that is itself a sync output in this channel is NOT re-synced (no loop).
+            g.mark_sync_output(-1008811, 10)
+            msg.message_id = 10
+            _run(routes.handle_sync_channel_posts(update, context))
+            bot.copy_message.assert_awaited_once()
+            g.reset()
+
+
 
 
 class TestAlbumReattachButtons:

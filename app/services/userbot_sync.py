@@ -11,7 +11,9 @@ Delivery per target:
 * name prefix, ``newline`` style → text: ``send_message`` (prefix + HTML, no source access
   needed); media: ``copy_message`` with a new caption; albums: name line, then ``copy_messages``;
 * if copying fails (main bot not in source / protected content) → the userbot downloads the
-  media and the main bot re-uploads it (text is simply re-sent).
+  media and the main bot re-uploads it (text is simply re-sent);
+* inline buttons are extracted from Telethon and re-attached on copy/re-upload (URL buttons
+  work; callback_data buttons will hit *our* bot — Telegram cannot proxy another bot's callbacks).
 """
 
 from __future__ import annotations
@@ -40,6 +42,60 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # Bot API upload limit
 DownloadFn = Callable[[int, int], Awaitable[Optional[tuple]]]
 
 
+def buttons_to_markup(rows: Optional[list]):
+    """Serializeable button rows → PTB InlineKeyboardMarkup (or None)."""
+    if not rows:
+        return None
+    from telegram import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    kb = []
+    for row in rows:
+        out = []
+        for b in row or ():
+            if not isinstance(b, dict):
+                continue
+            label = b.get('text') or ''
+            if not label:
+                continue
+            if b.get('url'):
+                out.append(InlineKeyboardButton(label, url=b['url']))
+            elif b.get('web_app'):
+                out.append(InlineKeyboardButton(label, web_app=WebAppInfo(url=b['web_app'])))
+            elif b.get('callback_data') is not None:
+                out.append(InlineKeyboardButton(label, callback_data=b['callback_data']))
+            elif 'switch_inline_query' in b:
+                out.append(InlineKeyboardButton(label, switch_inline_query=b.get('switch_inline_query') or ''))
+            elif 'switch_inline_query_current_chat' in b:
+                out.append(InlineKeyboardButton(
+                    label, switch_inline_query_current_chat=b.get('switch_inline_query_current_chat') or ''))
+            elif b.get('copy_text'):
+                out.append(InlineKeyboardButton(label, copy_text=CopyTextButton(b['copy_text'])))
+        if out:
+            kb.append(out)
+    return InlineKeyboardMarkup(kb) if kb else None
+
+
+async def _reattach_buttons(bot, target, items: list, sent):
+    """After album send/copy, put inline keyboards back (media groups drop them)."""
+    if not items:
+        return
+    if not isinstance(sent, (list, tuple)):
+        sent = [sent] if sent is not None else []
+    n = min(len(items), len(sent))
+    for i in range(n):
+        markup = buttons_to_markup(getattr(items[i], 'buttons', None))
+        if not markup:
+            continue
+        mid = _mid(sent[i])
+        if mid is None:
+            continue
+        try:
+            await bot.edit_message_reply_markup(chat_id=target, message_id=mid, reply_markup=markup)
+        except Exception as e:
+            print(f"[userbot-sync] reattach buttons failed msg={mid}: {type(e).__name__}", flush=True)
+
+
+
+
 @dataclass
 class UbMessage:
     chat_id: int
@@ -56,6 +112,8 @@ class UbMessage:
     sender_username: Optional[str] = None
     sender_is_bot: bool = False
     is_forward: bool = False
+    # [[ {'text','url'|'callback_data'|'web_app'|…}, …], …] — serializable inline keyboard
+    buttons: Optional[list] = None
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +258,10 @@ async def _send_text(bot, target, item: UbMessage, prefix: str):
         await _send_header(bot, target, prefix)
         prefix = ''
     text = combine_prefix_html(prefix, body) if prefix else body
+    markup = buttons_to_markup(item.buttons)
     return await bot.send_message(chat_id=target, text=text or '(空消息)', parse_mode='HTML',
-                                  link_preview_options=LinkPreviewOptions(is_disabled=False))
+                                  link_preview_options=LinkPreviewOptions(is_disabled=False),
+                                  reply_markup=markup)
 
 
 async def _reupload_single(bot, target, item: UbMessage, prefix: str, download: Optional[DownloadFn]):
@@ -219,7 +279,10 @@ async def _reupload_single(bot, target, item: UbMessage, prefix: str, download: 
         await _send_header(bot, target, prefix)
         prefix = ''
     caption = (combine_prefix_html(prefix, item.html) if prefix else item.html) or None
+    markup = buttons_to_markup(item.buttons)
     kw = {'chat_id': target}
+    if markup is not None:
+        kw['reply_markup'] = markup
     cap_kw = {'caption': caption, 'parse_mode': 'HTML' if caption else None}
     f = InputFile(data, filename=filename or item.file_name or 'file')
     kind = item.media_kind
@@ -234,7 +297,8 @@ async def _reupload_single(bot, target, item: UbMessage, prefix: str, download: 
     if kind == 'voice':
         return await bot.send_voice(voice=f, **kw, **cap_kw)
     if kind == 'video_note':
-        return await bot.send_video_note(video_note=f, **kw)
+        # video_note has no caption/buttons in Bot API — send note then optional markup msg skip
+        return await bot.send_video_note(video_note=f, chat_id=target)
     if kind == 'sticker':
         return await bot.send_sticker(sticker=f, **kw)
     return await bot.send_document(document=f, **kw, **cap_kw)
@@ -246,9 +310,11 @@ async def deliver_single(bot, item: UbMessage, plan: dict, download: Optional[Do
     prefix = plan.get('sender_prefix') or ''
     style = plan.get('prefix_style') or 'newline'
     src = item.chat_id
+    markup = buttons_to_markup(item.buttons)
 
     if prefix and style == 'forward':
         try:
+            # forward_message keeps original buttons; cannot attach a new markup
             return _mid(await bot.forward_message(chat_id=target, from_chat_id=src, message_id=item.message_id)), 'forward'
         except Exception as e:
             print(f"[userbot-sync] forward failed → newline style: {type(e).__name__}", flush=True)
@@ -256,16 +322,36 @@ async def deliver_single(bot, item: UbMessage, plan: dict, download: Optional[Do
     if prefix and not item.media_kind:
         return _mid(await _send_text(bot, target, item, prefix)), 'send_message'
 
+    # No media and no prefix → still may need buttons (copy drops markup unless re-passed)
+    if not item.media_kind and not prefix:
+        try:
+            kw = dict(chat_id=target, from_chat_id=src, message_id=item.message_id)
+            if markup is not None:
+                kw['reply_markup'] = markup
+            return _mid(await bot.copy_message(**kw)), 'copy'
+        except Exception as e:
+            print(f"[userbot-sync] copy failed ({type(e).__name__}: {e}) → re-upload via userbot", flush=True)
+            return _mid(await _send_text(bot, target, item, '')), 'send_message'
+
     try:
         if not prefix:
-            return _mid(await bot.copy_message(chat_id=target, from_chat_id=src, message_id=item.message_id)), 'copy'
+            kw = dict(chat_id=target, from_chat_id=src, message_id=item.message_id)
+            if markup is not None:
+                kw['reply_markup'] = markup
+            return _mid(await bot.copy_message(**kw)), 'copy'
         if prefix_fits(prefix, item.text, CAPTION_LIMIT) and item.media_kind not in ('sticker', 'video_note'):
             caption = combine_prefix_html(prefix, item.html)
-            return _mid(await bot.copy_message(chat_id=target, from_chat_id=src, message_id=item.message_id,
-                                               caption=caption, parse_mode='HTML')), 'copy'
+            kw = dict(chat_id=target, from_chat_id=src, message_id=item.message_id,
+                      caption=caption, parse_mode='HTML')
+            if markup is not None:
+                kw['reply_markup'] = markup
+            return _mid(await bot.copy_message(**kw)), 'copy'
         await _send_header(bot, target, prefix)
         prefix = ''
-        return _mid(await bot.copy_message(chat_id=target, from_chat_id=src, message_id=item.message_id)), 'copy+header'
+        kw = dict(chat_id=target, from_chat_id=src, message_id=item.message_id)
+        if markup is not None:
+            kw['reply_markup'] = markup
+        return _mid(await bot.copy_message(**kw)), 'copy+header'
     except Exception as e:
         print(f"[userbot-sync] copy failed ({type(e).__name__}: {e}) → re-upload via userbot", flush=True)
     return _mid(await _reupload_single(bot, target, item, prefix, download)), 'reupload'
@@ -311,7 +397,9 @@ async def deliver_album(bot, items: list, plan: dict, download: Optional[Downloa
 
     if prefix and style == 'forward':
         try:
-            return _mid(await bot.forward_messages(chat_id=target, from_chat_id=src, message_ids=ids)), 'forward_messages'
+            sent = await bot.forward_messages(chat_id=target, from_chat_id=src, message_ids=ids)
+            # forward keeps original markups when possible
+            return _mid(sent), 'forward_messages'
         except Exception as e:
             print(f"[userbot-sync] album forward failed → newline style: {type(e).__name__}", flush=True)
 
@@ -320,11 +408,14 @@ async def deliver_album(bot, items: list, plan: dict, download: Optional[Downloa
         if prefix:
             await _send_header(bot, target, prefix)
             header_sent = True
-        return _mid(await bot.copy_messages(chat_id=target, from_chat_id=src, message_ids=ids)), (
-            'header+copy_messages' if prefix else 'copy_messages')
+        sent = await bot.copy_messages(chat_id=target, from_chat_id=src, message_ids=ids)
+        await _reattach_buttons(bot, target, items, sent)
+        return _mid(sent), ('header+copy_messages' if prefix else 'copy_messages')
     except Exception as e:
         print(f"[userbot-sync] album copy failed ({type(e).__name__}: {e}) → re-upload via userbot", flush=True)
-    return _mid(await _reupload_album(bot, target, items, '' if header_sent else prefix, download)), 'reupload_album'
+    sent = await _reupload_album(bot, target, items, '' if header_sent else prefix, download)
+    await _reattach_buttons(bot, target, items, sent)
+    return _mid(sent), 'reupload_album'
 
 
 def _log(flask_app, item: UbMessage, plan: dict, *, status: str, message_type: str,

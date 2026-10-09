@@ -31,8 +31,30 @@ def keyword_blocks_sync(text: Optional[str], filter_keywords_json: Optional[str]
 
 
 def should_skip_bot_sender(user: Any) -> bool:
-    """Skip syncing messages sent by bots (anti-loop with clone bots)."""
+    """Skip syncing messages sent by bots (anti-loop with clone bots).
+
+    Used for *group* sync only. Other bots' group messages are invisible to the
+    Bot API unless a userbot is listening — skipping all bots here prevents
+    clone-bot echo loops.
+    """
     return bool(user is not None and getattr(user, "is_bot", False))
+
+
+def should_skip_own_bot_sender(user: Any, bot_id: Any) -> bool:
+    """Channel-sync anti-loop: skip only posts authored by *this* bot.
+
+    Channel posts from *other* bots are visible to admin bots and must be
+    synced (media + buttons). Skipping every ``is_bot`` author silently dropped
+    those posts. Only our own bot id would re-enter sync after we post.
+    """
+    if user is None or bot_id is None:
+        return False
+    if not getattr(user, "is_bot", False):
+        return False
+    try:
+        return int(user.id) == int(bot_id)
+    except (TypeError, ValueError):
+        return False
 
 
 def is_same_source_target(source_chat_id: Any, target_group_id: Any) -> bool:

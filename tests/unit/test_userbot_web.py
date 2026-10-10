@@ -138,6 +138,17 @@ def test_rules_crud(admin):
     assert admin.get('/core/api/userbot/rules').get_json()['data'] == []
 
 
+def test_rules_users_mode(admin):
+    r = admin.post('/core/api/userbot/rules/save', json={
+        'source_chat_id': '-100555', 'target_chat_ids': ['-100900'],
+        'sender_mode': 'users',
+    }).get_json()
+    assert r['status'] == 'ok'
+    assert r['data']['sender_mode'] == 'users'
+    body = admin.get('/core/userbot').get_data(as_text=True)
+    assert '只监控用户消息' in body and 'ubModeUsers' in body
+
+
 def test_start_from_env_noop_without_session(flask_app, capsys):
     from app.userbot.manager import start_userbot_from_env, userbot_manager
     start_userbot_from_env(flask_app)

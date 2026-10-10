@@ -41,6 +41,16 @@ class TestSelection:
         assert us.plans_for_item([rule], _item(sender_id=43, sender_username='other_bot')) == []
         assert us.plans_for_item([_rule(sender_mode='selected', sender_filter='')], _item()) == []
 
+    def test_users_only_skips_bots(self):
+        rule = _rule(sender_mode='users')
+        human = _item(sender_is_bot=False, sender_id=111, sender_username='alice', sender_name='Alice')
+        plans = us.plans_for_item([rule], human)
+        assert [p['target_chat_id'] for p in plans] == ['-100900']
+        assert us.plans_for_item([rule], _item()) == []  # bot skipped
+        # still skip targets the main bot already syncs (avoid duplicate human delivery)
+        plans = us.plans_for_item([rule], human, main_synced_pairs={('-100555', '-100900')})
+        assert plans == []
+
     def test_all_mode_skips_targets_main_bot_already_syncs(self):
         rule = _rule(sender_mode='all', target_chat_ids='["-100900", "-100901"]')
         human = _item(sender_is_bot=False)

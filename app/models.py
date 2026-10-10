@@ -740,6 +740,26 @@ class ChannelMessageTemplate(db.Model):
     group = db.relationship('BotGroup', backref='channel_message_templates', lazy=True)
 
 
+class ChannelPostButtonConfig(db.Model):
+    """频道帖自动加按钮（编辑原帖 reply_markup，与讨论区优惠券无关）"""
+    __tablename__ = 'channel_post_button_configs'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), unique=True, index=True, nullable=False)
+    enabled = db.Column(db.Boolean, default=False)  # 总开关
+    links = db.Column(db.Text, default='[]')  # JSON: [{text, url, row?, order?}, ...]
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    group = db.relationship('BotGroup', backref='channel_post_button_config', lazy=True, uselist=False)
+
+    def get_links_list(self):
+        try:
+            data = json.loads(self.links or '[]')
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+
 class ChannelCoupon(db.Model):
     """频道优惠券按钮"""
     __tablename__ = 'channel_coupons'

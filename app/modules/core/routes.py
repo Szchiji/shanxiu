@@ -2137,25 +2137,14 @@ def page_channel_post_buttons(gid):
     config = ChannelPostButtonConfig.query.filter_by(group_id=gid).first()
     if not config:
         config = ChannelPostButtonConfig(group_id=gid, enabled=False, links='[]')
-    links_list = config.get_links_list() if hasattr(config, 'get_links_list') else []
-    try:
-        if not links_list:
-            links_list = json.loads(config.links or '[]')
-            if not isinstance(links_list, list):
-                links_list = []
-    except Exception:
-        links_list = []
-    links_text = '\n'.join(
-        f"{(l.get('text') or '').strip()}|{(l.get('url') or '').strip()}"
-        for l in links_list
-        if (l.get('text') or '').strip() and (l.get('url') or '').strip()
-    )
+    from app.services.channel_post_buttons import normalize_button_links
+    links_list = normalize_button_links(config.get_links_list() if hasattr(config, 'get_links_list') else config.links)
     return render_template(
         'channel_post_buttons.html',
         page='channel_post_buttons',
         group=group,
         config=config,
-        links_text=links_text,
+        links_json=json.dumps(links_list, ensure_ascii=False),
     )
 
 

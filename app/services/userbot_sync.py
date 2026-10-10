@@ -171,7 +171,7 @@ def parse_targets(raw: Any) -> list:
     return out
 
 
-def build_prefix(item: UbMessage, include: bool, *, plain: bool = False) -> str:
+def build_prefix(item: UbMessage, include: bool, *, plain: bool = False, mention_only: bool = False) -> str:
     """Sender name line. Users → ``tg://user?id=`` link; channels / anonymous admins
     (negative ids) → ``t.me/<username>`` link or plain name (tg://user with a chat id is
     invalid and made Telegram reject the whole message). *plain* = no link at all."""
@@ -182,6 +182,10 @@ def build_prefix(item: UbMessage, include: bool, *, plain: bool = False) -> str:
     if plain:
         return f"{_html.escape(name)}\n"
     sid = item.sender_id
+    if item.sender_username and not mention_only:
+        # t.me/<username> is always clickable for every viewer; tg://user?id= only works
+        # when the main bot already "knows" the user (else Telegram drops / rejects it).
+        return f'<a href="https://t.me/{_html.escape(item.sender_username)}">{_html.escape(name)}</a>\n'
     if isinstance(sid, int) and sid > 0:
         user = SimpleNamespace(id=sid, first_name=name, last_name='')
         return build_group_sender_prefix(user, True)
@@ -446,6 +450,27 @@ async def deliver_album(bot, items: list, plan: dict, download: Optional[Downloa
     return _mid(sent), 'reupload_album'
 
 
+async def _deliver_entity_fallback(bot, item: UbMessage, plan: dict, download, first_err):
+    """Telegram rejected formatting (Entity_text_invalid …). Degrade step by step so we
+    learn which part was bad and keep as much as possible:
+    1) plain name + original formatted body (the name link was the problem);
+    2) plain name + plain body (the body entities were the problem)."""
+    import html as _html
+    print(f"[userbot-sync] entity error ({first_err}) → retry plain name", flush=True)
+    has_prefix = bool(plan.get('sender_prefix'))
+    plan1 = {**plan, 'prefix_style': 'newline', 'sender_prefix': build_prefix(item, has_prefix, plain=True)}
+    try:
+        mid, method = await deliver_single(bot, item, plan1, download)
+        return mid, method + '+plain_name'
+    except Exception as e:
+        if not _is_entity_error(e):
+            raise
+        print(f"[userbot-sync] still entity error ({e}) → retry plain body", flush=True)
+    safe_item = UbMessage(**{**item.__dict__, 'html': _html.escape(item.text or '')})
+    mid, method = await deliver_single(bot, safe_item, plan1, download)
+    return mid, method + '+plain_all'
+
+
 def _log(flask_app, item: UbMessage, plan: dict, *, status: str, message_type: str,
          target_message_id=None, error: Optional[str] = None, preview: Optional[str] = None):
     try:
@@ -483,15 +508,7 @@ async def deliver_to_plans(bot, flask_app, item: UbMessage, plans: list, downloa
             except Exception as e:
                 if not _is_entity_error(e):
                     raise
-                # Telegram rejected formatting (e.g. Entity_text_invalid): retry with a plain
-                # name line and plain body so the message (and its name) still arrives.
-                print(f"[userbot-sync] entity error ({e}) → retry plain", flush=True)
-                import html as _html
-                safe_item = UbMessage(**{**item.__dict__, 'html': _html.escape(item.text or '')})
-                safe_plan = {**plan, 'prefix_style': 'newline',
-                             'sender_prefix': build_prefix(item, bool(plan.get('sender_prefix')), plain=True)}
-                mid, method = await deliver_single(bot, safe_item, safe_plan, download)
-                method += '+plain'
+                mid, method = await _deliver_entity_fallback(bot, item, plan, download, e)
             print(f"[userbot-sync] chat={item.chat_id} msg={item.message_id} -> {plan['target_chat_id']} "
                   f"via {method} prefix={'on' if plan.get('sender_prefix') else 'off'}", flush=True)
             _log(flask_app, item, plan, status='success', message_type=item.media_kind or 'text',
@@ -526,7 +543,16 @@ async def flush_userbot_album(buffer_key):
             _log(flask_app, head, plan, status='filtered', message_type='media_group', preview=caption[:100])
             continue
         try:
-            mid, method = await deliver_album(bot, items, plan, download)
+            try:
+                mid, method = await deliver_album(bot, items, plan, download)
+            except Exception as e:
+                if not (_is_entity_error(e) and plan.get('sender_prefix')):
+                    raise
+                print(f"[userbot-sync] album entity error ({e}) → retry plain name", flush=True)
+                plan = {**plan, 'prefix_style': 'newline',
+                        'sender_prefix': build_prefix(head, True, plain=True)}
+                mid, method = await deliver_album(bot, items, plan, download)
+                method += '+plain_name'
             print(f"{routes._album_log_prefix('userbot', buffer_key)} -> {plan['target_chat_id']} "
                   f"items={len(items)} via {method} prefix={'on' if plan.get('sender_prefix') else 'off'}",
                   flush=True)

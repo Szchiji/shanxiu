@@ -75,7 +75,7 @@ class TestSelection:
 
     def test_prefix_built_from_sender(self):
         plans = us.plans_for_item([_rule(include_sender_prefix=True)], _item())
-        assert plans[0]['sender_prefix'] == '<a href="tg://user?id=777">Some Bot</a>\n'
+        assert plans[0]['sender_prefix'] == '<a href="https://t.me/some_bot">Some Bot</a>\n'
 
     def test_recent_seen(self):
         seen = us.RecentSeen(ttl=60)
@@ -275,9 +275,12 @@ class TestButtons:
 class TestUsersPrefix:
     def test_users_mode_prefix_links_user(self):
         rule = _rule(sender_mode='users', include_sender_prefix=True)
-        human = _item(sender_is_bot=False, sender_id=111, sender_name='Alice <A>', sender_username='alice')
+        human = _item(sender_is_bot=False, sender_id=111, sender_name='Alice <A>', sender_username=None)
         plans = us.plans_for_item([rule], human)
         assert plans[0]['sender_prefix'] == '<a href="tg://user?id=111">Alice &lt;A&gt;</a>\n'
+        # with a username → t.me link (clickable for everyone)
+        named = _item(sender_is_bot=False, sender_id=111, sender_name='Alice', sender_username='alice')
+        assert us.plans_for_item([rule], named)[0]['sender_prefix'] == '<a href="https://t.me/alice">Alice</a>\n'
 
     def test_channel_or_anonymous_sender_not_tg_user_link(self):
         rule = _rule(sender_mode='users', include_sender_prefix=True)
@@ -304,7 +307,23 @@ class TestUsersPrefix:
         plans = us.plans_for_item([rule], human)
         _run(us.deliver_to_plans(bot, flask_app, human, plans))
         assert len(calls) == 2
-        assert calls[1] == 'Bob\na&lt;b'
+        assert calls[1] == 'Bob\n<b>a&lt;b</b>'  # only the name link dropped; body formatting kept
+
+    def test_entity_error_twice_falls_back_to_plain_body(self, flask_app):
+        bot = AsyncMock()
+        calls = []
+
+        async def send_message(**kw):
+            calls.append(kw['text'])
+            if len(calls) <= 2:
+                raise Exception('Entity_text_invalid')
+            return SimpleNamespace(message_id=9)
+
+        bot.send_message.side_effect = send_message
+        rule = _rule(sender_mode='users', include_sender_prefix=True, target_chat_ids='["-100941"]')
+        human = _item(sender_is_bot=False, sender_id=111, sender_name='Bob', text='a<b', html='<b>a&lt;b</b>')
+        _run(us.deliver_to_plans(bot, flask_app, human, us.plans_for_item([rule], human)))
+        assert calls[-1] == 'Bob\na&lt;b' and len(calls) == 3
 
     def test_users_page_has_prefix_hint(self, client):
         with client.session_transaction() as s:

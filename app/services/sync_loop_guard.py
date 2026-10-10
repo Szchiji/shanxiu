@@ -27,6 +27,11 @@ MAX_ITEMS = 100_000
 # Userbot may hear our output before the Bot API response is parsed; wait this long before checking.
 USERBOT_RECHECK_DELAY = 2.5
 
+import contextvars
+
+# True while a sync / forward-rule delivery is sending (TrackingBot) → own-post hook ignores it.
+IN_SYNC_DELIVERY: contextvars.ContextVar = contextvars.ContextVar('in_sync_delivery', default=False)
+
 _lock = threading.Lock()
 _registry: "OrderedDict[tuple, float]" = OrderedDict()
 
@@ -154,7 +159,11 @@ class TrackingBot:
             return attr
 
         async def _tracked(*args, **kwargs):
-            result = await attr(*args, **kwargs)
+            token = IN_SYNC_DELIVERY.set(True)
+            try:
+                result = await attr(*args, **kwargs)
+            finally:
+                IN_SYNC_DELIVERY.reset(token)
             chat_id = kwargs.get('chat_id', args[0] if args else None)
             try:
                 mark_sync_output(chat_id, result)

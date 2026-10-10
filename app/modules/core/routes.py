@@ -5813,9 +5813,11 @@ def api_push_group_bottom_buttons():
         return jsonify({'status':'error','msg':str(e)})
 
 def _apply_sync_options_to_rows(rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix=False,
-                                sender_prefix_style=None):
+                                sender_prefix_style=None, sync_own_bot_posts=None):
     """Apply shared sync toggles to every target row for a source."""
     for row in rows:
+        if sync_own_bot_posts is not None:
+            row.sync_own_bot_posts = sync_own_bot_posts
         row.enabled = enabled
         row.sync_media = sync_media
         row.sync_forwards = sync_forwards
@@ -5867,6 +5869,7 @@ def api_save_sync_group_messages():
     filter_keywords = d.get('filter_keywords', '[]')
     if filter_keywords is None:
         filter_keywords = '[]'
+    sync_own_bot_posts = bool(d['sync_own_bot_posts']) if 'sync_own_bot_posts' in d else None
     target_group_id = (d.get('target_group_id') or '').strip()
 
     try:
@@ -5897,9 +5900,15 @@ def api_save_sync_group_messages():
             return jsonify({'status': 'ok', 'targets': 0, 'msg': '已保存开关；请添加至少一个目标'})
 
         _apply_sync_options_to_rows(
-            rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix, sender_prefix_style
+            rows, enabled, sync_media, sync_forwards, filter_keywords, include_sender_prefix, sender_prefix_style,
+            sync_own_bot_posts,
         )
         db.session.commit()
+        try:
+            from app.services import own_post_sync
+            own_post_sync.invalidate()
+        except Exception:
+            pass
 
         from app.models import GroupPluginSettings
         GroupPluginSettings.set_enabled(db.session, group.id, 'sync', enabled)
@@ -5952,10 +5961,15 @@ def api_add_sync_target():
         filter_keywords = d.get('filter_keywords')
         if filter_keywords is None:
             filter_keywords = sibling.filter_keywords if sibling else '[]'
+        sync_own_bot_posts = (
+            bool(d['sync_own_bot_posts']) if 'sync_own_bot_posts' in d
+            else (getattr(sibling, 'sync_own_bot_posts', True) is not False if sibling else True)
+        )
 
         row = SyncGroupMessages(
             source_group_id=group.id,
             target_group_id=target_group_id,
+            sync_own_bot_posts=sync_own_bot_posts,
             enabled=enabled,
             sync_media=sync_media,
             sync_forwards=sync_forwards,
@@ -9989,8 +10003,30 @@ async def handle_sync_channel_posts(update: Update, context):
             )
             return
 
+        clone_id = context.application.bot_data.get('clone_id')
+        await _sync_channel_post_core(context.bot, msg, chat, user, clone_id, context=context)
+
+    except Exception as e:
+        print(f"Error in handle_sync_channel_posts: {e}")
+
+
+async def _sync_channel_post_core(bot, msg, chat, user, clone_id, *, context=None, own_bot_post=False):
+    """Channel → targets delivery for one post.
+
+    ``own_bot_post=True``: the post was sent by OUR bot (Telegram never delivers a bot's own
+    messages back to it as channel_post updates, so :mod:`app.services.own_post_sync` calls
+    this after a successful send). Only targets with ``sync_own_bot_posts`` enabled are used,
+    and channel auto-reply / auto-buttons are not run for it.
+    """
+    from app.services.sync_service import (
+        build_channel_sender_prefix,
+        normalize_prefix_style,
+        is_same_source_target,
+        keyword_blocks_sync,
+        sync_filter_text,
+    )
+    try:
         with global_flask_app.app_context():
-            clone_id = context.application.bot_data.get('clone_id')
             group = BotGroup.query.filter_by(
                 chat_id=str(chat.id),
                 clone_id=clone_id,
@@ -9999,19 +10035,26 @@ async def handle_sync_channel_posts(update: Update, context):
                 print(f"[sync] skip channel {chat.id}: no BotGroup for clone_id={clone_id}")
                 return
 
-            # Channel auto-reply is independent of sync settings
-            await _maybe_send_channel_auto_reply(context.bot, msg, chat, group, context)
+            if not own_bot_post:
+                # Channel auto-reply is independent of sync settings
+                await _maybe_send_channel_auto_reply(bot, msg, chat, group, context)
 
-            # Channel post auto-buttons (edit original post); independent of sync
-            await _maybe_attach_channel_post_buttons(
-                context.bot, msg, chat, group, clone_id,
-            )
+                # Channel post auto-buttons (edit original post); independent of sync
+                await _maybe_attach_channel_post_buttons(
+                    bot, msg, chat, group, clone_id,
+                )
 
             # Single gate: SyncGroupMessages.enabled
             sync_settings = SyncGroupMessages.query.filter_by(
                 source_group_id=group.id,
                 enabled=True,
             ).all()
+            if own_bot_post:
+                sync_settings = [s for s in sync_settings
+                                 if getattr(s, 'sync_own_bot_posts', True) is not False]
+                print(f"[sync] own-bot channel post chat={chat.id} msg={msg.message_id} "
+                      f"mgid={getattr(msg, 'media_group_id', None)} targets={len(sync_settings)}",
+                      flush=True)
             if not sync_settings:
                 return
 
@@ -10066,7 +10109,7 @@ async def handle_sync_channel_posts(update: Update, context):
                         continue
 
                     sent_msg, message_type = await _deliver_sync_copy(
-                        context.bot, target_chat_id, msg, sender_prefix,
+                        bot, target_chat_id, msg, sender_prefix,
                         bool(sync_setting.sync_media), from_chat_id=chat.id,
                         prefix_style=prefix_style,
                     )
@@ -10106,7 +10149,7 @@ async def handle_sync_channel_posts(update: Update, context):
 
             if album_plans:
                 _enqueue_sync_media_group_item(
-                    bot=context.bot,
+                    bot=bot,
                     flask_app=global_flask_app,
                     clone_id=clone_id,
                     chat=chat,
@@ -10117,7 +10160,7 @@ async def handle_sync_channel_posts(update: Update, context):
                 )
 
     except Exception as e:
-        print(f"Error in handle_sync_channel_posts: {e}")
+        print(f"Error in _sync_channel_post_core: {e}")
 
 
 async def handle_auto_delete_messages(update: Update, context):
@@ -12155,6 +12198,9 @@ async def run_bot(app_instance):
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
+    # Our own channel posts never come back as updates → hook the bot's send calls
+    from app.services import own_post_sync
+    own_post_sync.register_bot(app.bot, None)
 
     # Report module handlers – registered BEFORE the general text handler so that
     # report_conv_handler can intercept text replies in STEP_QUESTION state before
@@ -12312,6 +12358,9 @@ def setup_clone_handlers(app, flask_app, clone_id):
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
+    # Our own channel posts never come back as updates → hook the bot's send calls
+    from app.services import own_post_sync
+    own_post_sync.register_bot(app.bot, clone_id)
 
     # Report module handlers – registered BEFORE the general text handler so that
     # report_conv_handler can intercept text replies in STEP_QUESTION state before

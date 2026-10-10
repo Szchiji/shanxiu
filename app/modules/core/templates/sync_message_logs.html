@@ -162,7 +162,7 @@
             <input type="number" min="1" max="8760" class="form-control form-control-sm" id="retentionCustom"
                    style="width:110px;{% if ns.matched %}display:none;{% endif %}" value="{{ retention_hours if retention_hours else 24 }}" placeholder="小时">
             <button class="btn btn-sm btn-settings" onclick="saveRetention()"><i class="fa-solid fa-floppy-disk me-1"></i>保存</button>
-            <small class="text-muted">超过时长的日志每小时自动清理；默认 1 天。</small>
+            <small class="text-muted">按北京时间自然日保留（「1 天」= 只留今天）；群同步与小号同步日志一并清理；每小时自动执行。</small>
         </div>
     </div>
 </div>

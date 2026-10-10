@@ -49,28 +49,36 @@ def test_normalize_and_default(monkeypatch):
     assert r.describe_hours(0) == '永久保留' and r.describe_hours(72) == '3 天' and r.describe_hours(5) == '5 小时'
 
 
+def test_cutoff_calendar_vs_rolling():
+    from datetime import datetime
+    now = datetime(2026, 10, 10, 16, 45, 0)
+    assert r.cutoff_for(24, now) == datetime(2026, 10, 10, 0, 0, 0)
+    assert r.cutoff_for(72, now) == datetime(2026, 10, 8, 0, 0, 0)
+    assert r.cutoff_for(5, now) == datetime(2026, 10, 10, 11, 45, 0)
+    assert r.cutoff_for(0, now) is None
+
+
 def test_cleanup_default_one_day_and_group_overrides(flask_app, monkeypatch):
     from app.models import SyncMessageLog
     from app.utils import get_beijing_now
     with flask_app.app_context():
-        now = get_beijing_now()
+        now = get_beijing_now().replace(hour=16, minute=45, second=0, microsecond=0)
         g_default, g_week, g_forever = _group('-1001'), _group('-1002'), _group('-1003')
         r.set_group_retention_hours(g_week, 168)
         r.set_group_retention_hours(g_forever, 0)
         for gid in (g_default, g_week, g_forever, None):
-            _log(gid, 1, now)      # fresh
-            _log(gid, 30, now)     # > 1 day
-            _log(gid, 200, now)    # > 7 days
+            _log(gid, 1, now)      # today → keep
+            _log(gid, 20, now)     # yesterday evening → drop for 1-day calendar
+            _log(gid, 200, now)    # old → drop for 1-day and 7-day
         stats = r.cleanup_sync_logs(now=now)
         left = lambda gid: sorted(round((now - l.synced_at).total_seconds() / 3600)
                                   for l in SyncMessageLog.query.filter_by(source_group_id=gid).all())
         assert left(g_default) == [1]
-        assert left(None) == [1]          # rows without a source group use the default
-        assert left(g_week) == [1, 30]
-        assert left(g_forever) == [1, 30, 200]
+        assert left(None) == [1]
+        assert left(g_week) == [1, 20]
+        assert left(g_forever) == [1, 20, 200]
         assert stats['deleted'] == 2 + 2 + 1
         assert r.get_group_retention_hours(g_week) == 168
-        assert r.get_group_retention_hours(g_default) == 24
 
 
 def test_cleanup_batches(flask_app, monkeypatch):
@@ -153,4 +161,24 @@ def test_job_runs_and_logs(flask_app, capsys):
     finally:
         routes.global_flask_app = old
     out = capsys.readouterr().out
-    assert '[sync-log-retention] cleanup done: deleted=1' in out
+    assert '[sync-log-retention] cleanup done: deleted=1' in out and 'userbot=' in out and 'cutoff=' in out
+
+
+def test_userbot_rows_cleaned_by_calendar_day(flask_app):
+    """via=userbot is NOT skipped; 1-day calendar cutoff clears yesterday evening rows."""
+    from app import db
+    from app.models import SyncMessageLog
+    from app.utils import get_beijing_now
+    with flask_app.app_context():
+        now = get_beijing_now().replace(hour=16, minute=45, second=0, microsecond=0)
+        gid = _group('-1009')
+        for age, via in ((1, 'userbot'), (20, 'userbot'), (30, None), (20, None)):
+            db.session.add(SyncMessageLog(
+                source_group_id=gid, target_group_id='-100900', source_message_id=age,
+                target_message_id=age, status='success', via=via,
+                synced_at=now - timedelta(hours=age)))
+        db.session.commit()
+        stats = r.cleanup_sync_logs(now=now)
+        left = SyncMessageLog.query.order_by(SyncMessageLog.synced_at.desc()).all()
+        assert [(round((now - l.synced_at).total_seconds() / 3600), l.via) for l in left] == [(1, 'userbot')]
+        assert stats['deleted'] == 3 and stats['deleted_userbot'] == 1

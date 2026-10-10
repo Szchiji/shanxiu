@@ -5,17 +5,23 @@ Setting storage (SystemConfig key/value, same as other admin settings):
 * fallback: env ``SYNC_LOG_RETENTION_HOURS`` (default 24).
 ``0`` means 永久保留 (never delete). Custom values are clamped to 1 h … 8760 h (1 year).
 
-Loop guard (#302) compatibility: echoes of a sync output arrive within seconds, and the
-in-memory registry keeps outputs for 2 days independent of the DB. The DB fallback only
-matters right after a restart, for messages a few seconds old — far inside any retention
-window ≥ 1 h — so deleting rows older than the retention never re-enables a loop.
+Cutoff semantics (Beijing time):
+* day-aligned presets (24 / 72 / 168 / 720 …) use **calendar days**: ``1 天`` keeps
+  only today (anything before today's 00:00 is deleted). ``3 天`` keeps today + the
+  previous 2 calendar days. This matches the admin wording 「只留 N 天」and applies
+  equally to group sync rows and userbot rows (``via='userbot'``).
+* Custom hour values that are not multiples of 24 stay as a rolling window.
+
+Loop guard (#302) compatibility: echoes arrive within seconds of the send. The
+in-memory registry keeps outputs for 2 days. The DB fallback only needs rows a few
+seconds old — always inside any retention window ≥ 1 h.
 """
 
 from __future__ import annotations
 
 import os
 import threading
-import time
+import time as time_mod
 from datetime import timedelta
 from typing import Optional
 
@@ -82,6 +88,22 @@ def describe_hours(h: int) -> str:
     return f'{h} 小时'
 
 
+def cutoff_for(hours: int, now):
+    """Return the exclusive upper bound for deletion, or None if forever.
+
+    * hours multiple of 24 → calendar days in Beijing: keep ``hours//24`` days
+      including today (cutoff = today 00:00 − (days−1)).
+    * otherwise → rolling ``now − hours``.
+    """
+    if hours <= 0:
+        return None
+    if hours % 24 == 0:
+        days = hours // 24
+        start_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start_today - timedelta(days=days - 1)
+    return now - timedelta(hours=hours)
+
+
 def _overrides() -> dict:
     from app.models import SystemConfig
     out = {}
@@ -106,13 +128,13 @@ def _delete_batched(base_filter, deadline: float) -> int:
         SyncMessageLog.query.filter(SyncMessageLog.id.in_(ids)).delete(synchronize_session=False)
         db.session.commit()
         total += len(ids)
-        if len(ids) < BATCH_SIZE or time.monotonic() > deadline:
+        if len(ids) < BATCH_SIZE or time_mod.monotonic() > deadline:
             break
     return total
 
 
 def cleanup_sync_logs(now=None, time_budget: float = 120.0) -> dict:
-    """Delete expired SyncMessageLog rows. Call inside an app context. Returns stats."""
+    """Delete expired SyncMessageLog rows (group sync + userbot). Call inside an app context."""
     from app import db
     from app.models import SyncMessageLog
     from app.utils import get_beijing_now
@@ -121,29 +143,40 @@ def cleanup_sync_logs(now=None, time_budget: float = 120.0) -> dict:
         return {'skipped': True}
     try:
         now = now or get_beijing_now()
-        deadline = time.monotonic() + time_budget
+        deadline = time_mod.monotonic() + time_budget
         default_h = default_hours()
         overrides = _overrides()
         deleted = 0
+        deleted_userbot = 0
         try:
-            # Groups with their own setting
             for gid, h in overrides.items():
-                if h == 0:
+                cut = cutoff_for(h, now)
+                if cut is None:
                     continue
-                deleted += _delete_batched(
-                    (SyncMessageLog.source_group_id == gid, SyncMessageLog.synced_at < now - timedelta(hours=h)),
+                n = _delete_batched(
+                    (SyncMessageLog.source_group_id == gid, SyncMessageLog.synced_at < cut),
                     deadline)
-            # Everything else (incl. rows without a source group) uses the default
-            if default_h > 0:
-                cond = [SyncMessageLog.synced_at < now - timedelta(hours=default_h)]
+                deleted += n
+            cut = cutoff_for(default_h, now)
+            if cut is not None:
+                cond = [SyncMessageLog.synced_at < cut]
                 if overrides:
                     cond.append(db.or_(SyncMessageLog.source_group_id.is_(None),
                                        ~SyncMessageLog.source_group_id.in_(list(overrides))))
+                # Count userbot rows in this window before deleting (for the log line).
+                ub_q = db.session.query(SyncMessageLog.id).filter(*cond, SyncMessageLog.via == 'userbot')
+                deleted_userbot = ub_q.count()
                 deleted += _delete_batched(tuple(cond), deadline)
         except Exception:
             db.session.rollback()
             raise
-        return {'deleted': deleted, 'default_hours': default_h, 'overrides': len(overrides)}
+        return {
+            'deleted': deleted,
+            'deleted_userbot': deleted_userbot,
+            'default_hours': default_h,
+            'overrides': len(overrides),
+            'cutoff': cutoff_for(default_h, now),
+        }
     finally:
         _run_lock.release()
 
@@ -169,8 +202,12 @@ async def sync_log_cleanup_job(context):
         stats = await asyncio.to_thread(_work)
         if stats.get('skipped'):
             return
+        cut = stats.get('cutoff')
+        cut_s = cut.strftime('%Y-%m-%d %H:%M') if cut else 'forever'
         print(f"[sync-log-retention] cleanup done: deleted={stats['deleted']} "
-              f"default={describe_hours(stats['default_hours'])} group_overrides={stats['overrides']}",
+              f"userbot={stats.get('deleted_userbot', 0)} "
+              f"default={describe_hours(stats['default_hours'])} "
+              f"cutoff={cut_s} group_overrides={stats['overrides']}",
               flush=True)
     except Exception as e:
         print(f"[sync-log-retention] cleanup failed: {type(e).__name__}: {str(e)[:200]}", flush=True)

@@ -118,6 +118,12 @@ class TestWiring:
         tpl = Path('app/modules/core/templates/channel_post_buttons.html').read_text()
         assert '原帖如果已经有按钮' in tpl
         assert '优惠券按钮' in tpl  # clarifies separation
+        # Same button-adding UX as scheduled messages (rows + modal)
+        assert '新增一行按钮' in tpl
+        assert '本行新增一个按钮' in tpl
+        assert 'buttonEditModal' in tpl
+        assert 'linksContainer' in tpl
+        assert 'links_text' not in tpl  # old textarea UI removed
 
 
 class TestSaveApi:
@@ -162,6 +168,34 @@ class TestSaveApi:
         assert page.status_code == 200
         assert '频道帖按钮'.encode() in page.data
         assert b'example.com' in page.data
+        assert '新增一行按钮'.encode() in page.data
+        assert b'buttonEditModal' in page.data
+        assert b'linksContainer' in page.data
+
+        # Multi-button + row/order preserved (same format as scheduled messages)
+        resp2 = client.post(
+            '/core/api/save_channel_post_buttons',
+            json={
+                'group_id': gid,
+                'enabled': True,
+                'links': [
+                    {'text': 'A', 'url': 'https://a.example', 'row': 0, 'order': 0},
+                    {'text': 'B', 'url': 'https://b.example', 'row': 0, 'order': 1},
+                    {'text': 'C', 'url': 'https://c.example', 'row': 1, 'order': 0},
+                ],
+            },
+        )
+        data2 = resp2.get_json() or {}
+        assert data2.get('status') == 'ok', data2
+        links2 = data2.get('links') or []
+        assert len(links2) == 3
+        assert {(l['text'], l['row'], l['order']) for l in links2} == {
+            ('A', 0, 0), ('B', 0, 1), ('C', 1, 0),
+        }
+        page2 = client.get(f'/core/group/{gid}/channel_post_buttons')
+        assert b'a.example' in page2.data
+        assert b'b.example' in page2.data
+        assert b'c.example' in page2.data
 
 
 class TestAttachRuntime:
@@ -235,6 +269,43 @@ class TestAttachRuntime:
         rows = kw['reply_markup'].inline_keyboard
         assert rows[0][0].text == '去看看'
         assert rows[0][0].url == 'https://go.example'
+
+    def test_edits_multi_row_buttons(self, flask_app):
+        from app import db
+        from app.models import BotGroup, ChannelPostButtonConfig
+        from app.modules.core import routes
+
+        with flask_app.app_context():
+            ch = BotGroup(chat_id='-100889', title='ch', type='channel', is_active=True)
+            db.session.add(ch)
+            db.session.commit()
+            db.session.add(ChannelPostButtonConfig(
+                group_id=ch.id,
+                enabled=True,
+                links='[{"text":"A","url":"https://a.example","row":0,"order":0},'
+                      '{"text":"B","url":"https://b.example","row":0,"order":1},'
+                      '{"text":"C","url":"https://c.example","row":1,"order":0}]',
+            ))
+            db.session.commit()
+            gid = ch.id
+
+        msg = SimpleNamespace(
+            message_id=100, media_group_id=None, reply_markup=None,
+            text='post', caption=None,
+        )
+        chat = SimpleNamespace(id=-100889)
+        bot = AsyncMock()
+        bot.edit_message_reply_markup = AsyncMock(return_value=True)
+
+        with flask_app.app_context():
+            group = BotGroup.query.get(gid)
+            _run(routes._maybe_attach_channel_post_buttons(bot, msg, chat, group, None))
+
+        bot.edit_message_reply_markup.assert_awaited_once()
+        rows = bot.edit_message_reply_markup.await_args.kwargs['reply_markup'].inline_keyboard
+        assert len(rows) == 2
+        assert [b.text for b in rows[0]] == ['A', 'B']
+        assert [b.text for b in rows[1]] == ['C']
 
     def test_album_flush_anchors_caption(self, flask_app):
         from app.modules.core import routes

@@ -174,6 +174,9 @@ def run_migrations():
         "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
         # 同步日志按时间清理（保留时长）需要 synced_at 索引
         "CREATE INDEX IF NOT EXISTS ix_sync_message_logs_synced_at ON sync_message_logs(synced_at)",
+        # channel_post_button_configs: 频道帖自动加按钮（编辑原帖 reply_markup）
+        "CREATE TABLE IF NOT EXISTS channel_post_button_configs (id SERIAL PRIMARY KEY, group_id INTEGER NOT NULL UNIQUE REFERENCES bot_groups(id), enabled BOOLEAN DEFAULT FALSE, links TEXT DEFAULT '[]', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_channel_post_button_configs_group_id ON channel_post_button_configs(group_id)",
         # group_warnings: /warn + keyword action=warn persistence (created via db.create_all; listed for clarity)
         "CREATE TABLE IF NOT EXISTS group_warnings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL REFERENCES bot_groups(id), user_id BIGINT NOT NULL, admin_id BIGINT, reason TEXT, source VARCHAR(20) DEFAULT 'command', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_id ON group_warnings(group_id)",

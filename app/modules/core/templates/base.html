@@ -1237,7 +1237,7 @@
                         {# ── Channel-only navigation ── #}
 
                         <!-- Channel Automation (accordion) -->
-                        {% set ch_auto_active = page in ['auto_replies', 'scheduled_messages', 'channel_forward_rules', 'channel_templates', 'channel_coupons'] %}
+                        {% set ch_auto_active = page in ['auto_replies', 'scheduled_messages', 'channel_forward_rules', 'channel_templates', 'channel_coupons', 'channel_post_buttons'] %}
                         <li class="nav-item">
                             <button class="sidebar-group-toggle {% if ch_auto_active %}active-group{% endif %}"
                                     type="button"
@@ -1255,6 +1255,7 @@
                                     <li><a href="/core/group/{{ current_group.id }}/channel_forward_rules" class="nav-link {% if page == 'channel_forward_rules' %}active{% endif %}"><i class="fa-solid fa-share-nodes"></i> 转发规则</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/channel_templates" class="nav-link {% if page == 'channel_templates' %}active{% endif %}"><i class="fa-solid fa-file-lines"></i> 消息模板</a></li>
                                     <li><a href="/core/group/{{ current_group.id }}/channel_coupons" class="nav-link {% if page == 'channel_coupons' %}active{% endif %}"><i class="fa-solid fa-ticket"></i> 优惠券按钮</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_post_buttons" class="nav-link {% if page == 'channel_post_buttons' %}active{% endif %}"><i class="fa-solid fa-rectangle-list"></i> 频道帖按钮</a></li>
                                 </ul>
                             </div>
                         </li>

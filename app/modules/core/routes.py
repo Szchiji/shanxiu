@@ -5,7 +5,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone,
-                        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelMessageStats, LotteryMessageCount,
+                        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelPostButtonConfig, ChannelMessageStats, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
@@ -1131,6 +1131,8 @@ def _delete_group_cascade(group_id: int) -> None:
         OtherSettings, InactiveUserSettings, KeywordFilter, MessageStatistics,
         GroupVote, QuizGame, QuizSession, RedPacket,
         AdminActionLog, GroupMember,
+        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon,
+        ChannelPostButtonConfig, ChannelMessageStats,
     ):
         model.query.filter_by(group_id=group_id).delete(synchronize_session=False)
 
@@ -2124,6 +2126,37 @@ def page_channel_coupons(gid):
     group = get_group_or_403(gid)
     coupons = ChannelCoupon.query.filter_by(group_id=gid).order_by(ChannelCoupon.sort_order.asc(), ChannelCoupon.id.desc()).all()
     return render_template('channel_coupons.html', page='channel_coupons', group=group, coupons=coupons)
+
+
+@core_bp.route('/group/<int:gid>/channel_post_buttons')
+def page_channel_post_buttons(gid):
+    """频道帖自动加按钮（编辑原帖 reply_markup）"""
+    if not session.get('logged_in'): return redirect('/core')
+    session['current_group_id'] = gid
+    group = get_group_or_403(gid)
+    config = ChannelPostButtonConfig.query.filter_by(group_id=gid).first()
+    if not config:
+        config = ChannelPostButtonConfig(group_id=gid, enabled=False, links='[]')
+    links_list = config.get_links_list() if hasattr(config, 'get_links_list') else []
+    try:
+        if not links_list:
+            links_list = json.loads(config.links or '[]')
+            if not isinstance(links_list, list):
+                links_list = []
+    except Exception:
+        links_list = []
+    links_text = '\n'.join(
+        f"{(l.get('text') or '').strip()}|{(l.get('url') or '').strip()}"
+        for l in links_list
+        if (l.get('text') or '').strip() and (l.get('url') or '').strip()
+    )
+    return render_template(
+        'channel_post_buttons.html',
+        page='channel_post_buttons',
+        group=group,
+        config=config,
+        links_text=links_text,
+    )
 
 
 @core_bp.route('/group/<int:gid>/channel_stats')
@@ -6952,6 +6985,35 @@ def api_delete_channel_coupon():
         return jsonify({'status':'error','msg':'删除频道优惠券失败'})
 
 
+
+@core_bp.route('/api/save_channel_post_buttons', methods=['POST'])
+def api_save_channel_post_buttons():
+    """Save channel-post auto button config (enable + URL button links)."""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'message': '未登录'}), 401
+    try:
+        d = request.get_json(force=True) or {}
+        gid = d.get('group_id')
+        if not gid:
+            return jsonify({'status': 'error', 'message': '缺少 group_id'}), 400
+        group = get_group_or_403(int(gid))
+        from app.services.channel_post_buttons import normalize_button_links
+        links = normalize_button_links(d.get('links') or [])
+        enabled = bool(d.get('enabled', False))
+        item = ChannelPostButtonConfig.query.filter_by(group_id=group.id).first()
+        if not item:
+            item = ChannelPostButtonConfig(group_id=group.id)
+            db.session.add(item)
+        item.enabled = enabled
+        item.links = json.dumps(links, ensure_ascii=False)
+        item.updated_at = get_beijing_now()
+        db.session.commit()
+        return jsonify({'status': 'ok', 'id': item.id, 'enabled': item.enabled, 'links': links})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @core_bp.route('/api/clear_channel_stats', methods=['POST'])
 def api_clear_channel_stats():
     """清空频道消息统计"""
@@ -9225,6 +9287,175 @@ async def _flush_forward_media_group(buffer_key):
             print(f"Error applying forward rule {rule.get('rule_name')} to album: {rule_err}")
 
 
+
+# --- Channel post auto-buttons (edit original post reply_markup) -------------------
+# Independent of discussion-group coupons. Skips posts that already have buttons.
+_CHANNEL_POST_BUTTON_ALBUM_BUFFERS: dict = {}
+_CHANNEL_POST_BUTTON_FLUSH_DELAY = _ALBUM_FLUSH_DELAY
+
+
+async def _edit_channel_post_buttons(bot, chat_id, message_id, reply_markup):
+    """editMessageReplyMarkup with clear logs for missing can_edit_messages."""
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=reply_markup,
+        )
+        print(
+            f"[channel_post_buttons] attached chat={chat_id} msg={message_id}",
+            flush=True,
+        )
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if 'not enough rights' in err or "can't edit" in err or 'chat_admin_required' in err:
+            print(
+                f"[channel_post_buttons] permission denied chat={chat_id} msg={message_id}: "
+                f"bot needs can_edit_messages. {e}",
+                flush=True,
+            )
+        elif 'message is not modified' in err or 'reply markup is not modified' in err:
+            print(
+                f"[channel_post_buttons] unchanged chat={chat_id} msg={message_id}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[channel_post_buttons] edit failed chat={chat_id} msg={message_id}: {e}",
+                flush=True,
+            )
+        return False
+
+
+async def _flush_channel_post_button_album(buffer_key):
+    """After album debounce: attach buttons only to caption / first message."""
+    from app.services.channel_post_buttons import (
+        message_has_inline_buttons,
+        normalize_button_links,
+        pick_album_anchor_message,
+    )
+
+    buf = _CHANNEL_POST_BUTTON_ALBUM_BUFFERS.pop(buffer_key, None)
+    if not buf:
+        return
+    _note_album_flushed('channel_post_buttons', buffer_key, buf)
+    messages = buf.get('messages') or []
+    bot = buf.get('bot')
+    chat_id = buf.get('chat_id')
+    links = normalize_button_links(buf.get('links') or [])
+    if not messages or bot is None or chat_id is None or not links:
+        return
+
+    # If any album part already has buttons, skip the whole album (do not replace).
+    if any(message_has_inline_buttons(m) for m in messages):
+        print(
+            f"{_album_log_prefix('channel_post_buttons', buffer_key)} skip: album already has buttons",
+            flush=True,
+        )
+        return
+
+    anchor = pick_album_anchor_message(messages)
+    if anchor is None:
+        return
+    mid = getattr(anchor, 'message_id', None)
+    if mid is None:
+        return
+    keyboard = build_inline_keyboard_from_links(links)
+    if not keyboard:
+        return
+    await _edit_channel_post_buttons(bot, chat_id, mid, InlineKeyboardMarkup(keyboard))
+
+
+def _enqueue_channel_post_button_album(*, bot, clone_id, chat_id, msg, links):
+    """Buffer album parts; flush attaches buttons to the anchor message only."""
+    mgid = getattr(msg, 'media_group_id', None)
+    if not mgid:
+        return
+    buffer_key = (clone_id, chat_id, str(mgid))
+    buf = _CHANNEL_POST_BUTTON_ALBUM_BUFFERS.get(buffer_key)
+    if not buf:
+        buf = {
+            'messages': [],
+            'bot': bot,
+            'chat_id': chat_id,
+            'links': links,
+            'task': None,
+        }
+        _CHANNEL_POST_BUTTON_ALBUM_BUFFERS[buffer_key] = buf
+    # Keep latest links/bot in case config was loaded per-part
+    buf['bot'] = bot
+    buf['chat_id'] = chat_id
+    buf['links'] = links
+    # Deduplicate by message_id
+    mid = getattr(msg, 'message_id', None)
+    existing_ids = {getattr(m, 'message_id', None) for m in buf['messages']}
+    if mid not in existing_ids:
+        buf['messages'].append(msg)
+    print(
+        f"{_album_log_prefix('channel_post_buttons', buffer_key)} part "
+        f"msg={mid} items={len(buf['messages'])}",
+        flush=True,
+    )
+    _schedule_media_group_flush(
+        _CHANNEL_POST_BUTTON_ALBUM_BUFFERS,
+        buffer_key,
+        _flush_channel_post_button_album,
+        _CHANNEL_POST_BUTTON_FLUSH_DELAY,
+    )
+
+
+async def _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id):
+    """If enabled, edit the channel post to add configured URL buttons.
+
+    Skips when the post already has inline buttons, or when it is a sync/forward
+    output (caller already applied the loop guard). Albums are debounced.
+    """
+    from app.services.channel_post_buttons import (
+        message_has_inline_buttons,
+        normalize_button_links,
+        should_attach_channel_post_buttons,
+    )
+
+    try:
+        cfg = ChannelPostButtonConfig.query.filter_by(group_id=group.id).first()
+        if not cfg or not cfg.enabled:
+            return
+        links = normalize_button_links(cfg.get_links_list() if hasattr(cfg, 'get_links_list') else (cfg.links or '[]'))
+        if not links:
+            return
+
+        mgid = getattr(msg, 'media_group_id', None)
+        if mgid:
+            # Album: always buffer; flush decides skip-if-has-buttons across all parts
+            _enqueue_channel_post_button_album(
+                bot=bot,
+                clone_id=clone_id,
+                chat_id=chat.id,
+                msg=msg,
+                links=links,
+            )
+            return
+
+        if not should_attach_channel_post_buttons(True, links, msg):
+            if message_has_inline_buttons(msg):
+                print(
+                    f"[channel_post_buttons] skip existing buttons chat={chat.id} "
+                    f"msg={getattr(msg, 'message_id', None)}",
+                    flush=True,
+                )
+            return
+
+        keyboard = build_inline_keyboard_from_links(links)
+        if not keyboard:
+            return
+        await _edit_channel_post_buttons(
+            bot, chat.id, msg.message_id, InlineKeyboardMarkup(keyboard),
+        )
+    except Exception as e:
+        print(f"[channel_post_buttons] error: {e}", flush=True)
+
+
 async def _sync_reply_markup(msg):
     """Inline keyboard from the source message, or None.
 
@@ -9781,6 +10012,11 @@ async def handle_sync_channel_posts(update: Update, context):
 
             # Channel auto-reply is independent of sync settings
             await _maybe_send_channel_auto_reply(context.bot, msg, chat, group, context)
+
+            # Channel post auto-buttons (edit original post); independent of sync
+            await _maybe_attach_channel_post_buttons(
+                context.bot, msg, chat, group, clone_id,
+            )
 
             # Single gate: SyncGroupMessages.enabled
             sync_settings = SyncGroupMessages.query.filter_by(

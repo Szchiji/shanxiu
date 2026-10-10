@@ -137,9 +137,12 @@ def parse_sender_filter(text: Optional[str]) -> tuple[set, set]:
 
 
 def sender_matches(mode: Optional[str], sender_filter: Optional[str], item: UbMessage) -> bool:
+    """bots (default) | selected | users (humans only) | all."""
     mode = (mode or 'bots').lower()
     if mode == 'all':
         return True
+    if mode == 'users':
+        return not item.sender_is_bot
     if not item.sender_is_bot:
         return False
     if mode == 'selected':
@@ -183,8 +186,8 @@ def plans_for_item(rules: Iterable[dict], item: UbMessage, *, own_bot_ids: Itera
     * messages from our own main/clone bots ARE relayed like other bots' messages; loops are
       prevented precisely in :func:`process_item` (skip only sync / forward outputs).
       ``own_bot_ids`` is kept for API compatibility and only marks ``item.from_own_bot``;
-    * in 'all' mode, non-bot messages are skipped for targets the main bot already syncs
-      itself from the same source (the Bot API delivers those to us directly).
+    * in 'all' / 'users' mode, non-bot messages are skipped for targets the main bot already
+      syncs itself from the same source (the Bot API delivers those to us directly).
     """
     if item.sender_id is not None and item.sender_id in set(own_bot_ids or ()):
         item.from_own_bot = True

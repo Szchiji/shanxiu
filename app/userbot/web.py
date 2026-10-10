@@ -15,7 +15,7 @@ from app.userbot.manager import UserbotError, userbot_manager
 from app.userbot.my_telegram import MyTelegramError
 
 _HEX32 = re.compile(r'^[0-9a-fA-F]{32}$')
-_SENDER_MODES = ('bots', 'selected', 'all')
+_SENDER_MODES = ('bots', 'selected', 'users', 'all')
 
 
 def _is_global_admin() -> bool:

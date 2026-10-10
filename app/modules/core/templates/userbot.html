@@ -15,7 +15,7 @@
     <li>Telegram 规定机器人收不到<strong>其他机器人</strong>在群里发的消息，所以需要一个普通账号（小号）加入源群来「听」。</li>
     <li>小号<strong>只监听</strong>：不会发消息、不会自动进群、不会标记已读。真正发送的永远是主机器人。</li>
     <li>使用步骤：① 获取 api_id / api_hash（可自动获取或手动填写）→ ② 小号登录 → ③ 把小号拉进源群 → ④ 添加同步规则。</li>
-    <li>默认只同步<strong>其他机器人</strong>发的消息；普通成员用原来的「同步设置」即可。本机器人自己发的消息（定时消息、广播等）也会同步；只有「同步/转发产生的消息」不会再被同步，避免群之间来回回声。</li>
+    <li>默认同步<strong>机器人</strong>发的消息；也可改成「只监控用户」或「全部消息」。本机器人自己发的消息（定时消息、广播等）在「所有机器人/全部」模式下也会同步；只有「同步/转发产生的消息」不会再被同步，避免群之间来回回声。</li>
     <li>主机器人也在源群时可原样复制（格式/相册/按钮）；不在源群时由小号下载媒体后主机器人重新上传，并补回内联按钮。</li>
     <li>链接按钮可点；对方回调（callback）按钮点了会落到本机器人，Telegram 无法代转给原机器人。</li>
     <li><strong>风险</strong>：用户账号自动化有被 Telegram 限制/封号的可能，请使用小号而不是主号；会话和 api_hash 已加密保存。</li>
@@ -143,6 +143,7 @@
         <div class="mb-1">
             <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeBots" value="bots" checked onchange="ubModeChanged()"><label class="form-check-label" for="ubModeBots">所有机器人发的消息（推荐）</label></div>
             <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeSel" value="selected" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeSel">只要指定的机器人</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeUsers" value="users" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeUsers">只监控用户消息（不含机器人；主机器人已同步的目标会自动跳过，避免重复）</label></div>
             <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeAll" value="all" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeAll">全部消息（含普通成员；主机器人已同步的目标会自动跳过，避免重复）</label></div>
         </div>
         <textarea class="form-control form-control-sm mb-3" id="ubSenderFilter" rows="2" placeholder="@abc_bot, 123456789（逗号或换行分隔）" style="display:none"></textarea>
@@ -265,7 +266,7 @@ function ubTargetsLabel(ids) {
 function ubRenderRules() {
     const body = document.getElementById('ubRulesBody');
     if (!ubRules.length) { body.innerHTML = '<tr><td colspan="6" class="text-muted ps-3">暂无规则，点「添加规则」</td></tr>'; return; }
-    const modeTxt = r => r.sender_mode === 'all' ? '全部消息' : (r.sender_mode === 'selected' ? '指定：' + ubEsc(r.sender_filter) : '所有机器人');
+    const modeTxt = r => ({all:'全部消息', users:'只监控用户', selected:'指定：' + ubEsc(r.sender_filter), bots:'所有机器人'}[r.sender_mode] || '所有机器人');
     body.innerHTML = ubRules.map(r => `<tr>
         <td class="ps-3"><div class="fw-semibold">${ubEsc(r.source_title || r.source_chat_id)}</div><small class="text-muted">${ubEsc(r.source_chat_id)}</small></td>
         <td class="small">${modeTxt(r)}</td>
@@ -295,7 +296,7 @@ function ubOpenRule(id) {
     document.getElementById('ubRuleId').value = r.id || '';
     document.getElementById('ubSourceId').value = r.source_chat_id || '';
     document.getElementById('ubSourceTitle').value = r.source_title || '';
-    document.getElementById({bots: 'ubModeBots', selected: 'ubModeSel', all: 'ubModeAll'}[r.sender_mode] || 'ubModeBots').checked = true;
+    document.getElementById({bots: 'ubModeBots', selected: 'ubModeSel', users: 'ubModeUsers', all: 'ubModeAll'}[r.sender_mode] || 'ubModeBots').checked = true;
     document.getElementById('ubSenderFilter').value = r.sender_filter || '';
     const known = new Set(UB_MAIN_GROUPS.map(g => String(g.chat_id)));
     document.getElementById('ubTargetList').innerHTML = UB_MAIN_GROUPS.length ? UB_MAIN_GROUPS.map((g, i) => `<div class="form-check"><input class="form-check-input ub-target" type="checkbox" id="ubT${i}" value="${ubEsc(g.chat_id)}" ${(r.target_chat_ids || []).map(String).includes(String(g.chat_id)) ? 'checked' : ''}><label class="form-check-label small" for="ubT${i}">${ubEsc(g.title)} <span class="text-muted">${ubEsc(g.chat_id)}</span></label></div>`).join('') : '<div class="small text-muted">主机器人还没有群/频道</div>';

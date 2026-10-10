@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner, feature_description %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<div class="page-header">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-rectangle-list me-2"></i>频道帖按钮</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">频道新帖发布后，自动给原帖加上配置的链接按钮</p>
+        </div>
+    </div>
+</div>
+
+{% call feature_description('channel_post_buttons') %}
+<ul>
+    <li>开启后，频道每发一篇新帖，机器人会用「编辑按钮」把下面的链接按钮贴到原帖上。</li>
+    <li><strong>原帖如果已经有按钮，一律跳过、不覆盖。</strong></li>
+    <li>相册（多图）只给带说明的那张（或第一张）贴按钮。</li>
+    <li>同步/转发规则发出去的帖不会再贴，避免循环。</li>
+    <li>机器人需要频道管理员权限，且勾选「编辑消息」。</li>
+    <li>与「优惠券按钮 / 自动发送频道按钮」无关：那套是在讨论区另发一条回复。</li>
+</ul>
+{% endcall %}
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="form-check form-switch mb-4">
+            <input class="form-check-input" type="checkbox" id="enabled" {% if config.enabled %}checked{% endif %}>
+            <label class="form-check-label fw-semibold" for="enabled">启用频道帖自动加按钮</label>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-semibold">按钮链接</label>
+            <textarea class="form-control" id="links_text" rows="6" placeholder="按钮文字|https://example.com">{{ links_text }}</textarea>
+            <div class="form-text">每行一个按钮，格式：<code>按钮文字|https://...</code>。空行忽略。</div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-primary" onclick="saveConfig()">
+                <i class="fa-solid fa-floppy-disk me-1"></i>保存
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+const GROUP_ID = {{ group.id }};
+
+function parseLinksText() {
+    const lines = document.getElementById('links_text').value.split('\n');
+    const links = [];
+    for (let i = 0; i < lines.length; i++) {
+        const value = lines[i].trim();
+        if (!value) continue;
+        const parts = value.split('|');
+        if (parts.length < 2) {
+            throw new Error('按钮链接格式应为：按钮文字|链接');
+        }
+        const text = parts.shift().trim();
+        const url = parts.join('|').trim();
+        if (text && url) {
+            links.push({ text, url, row: links.length, order: 0 });
+        }
+    }
+    return links;
+}
+
+async function saveConfig() {
+    let links;
+    try {
+        links = parseLinksText();
+    } catch (e) {
+        showToast(e.message || '按钮格式错误', 'danger');
+        return;
+    }
+    showLoading();
+    try {
+        const resp = await fetch('/core/api/save_channel_post_buttons', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                group_id: GROUP_ID,
+                enabled: document.getElementById('enabled').checked,
+                links: links,
+            }),
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            showToast('已保存', 'success');
+        } else {
+            showToast(data.message || '保存失败', 'danger');
+        }
+    } catch (err) {
+        showToast('保存失败：' + err, 'danger');
+    } finally {
+        hideLoading();
+    }
+}
+</script>
+{% endblock %}

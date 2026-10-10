@@ -1977,10 +1977,32 @@ def page_sync_message_logs(gid):
         log_members = GroupMember.query.filter(GroupMember.user_id.in_(log_user_ids)).all()
         log_member_map = {m.user_id: m for m in log_members}
     
+    from app.services.sync_log_retention import PRESETS, describe_hours, get_group_retention_hours
+    retention_hours = get_group_retention_hours(gid)
     return render_template('sync_message_logs.html', page='sync_message_logs', group=group,
                          logs=logs, current_page=page, per_page=per_page,
                          total_pages=total_pages, total_items=total,
-                         log_member_map=log_member_map)
+                         log_member_map=log_member_map,
+                         retention_hours=retention_hours,
+                         retention_label=describe_hours(retention_hours),
+                         retention_presets=PRESETS)
+
+
+@core_bp.route('/api/sync_log_retention', methods=['POST'])
+def api_save_sync_log_retention():
+    """保存同步日志保留时长（按源群/频道）。hours=0 表示永久保留。"""
+    if not session.get('logged_in'): return jsonify({'status': 'error', 'msg': 'Auth required'})
+    d = request.json or {}
+    group = BotGroup.query.get(safe_int(d.get('group_id'), 0))
+    if not group: return jsonify({'status': 'error', 'msg': 'Group not found'})
+    err = _api_check_group_access(group)
+    if err: return err
+    from app.services.sync_log_retention import describe_hours, set_group_retention_hours
+    try:
+        hours = set_group_retention_hours(group.id, d.get('hours'))
+    except (TypeError, ValueError):
+        return jsonify({'status': 'error', 'msg': '请输入有效的小时数'})
+    return jsonify({'status': 'ok', 'hours': hours, 'label': describe_hours(hours)})
 
 @core_bp.route('/bot_clones')
 @require_main_instance
@@ -11986,6 +12008,9 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
     app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)  # 🆕 Check red packet expiration every 5 minutes
     app.job_queue.run_repeating(check_and_send_votes, interval=60, first=90)  # 🆕 Auto-send pending votes every minute
+    # 同步日志保留时长：每小时清理一次过期 SyncMessageLog（启动约 2 分钟后先跑一次）
+    from app.services.sync_log_retention import sync_log_cleanup_job
+    app.job_queue.run_repeating(sync_log_cleanup_job, interval=3600, first=120, name='sync_log_retention')
     
     await app.initialize()
     await app.start()

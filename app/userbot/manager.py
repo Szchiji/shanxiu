@@ -657,6 +657,13 @@ class UserbotManager:
                 if s.source_group_id in gid_to_chat
             )
             own = frozenset(self._own_bot_ids())
+        summary = '; '.join(
+            f"rule#{r['id']} src={r['source_chat_id']} mode={r['sender_mode'] or 'bots'} "
+            f"prefix={'on' if r['include_sender_prefix'] else 'off'}/{r['sender_prefix_style'] or 'newline'}"
+            for r in rules)
+        if summary != getattr(self, '_last_rules_summary', None):
+            self._last_rules_summary = summary
+            print(f"[userbot] rules: {summary or 'none'}", flush=True)
         self._rules_cache = (time.monotonic(), rules, own, synced)
         return rules, own, synced
 

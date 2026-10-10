@@ -171,12 +171,28 @@ def parse_targets(raw: Any) -> list:
     return out
 
 
-def build_prefix(item: UbMessage, include: bool) -> str:
+def build_prefix(item: UbMessage, include: bool, *, plain: bool = False) -> str:
+    """Sender name line. Users → ``tg://user?id=`` link; channels / anonymous admins
+    (negative ids) → ``t.me/<username>`` link or plain name (tg://user with a chat id is
+    invalid and made Telegram reject the whole message). *plain* = no link at all."""
     if not include:
         return ''
-    user = SimpleNamespace(id=item.sender_id, first_name=item.sender_name or item.sender_username or '',
-                           last_name='')
-    return build_group_sender_prefix(user, True)
+    import html as _html
+    name = (item.sender_name or item.sender_username or '').strip() or '未知'
+    if plain:
+        return f"{_html.escape(name)}\n"
+    sid = item.sender_id
+    if isinstance(sid, int) and sid > 0:
+        user = SimpleNamespace(id=sid, first_name=name, last_name='')
+        return build_group_sender_prefix(user, True)
+    if item.sender_username:
+        return f'<a href="https://t.me/{_html.escape(item.sender_username)}">{_html.escape(name)}</a>\n'
+    return f"{_html.escape(name)}\n"
+
+
+def _is_entity_error(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return 'entit' in s or "can't parse" in s or 'parse entities' in s
 
 
 def plans_for_item(rules: Iterable[dict], item: UbMessage, *, own_bot_ids: Iterable[int] = (),
@@ -210,6 +226,7 @@ def plans_for_item(rules: Iterable[dict], item: UbMessage, *, own_bot_ids: Itera
             plans.append({
                 'rule_id': rule.get('id'),
                 'target_chat_id': target,
+                'include_sender_prefix': bool(rule.get('include_sender_prefix')),
                 'sender_prefix': build_prefix(item, bool(rule.get('include_sender_prefix'))),
                 'prefix_style': normalize_prefix_style(rule.get('sender_prefix_style')),
                 'filter_keywords': rule.get('filter_keywords') or '[]',
@@ -461,9 +478,22 @@ async def deliver_to_plans(bot, flask_app, item: UbMessage, plans: list, downloa
             _log(flask_app, item, plan, status='filtered', message_type=item.media_kind or 'text')
             continue
         try:
-            mid, method = await deliver_single(bot, item, plan, download)
+            try:
+                mid, method = await deliver_single(bot, item, plan, download)
+            except Exception as e:
+                if not _is_entity_error(e):
+                    raise
+                # Telegram rejected formatting (e.g. Entity_text_invalid): retry with a plain
+                # name line and plain body so the message (and its name) still arrives.
+                print(f"[userbot-sync] entity error ({e}) → retry plain", flush=True)
+                import html as _html
+                safe_item = UbMessage(**{**item.__dict__, 'html': _html.escape(item.text or '')})
+                safe_plan = {**plan, 'prefix_style': 'newline',
+                             'sender_prefix': build_prefix(item, bool(plan.get('sender_prefix')), plain=True)}
+                mid, method = await deliver_single(bot, safe_item, safe_plan, download)
+                method += '+plain'
             print(f"[userbot-sync] chat={item.chat_id} msg={item.message_id} -> {plan['target_chat_id']} "
-                  f"via {method}", flush=True)
+                  f"via {method} prefix={'on' if plan.get('sender_prefix') else 'off'}", flush=True)
             _log(flask_app, item, plan, status='success', message_type=item.media_kind or 'text',
                  target_message_id=mid)
         except Exception as e:
@@ -498,7 +528,8 @@ async def flush_userbot_album(buffer_key):
         try:
             mid, method = await deliver_album(bot, items, plan, download)
             print(f"{routes._album_log_prefix('userbot', buffer_key)} -> {plan['target_chat_id']} "
-                  f"items={len(items)} via {method}", flush=True)
+                  f"items={len(items)} via {method} prefix={'on' if plan.get('sender_prefix') else 'off'}",
+                  flush=True)
             _log(flask_app, head, plan, status='success', message_type='media_group',
                  target_message_id=mid, preview=caption[:100])
         except Exception as e:

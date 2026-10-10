@@ -270,3 +270,45 @@ class TestButtons:
         assert kw['message_id'] == 20
         assert kw['reply_markup'].inline_keyboard[0][0].url == 'https://one.example'
 
+
+
+class TestUsersPrefix:
+    def test_users_mode_prefix_links_user(self):
+        rule = _rule(sender_mode='users', include_sender_prefix=True)
+        human = _item(sender_is_bot=False, sender_id=111, sender_name='Alice <A>', sender_username='alice')
+        plans = us.plans_for_item([rule], human)
+        assert plans[0]['sender_prefix'] == '<a href="tg://user?id=111">Alice &lt;A&gt;</a>\n'
+
+    def test_channel_or_anonymous_sender_not_tg_user_link(self):
+        rule = _rule(sender_mode='users', include_sender_prefix=True)
+        chan = _item(sender_is_bot=False, sender_id=-1001234, sender_name='Chan', sender_username='chan_pub')
+        assert us.plans_for_item([rule], chan)[0]['sender_prefix'] == '<a href="https://t.me/chan_pub">Chan</a>\n'
+        anon = _item(sender_is_bot=False, sender_id=-1009, sender_name='Grp', sender_username=None)
+        assert us.plans_for_item([rule], anon)[0]['sender_prefix'] == 'Grp\n'
+        nobody = _item(sender_is_bot=False, sender_id=None, sender_name='', sender_username=None)
+        assert us.plans_for_item([rule], nobody)[0]['sender_prefix'] == '未知\n'
+
+    def test_entity_error_retries_plain_with_name(self, flask_app):
+        bot = AsyncMock()
+        calls = []
+
+        async def send_message(**kw):
+            calls.append(kw['text'])
+            if len(calls) == 1:
+                raise Exception('Entity_text_invalid')
+            return SimpleNamespace(message_id=9)
+
+        bot.send_message.side_effect = send_message
+        rule = _rule(sender_mode='users', include_sender_prefix=True, target_chat_ids='["-100940"]')
+        human = _item(sender_is_bot=False, sender_id=111, sender_name='Bob', text='a<b', html='<b>a&lt;b</b>')
+        plans = us.plans_for_item([rule], human)
+        _run(us.deliver_to_plans(bot, flask_app, human, plans))
+        assert len(calls) == 2
+        assert calls[1] == 'Bob\na&lt;b'
+
+    def test_users_page_has_prefix_hint(self, client):
+        with client.session_transaction() as s:
+            s['logged_in'] = True
+            s.pop('clone_id', None)
+        body = client.get('/core/userbot').get_data(as_text=True)
+        assert 'ubUsersPrefixHint' in body and 'ubPrefixTouched' in body

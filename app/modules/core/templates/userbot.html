@@ -141,10 +141,10 @@
 
         <label class="form-label fw-semibold">监听哪些消息</label>
         <div class="mb-1">
-            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeBots" value="bots" checked onchange="ubModeChanged()"><label class="form-check-label" for="ubModeBots">所有机器人发的消息（推荐）</label></div>
-            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeSel" value="selected" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeSel">只要指定的机器人</label></div>
-            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeUsers" value="users" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeUsers">只监控用户消息（不含机器人；主机器人已同步的目标会自动跳过，避免重复）</label></div>
-            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeAll" value="all" onchange="ubModeChanged()"><label class="form-check-label" for="ubModeAll">全部消息（含普通成员；主机器人已同步的目标会自动跳过，避免重复）</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeBots" value="bots" checked onchange="ubModeChanged(true)"><label class="form-check-label" for="ubModeBots">所有机器人发的消息（推荐）</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeSel" value="selected" onchange="ubModeChanged(true)"><label class="form-check-label" for="ubModeSel">只要指定的机器人</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeUsers" value="users" onchange="ubModeChanged(true)"><label class="form-check-label" for="ubModeUsers">只监控用户消息（不含机器人；主机器人已同步的目标会自动跳过，避免重复）</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" name="ubMode" id="ubModeAll" value="all" onchange="ubModeChanged(true)"><label class="form-check-label" for="ubModeAll">全部消息（含普通成员；主机器人已同步的目标会自动跳过，避免重复）</label></div>
         </div>
         <textarea class="form-control form-control-sm mb-3" id="ubSenderFilter" rows="2" placeholder="@abc_bot, 123456789（逗号或换行分隔）" style="display:none"></textarea>
 
@@ -152,7 +152,8 @@
         <div id="ubTargetList" class="border rounded p-2 mb-1" style="max-height:180px; overflow:auto"></div>
         <input type="text" class="form-control form-control-sm mb-3" id="ubTargetsManual" placeholder="其他目标 ID（逗号分隔，可选）">
 
-        <div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" id="ubPrefix" onchange="ubPrefixChanged()"><label class="form-check-label" for="ubPrefix">带发送者名字前缀</label></div>
+        <div class="form-check form-switch mb-1"><input class="form-check-input" type="checkbox" id="ubPrefix" onchange="ubPrefixTouched = true; ubPrefixChanged(); ubModeChanged()"><label class="form-check-label" for="ubPrefix">带发送者名字前缀</label></div>
+        <div id="ubUsersPrefixHint" class="small text-warning ms-4 mb-1" style="display:none">「只监控用户」建议打开名字前缀，否则目标群看不出是谁发的</div>
         <div id="ubPrefixStyleBox" class="ms-4 mb-2" style="display:none">
             <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="ubStyle" id="ubStyleNl" value="newline" checked><label class="form-check-label" for="ubStyleNl">名字单独一行</label></div>
             <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="ubStyle" id="ubStyleFw" value="forward"><label class="form-check-label" for="ubStyleFw">转发样式（显示“转发自”）</label></div>
@@ -276,7 +277,16 @@ function ubRenderRules() {
         <td class="text-end pe-3"><button class="btn btn-sm btn-outline-primary me-1" onclick="ubOpenRule(${r.id})"><i class="fa-solid fa-pen"></i></button><button class="btn btn-sm btn-outline-danger" onclick="ubDeleteRule(${r.id})"><i class="fa-solid fa-trash"></i></button></td>
     </tr>`).join('');
 }
-function ubModeChanged() { document.getElementById('ubSenderFilter').style.display = document.getElementById('ubModeSel').checked ? '' : 'none'; }
+let ubPrefixTouched = false;
+function ubModeChanged(fromUser) {
+    document.getElementById('ubSenderFilter').style.display = document.getElementById('ubModeSel').checked ? '' : 'none';
+    // 只监控用户：默认带名字前缀（否则看不出是谁发的），除非已手动改过开关
+    if (fromUser && document.getElementById('ubModeUsers').checked && !ubPrefixTouched) {
+        document.getElementById('ubPrefix').checked = true; ubPrefixChanged();
+    }
+    document.getElementById('ubUsersPrefixHint').style.display =
+        (document.getElementById('ubModeUsers').checked && !document.getElementById('ubPrefix').checked) ? '' : 'none';
+}
 function ubPrefixChanged() { document.getElementById('ubPrefixStyleBox').style.display = document.getElementById('ubPrefix').checked ? '' : 'none'; }
 function ubPickSource() {
     const sel = document.getElementById('ubSourceSelect');
@@ -306,6 +316,7 @@ function ubOpenRule(id) {
     document.getElementById('ubMedia').checked = r.sync_media !== false;
     document.getElementById('ubEnabled').checked = r.enabled !== false;
     document.getElementById('ubKeywords').value = (r.filter_keywords || []).join(', ');
+    ubPrefixTouched = false;
     ubModeChanged(); ubPrefixChanged();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('ubRuleModal')).show();
 }

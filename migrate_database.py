@@ -170,6 +170,8 @@ def run_migrations():
         "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS include_sender_prefix BOOLEAN DEFAULT FALSE",
         # sync_group_messages: sender header style (newline = 名字单独一行, forward = 原生“转发自”)
         "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS sender_prefix_style VARCHAR(20) DEFAULT 'newline'",
+        # sync_group_messages: 频道同步「同步主机器人发的帖子」(default on)
+        "ALTER TABLE sync_group_messages ADD COLUMN IF NOT EXISTS sync_own_bot_posts BOOLEAN DEFAULT TRUE",
         # sync_message_logs.via: "userbot" for messages relayed by the userbot listener
         "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
         # 同步日志按时间清理（保留时长）需要 synced_at 索引

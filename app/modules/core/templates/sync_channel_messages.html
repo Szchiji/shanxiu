@@ -64,6 +64,11 @@
                     <label class="form-check-label">同步转发内容</label>
                 </div>
                 <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="sync_own_bot_posts"
+                           {{ 'checked' if (settings.sync_own_bot_posts is not sameas false if settings else True) }}>
+                    <label class="form-check-label">同步主机器人发的帖子 <span class="text-muted fw-normal">（定时消息、广播等由本机器人发到这个频道的帖子；同步/转发产生的帖子不会再同步）</span></label>
+                </div>
+                <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="include_sender_prefix"
                            onchange="togglePrefixStyle()"
                            {{ 'checked' if (settings.include_sender_prefix if settings else False) }}>
@@ -155,6 +160,7 @@ function optionsPayload() {
         enabled: document.getElementById('enabled').checked,
         sync_media: document.getElementById('sync_media').checked,
         sync_forwards: document.getElementById('sync_forwards').checked,
+        sync_own_bot_posts: document.getElementById('sync_own_bot_posts').checked,
         include_sender_prefix: document.getElementById('include_sender_prefix').checked,
         sender_prefix_style: selectedPrefixStyle(),
         filter_keywords: document.getElementById('filter_keywords').value

@@ -651,7 +651,7 @@ class UserbotSyncRule(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     source_chat_id = db.Column(db.String(50), nullable=False, index=True)  # Bot-API style, e.g. -100123
     source_title = db.Column(db.String(255), nullable=True)
-    # bots = 仅机器人消息（默认）| selected = 指定机器人 | all = 全部消息
+    # bots = 仅机器人消息（默认）| selected = 指定机器人 | users = 仅用户 | all = 全部消息
     sender_mode = db.Column(db.String(20), default='bots')
     sender_filter = db.Column(db.Text, default='')  # comma/newline separated @usernames or numeric ids
     target_chat_ids = db.Column(db.Text, default='[]')  # JSON list of chat ids

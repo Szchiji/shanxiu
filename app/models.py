@@ -597,6 +597,7 @@ class SyncGroupMessages(db.Model):
     include_sender_prefix = db.Column(db.Boolean, default=False)  # 群同步是否加 发送者名前缀；默认关
     sender_prefix_style = db.Column(db.String(20), default='newline')  # newline=名字单独一行 | forward=原生转发
     filter_keywords = db.Column(db.Text, default='[]')  # JSON blacklist: messages containing these are not synced
+    sync_own_bot_posts = db.Column(db.Boolean, default=True)  # 频道同步：是否同步本机器人自己发的帖子
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 

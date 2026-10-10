@@ -10,6 +10,8 @@ replies, admin broadcasts …) are synced like anyone else's.
   header lines, re-uploads, albums and per-message fallbacks are all covered.
 * In-memory TTL registry (process-wide, thread-safe — the userbot runs on its own thread);
   ``SyncMessageLog.target_message_id`` is a DB fallback that survives restarts.
+* 同步日志保留时长 (sync_log_retention, ≥ 1 h, default 1 day) only deletes old rows; an echo
+  arrives seconds after the send, so the DB fallback is always within the retention window.
 """
 
 from __future__ import annotations

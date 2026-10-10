@@ -147,6 +147,26 @@
     </div>
 </div>
 
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold"><i class="fa-solid fa-clock-rotate-left me-1"></i>日志保留时长</span>
+            <span class="badge bg-primary" id="retentionBadge">{{ retention_label }}</span>
+            <select class="form-select form-select-sm" id="retentionSelect" style="width:auto">
+                {% set ns = namespace(matched=false) %}
+                {% for h, label in retention_presets %}
+                <option value="{{ h }}" {% if h == retention_hours %}selected{% set ns.matched = true %}{% endif %}>{{ label }}</option>
+                {% endfor %}
+                <option value="custom" {% if not ns.matched %}selected{% endif %}>自定义（小时）</option>
+            </select>
+            <input type="number" min="1" max="8760" class="form-control form-control-sm" id="retentionCustom"
+                   style="width:110px;{% if ns.matched %}display:none;{% endif %}" value="{{ retention_hours if retention_hours else 24 }}" placeholder="小时">
+            <button class="btn btn-sm btn-settings" onclick="saveRetention()"><i class="fa-solid fa-floppy-disk me-1"></i>保存</button>
+            <small class="text-muted">超过时长的日志每小时自动清理；默认 1 天。</small>
+        </div>
+    </div>
+</div>
+
 <div class="table-container">
     <div class="list-section-header">
         <i class="fa-solid fa-list text-primary"></i>同步消息日志
@@ -229,6 +249,27 @@
     {% endif %}
 </div>
 
+<script>
+document.getElementById('retentionSelect').addEventListener('change', function() {
+    document.getElementById('retentionCustom').style.display = this.value === 'custom' ? '' : 'none';
+});
+async function saveRetention() {
+    const sel = document.getElementById('retentionSelect').value;
+    const hours = sel === 'custom' ? parseInt(document.getElementById('retentionCustom').value, 10) : parseInt(sel, 10);
+    if (sel === 'custom' && (!hours || hours < 1)) { alert('请输入大于 0 的小时数'); return; }
+    try {
+        const res = await fetch('/core/api/sync_log_retention', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({group_id: {{ group.id }}, hours: hours})
+        });
+        const r = await res.json();
+        if (r.status === 'ok') {
+            document.getElementById('retentionBadge').textContent = r.label;
+            if (typeof showToast === 'function') showToast('已保存：' + r.label, 'success'); else alert('已保存：' + r.label);
+        } else { alert(r.msg || '保存失败'); }
+    } catch (e) { alert('保存失败'); }
+}
+</script>
 <script>
 (function() {
     const COLORS = ['#6366f1','#8b5cf6','#ec4899','#f59e0b','#10b981','#3b82f6','#ef4444','#14b8a6','#f97316','#84cc16'];

@@ -163,3 +163,29 @@ def test_channel_page_has_toggle(flask_app, client):
     from app.models import SyncGroupMessages
     with flask_app.app_context():
         assert SyncGroupMessages.query.filter_by(source_group_id=gid).first().sync_own_bot_posts is False
+
+
+def test_supergroup_sources_are_ignored(flask_app):
+    """Bug 2026-10-11: group -100… (type=group) was treated as a channel → own scheduled
+    messages synced by the hook AND by the userbot rule = two copies in the target."""
+    from app import db
+    from app.models import BotGroup, SyncGroupMessages
+    with flask_app.app_context():
+        g = BotGroup(chat_id='-1007770009', title='grp', type='supergroup', is_active=True)
+        db.session.add(g)
+        db.session.commit()
+        db.session.add(SyncGroupMessages(source_group_id=g.id, target_group_id='-100888999',
+                                         enabled=True, sync_own_bot_posts=True))
+        db.session.commit()
+    ops.invalidate()
+    assert '-1007770009' not in ops.own_sync_sources(None, flask_app)
+
+
+def test_process_skips_non_channel_messages(monkeypatch):
+    from app.modules.core import routes
+    core = AsyncMock()
+    monkeypatch.setattr(routes, '_sync_channel_post_core', core)
+    grp = SimpleNamespace(id=-1007770009, type='supergroup')
+    _run(ops._process(object(), None, '-1007770009', 'send_message', {},
+                      SimpleNamespace(message_id=3, chat=grp)))
+    core.assert_not_awaited()

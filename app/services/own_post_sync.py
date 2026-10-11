@@ -70,7 +70,9 @@ def own_sync_sources(clone_id, flask_app=None) -> frozenset:
         with flask_app.app_context():
             q = BotGroup.query
             q = q.filter(BotGroup.clone_id.is_(None)) if clone_id is None else q.filter_by(clone_id=clone_id)
-            groups = {g.id: str(g.chat_id) for g in q.all()}
+            # Channels only: supergroup ids also start with -100, and in groups our own
+            # messages are already relayed by the 小号 (userbot) → would be delivered twice.
+            groups = {g.id: str(g.chat_id) for g in q.all() if (g.type or '').lower() == 'channel'}
             for s in SyncGroupMessages.query.filter_by(enabled=True).all():
                 if s.source_group_id in groups and getattr(s, 'sync_own_bot_posts', True) is not False:
                     out.add(groups[s.source_group_id])
@@ -109,7 +111,7 @@ async def _process(bot, clone_id, chat_id: str, method: str, kwargs: dict, resul
             if mid is None or is_sync_output(chat_id, mid, routes.global_flask_app):
                 continue
             chat = getattr(m, 'chat', None)
-            if chat is None:
+            if chat is None or str(getattr(chat, 'type', '') or '').lower() != 'channel':
                 continue
             await routes._sync_channel_post_core(bot, m, chat, getattr(m, 'from_user', None), clone_id,
                                                  own_bot_post=True)
@@ -132,7 +134,7 @@ async def sync_ids_by_copy(bot, clone_id, chat_id: str, ids: list, reply_markup=
     tbot = track_bot(bot)
     flask_app = routes.global_flask_app
     with flask_app.app_context():
-        q = BotGroup.query.filter_by(chat_id=chat_id)
+        q = BotGroup.query.filter_by(chat_id=chat_id, type='channel')
         q = q.filter(BotGroup.clone_id.is_(None)) if clone_id is None else q.filter_by(clone_id=clone_id)
         group = q.first()
         if not group:

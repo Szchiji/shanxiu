@@ -12544,16 +12544,127 @@ def do_like(chat_id, message_id, emoji, token=None):
         print(f"❌ [Like] 请求异常: {redact_secrets(str(e))}", flush=True)
 
 
-def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
-    """Apply a Telegram nickname member tag via setChatMemberTag.
+# Telegram setChatMemberTag cannot change tags of other administrators
+# (API error is often CHAT_CREATOR_REQUIRED, which is misleading).
+# Cache: chat_id -> (can_manage_tags, already_logged, checked_at_epoch)
+_bot_manage_tags_cache = {}
+_BOT_MANAGE_TAGS_RETRY_SECS = 3600
+_MEMBER_TAG_ADMIN_STATUSES = frozenset({'administrator', 'creator'})
+_MEMBER_TAG_LEFT_STATUSES = frozenset({'left', 'kicked'})
 
-    The bot must be a group admin with ``can_manage_tags``. Tag text is
-    normalized to 0–16 characters without emoji. Returns True on API success.
+
+def _telegram_api_error_text(data, raw='') -> str:
+    if isinstance(data, dict):
+        desc = data.get('description') or ''
+        if desc:
+            return str(desc)
+    return str(raw or data or '')
+
+
+def _telegram_error_matches(text, *needles) -> bool:
+    hay = (text or '').upper()
+    return any(str(n).upper() in hay for n in needles if n)
+
+
+def _bot_user_id_from_token(token):
+    """Best-effort bot id from the token prefix. Never logs or returns the secret."""
+    if not token or not isinstance(token, str) or ':' not in token:
+        return None
+    prefix = token.split(':', 1)[0]
+    if prefix.isdigit():
+        return int(prefix)
+    return None
+
+
+def _telegram_get_chat_member(chat_id, user_id, token):
+    """Return ``(result_dict_or_None, error_text_or_None)`` for getChatMember."""
+    if not token or not chat_id or not user_id:
+        return None, 'missing_args'
+    try:
+        url = f"https://api.telegram.org/bot{token}/getChatMember"
+        resp = requests.post(
+            url, json={"chat_id": chat_id, "user_id": int(user_id)}, timeout=5
+        )
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if data.get('ok') and isinstance(data.get('result'), dict):
+            return data['result'], None
+        return None, _telegram_api_error_text(data, getattr(resp, 'text', ''))
+    except Exception as e:
+        return None, redact_secrets(str(e))
+
+
+def _bot_can_manage_member_tags(chat_id, token):
+    """Whether the bot may call setChatMemberTag in *chat_id*.
+
+    True / False when known; None when the permission could not be determined.
+    A False result is cached for an hour and logged once per chat so a missing
+    ``can_manage_tags`` right is not silently swallowed, and is not persisted
+    as a per-user skip (granting the right later should resume tagging).
+    """
+    now = time.time()
+    cached = _bot_manage_tags_cache.get(chat_id)
+    if cached:
+        can, _logged, checked_at = cached
+        if can is True:
+            return True
+        if can is False and (now - checked_at) < _BOT_MANAGE_TAGS_RETRY_SECS:
+            return False
+    bot_id = _bot_user_id_from_token(token)
+    if not bot_id:
+        return None
+    member, _err = _telegram_get_chat_member(chat_id, bot_id, token)
+    if not member:
+        return None
+    status = member.get('status')
+    if status == 'creator':
+        can = True
+    elif status == 'administrator':
+        can = bool(member.get('can_manage_tags'))
+    else:
+        can = False
+    already_logged = cached[1] if cached else False
+    if can is False and not already_logged:
+        print(
+            f"[MemberTag] bot lacks can_manage_tags in chat={chat_id} status={status}",
+            flush=True,
+        )
+        already_logged = True
+    _bot_manage_tags_cache[chat_id] = (can, already_logged, now)
+    return can
+
+
+def _remember_member_tag_skip(db_user, reason: str) -> None:
+    if db_user is None:
+        return
+    if getattr(db_user, 'telegram_tag_skip', None) == reason:
+        return
+    try:
+        db_user.telegram_tag_skip = reason
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ [MemberTag] failed to persist telegram_tag_skip: {e}", flush=True)
+
+
+def _clear_member_tag_skip(db_user) -> None:
+    if db_user is None or not getattr(db_user, 'telegram_tag_skip', None):
+        return
+    db_user.telegram_tag_skip = None
+
+
+def _set_chat_member_tag(chat_id, user_id, tag, token=None):
+    """Call setChatMemberTag. Returns ``(ok, error_text)``.
+
+    Expected failures (admin target, user left) are not printed here; the
+    caller logs a one-line skip and persists a retry marker.
     """
     if not token:
         token = os.getenv('TG_BOT_TOKEN')
     if not token or not chat_id or not user_id:
-        return False
+        return False, 'missing_args'
     clean_tag = normalize_telegram_member_tag(tag, default='')
     try:
         url = f"https://api.telegram.org/bot{token}/setChatMemberTag"
@@ -12568,16 +12679,38 @@ def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
         except ValueError:
             data = {}
         if not resp.ok or not data.get('ok', False):
-            print(
-                f"❌ [MemberTag] setChatMemberTag failed chat={chat_id} user={user_id} "
-                f"tag={clean_tag!r} status={resp.status_code} body={data or resp.text}",
-                flush=True,
-            )
-            return False
-        return True
+            err = _telegram_api_error_text(data, getattr(resp, 'text', ''))
+            if not _telegram_error_matches(
+                err,
+                'CHAT_CREATOR_REQUIRED',
+                'PARTICIPANT_ID_INVALID',
+                'USER_NOT_PARTICIPANT',
+                'CHAT_ADMIN_REQUIRED',
+                'RIGHT_FORBIDDEN',
+                'NOT ENOUGH RIGHTS',
+                'CAN_MANAGE_TAGS',
+            ):
+                print(
+                    f"❌ [MemberTag] setChatMemberTag failed chat={chat_id} user={user_id} "
+                    f"tag={clean_tag!r} status={resp.status_code} body={data or resp.text}",
+                    flush=True,
+                )
+            return False, err
+        return True, None
     except Exception as e:
-        print(f"❌ [MemberTag] 请求异常: {redact_secrets(str(e))}", flush=True)
-        return False
+        err = redact_secrets(str(e))
+        print(f"❌ [MemberTag] 请求异常: {err}", flush=True)
+        return False, err
+
+
+def do_set_member_tag(chat_id, user_id, tag, token=None) -> bool:
+    """Apply a Telegram nickname member tag via setChatMemberTag.
+
+    The bot must be a group admin with ``can_manage_tags``. Tag text is
+    normalized to 0–16 characters without emoji. Returns True on API success.
+    """
+    ok, _err = _set_chat_member_tag(chat_id, user_id, tag, token=token)
+    return ok
 
 
 def _resolve_bot_token_for_group(group, clone_id_from_context=None):
@@ -12599,6 +12732,10 @@ def apply_telegram_member_tag_for_user(group, db_user, conf=None, token=None, fo
 
     Skips the API call when the desired tag already matches
     ``db_user.applied_telegram_tag`` unless *force* is True.
+    Administrators/creators are skipped (Telegram does not let a bot change
+    another admin's tag); the skip is persisted so later triggers do not retry
+    or log an error. Users who have left are remembered the same way, but
+    membership is re-checked so a returning member can still be tagged.
     Safe to call from the request thread with live ORM objects.
     """
     if not group or not db_user:
@@ -12608,21 +12745,90 @@ def apply_telegram_member_tag_for_user(group, db_user, conf=None, token=None, fo
         return False
     desired = resolve_telegram_member_tag(getattr(db_user, 'member_tags', None), conf)
     current = getattr(db_user, 'applied_telegram_tag', None)
-    if not force and current is not None and current == desired:
+    skip = getattr(db_user, 'telegram_tag_skip', None)
+    if not force and current is not None and current == desired and not skip:
+        return True
+    if not force and skip == 'admin':
         return True
     token = token or _resolve_bot_token_for_group(group)
     chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
     if chat_id is None:
         return False
-    ok = do_set_member_tag(chat_id, db_user.tg_id, desired, token=token)
+
+    can_manage = _bot_can_manage_member_tags(chat_id, token)
+    if can_manage is False:
+        return False
+
+    member, member_err = _telegram_get_chat_member(chat_id, db_user.tg_id, token)
+    if member:
+        status = member.get('status')
+        if status in _MEMBER_TAG_ADMIN_STATUSES:
+            print(
+                f"[MemberTag] skip admin user={db_user.tg_id} chat={chat_id} status={status}",
+                flush=True,
+            )
+            _remember_member_tag_skip(db_user, 'admin')
+            return False
+        if status in _MEMBER_TAG_LEFT_STATUSES:
+            if skip != 'left':
+                print(
+                    f"[MemberTag] skip left user={db_user.tg_id} chat={chat_id} status={status}",
+                    flush=True,
+                )
+            _remember_member_tag_skip(db_user, 'left')
+            return False
+    elif _telegram_error_matches(member_err, 'PARTICIPANT_ID_INVALID', 'USER_NOT_PARTICIPANT'):
+        if skip != 'left':
+            print(
+                f"[MemberTag] skip left user={db_user.tg_id} chat={chat_id}",
+                flush=True,
+            )
+        _remember_member_tag_skip(db_user, 'left')
+        return False
+
+    ok, err = _set_chat_member_tag(chat_id, db_user.tg_id, desired, token=token)
     if ok:
         db_user.applied_telegram_tag = desired
+        _clear_member_tag_skip(db_user)
         try:
             db.session.commit()
         except Exception as e:
             db.session.rollback()
             print(f"❌ [MemberTag] failed to persist applied_telegram_tag: {e}", flush=True)
-    return ok
+        return True
+
+    if _telegram_error_matches(err, 'CHAT_CREATOR_REQUIRED'):
+        print(
+            f"[MemberTag] skip admin user={db_user.tg_id} chat={chat_id}",
+            flush=True,
+        )
+        _remember_member_tag_skip(db_user, 'admin')
+        return False
+    if _telegram_error_matches(err, 'PARTICIPANT_ID_INVALID', 'USER_NOT_PARTICIPANT'):
+        if skip != 'left':
+            print(
+                f"[MemberTag] skip left user={db_user.tg_id} chat={chat_id}",
+                flush=True,
+            )
+        _remember_member_tag_skip(db_user, 'left')
+        return False
+    if _telegram_error_matches(
+        err,
+        'CHAT_ADMIN_REQUIRED',
+        'RIGHT_FORBIDDEN',
+        'NOT ENOUGH RIGHTS',
+        'CAN_MANAGE_TAGS',
+    ):
+        cached = _bot_manage_tags_cache.get(chat_id)
+        already_logged = cached[1] if cached else False
+        if not already_logged:
+            print(
+                f"[MemberTag] bot lacks can_manage_tags in chat={chat_id}: {err}",
+                flush=True,
+            )
+        _bot_manage_tags_cache[chat_id] = (False, True, time.time())
+        return False
+    return False
 
 
 def apply_telegram_member_tag_by_ids(group_id, user_db_id, conf=None, token=None, force: bool = False) -> bool:
@@ -12646,9 +12852,16 @@ def clear_telegram_member_tag_for_user(group, db_user, token=None) -> bool:
     chat_id = convert_chat_id_to_int(group.chat_id, getattr(group, 'id', None))
     if chat_id is None:
         return False
-    ok = do_set_member_tag(chat_id, db_user.tg_id, '', token=token)
+    # Do not try to clear a tag Telegram will refuse (other admins / departed users).
+    member, member_err = _telegram_get_chat_member(chat_id, db_user.tg_id, token)
+    if member and member.get('status') in _MEMBER_TAG_ADMIN_STATUSES | _MEMBER_TAG_LEFT_STATUSES:
+        return False
+    if _telegram_error_matches(member_err, 'PARTICIPANT_ID_INVALID', 'USER_NOT_PARTICIPANT'):
+        return False
+    ok, _err = _set_chat_member_tag(chat_id, db_user.tg_id, '', token=token)
     if ok:
         db_user.applied_telegram_tag = ''
+        _clear_member_tag_skip(db_user)
         try:
             db.session.commit()
         except Exception:

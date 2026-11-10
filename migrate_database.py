@@ -27,6 +27,8 @@ def run_migrations():
         "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS member_tags TEXT DEFAULT '[]'",
         # Last Telegram nickname tag applied via setChatMemberTag
         "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS applied_telegram_tag VARCHAR(16)",
+        # Skip setChatMemberTag retries for admins / departed users
+        "ALTER TABLE group_users ADD COLUMN IF NOT EXISTS telegram_tag_skip VARCHAR(16)",
         # Auto replies table columns
         "ALTER TABLE auto_replies ADD COLUMN group_id INTEGER REFERENCES bot_groups(id)",
         "CREATE INDEX IF NOT EXISTS ix_auto_replies_group_id ON auto_replies(group_id)",

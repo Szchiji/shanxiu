@@ -159,6 +159,7 @@ def run_migrations():
         # other_settings: Add channel_auto_buttons and channel_discussion_keyword_filter (feat PR #256)
         "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS channel_auto_buttons BOOLEAN DEFAULT FALSE",
         "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS channel_discussion_keyword_filter TEXT NULL",
+        "ALTER TABLE other_settings ADD COLUMN IF NOT EXISTS auto_delete_channel_pin_msg BOOLEAN DEFAULT FALSE",
         # group_lottery: Add announce_channel_id to support posting results to a channel
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS announce_channel_id VARCHAR(50) NULL",
         # group_users: Add subscription tracking and join source (feat PR #256)

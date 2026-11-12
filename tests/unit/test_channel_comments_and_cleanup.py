@@ -264,6 +264,8 @@ def test_channel_settings_pin_notice_fallback_off_and_first_comment_validation(p
         assert routes.get_group_conf(ch)['first_comment_text'] == '欢迎讨论'
     body = client.get(f'/core/group/{gid}/other_settings').get_data(as_text=True)
     assert 'id="auto_delete_pin_msg"' in body and 'id="first_comment_enabled"' in body
+    assert 'id="auto_delete_channel_pin_msg"' in body
+    assert '自动删除频道置顶提示消息' in body and '自动删除讨论群置顶提示消息' in body
     for key in ('auto_delete_join_msg', 'auto_delete_leave_msg', 'auto_delete_promote_msg'):
         assert f'id="{key}"' not in body
     assert '欢迎讨论' in body
@@ -504,3 +506,97 @@ def test_album_shortcut_uses_shared_first_discussion_root(pair, flask_app, monke
     kw = b.edit_message_reply_markup.await_args.kwargs
     assert kw['message_id'] == 42
     assert kw['reply_markup'].inline_keyboard[-1][0].url == 'https://t.me/audit_disc/77?thread=77'
+
+
+def pin_notice(channel, mid=100, pinned_mid=42, **kw):
+    return post(channel, mid=mid, text=None, pinned_message=post(channel, mid=pinned_mid), **kw)
+
+
+@pytest.mark.parametrize('mode', ['main', 'clone'])
+@pytest.mark.parametrize('state', ['on', 'off', 'default', 'inactive'])
+def test_real_dispatcher_deletes_channel_pin_notice_without_unpin_or_swallow(mode, state, pair, flask_app, monkeypatch):
+    sync, cleaner = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(routes, 'handle_sync_channel_posts', sync)
+    monkeypatch.setattr(routes, 'handle_auto_delete_messages', cleaner)
+    app = dispatcher(mode, flask_app, monkeypatch)
+    delete, unpin = AsyncMock(return_value=True), AsyncMock(return_value=True)
+    monkeypatch.setattr(ExtBot, 'delete_message', delete)
+    monkeypatch.setattr(ExtBot, 'unpin_chat_message', unpin)
+    with flask_app.app_context():
+        channel, _ = models(pair)
+        channel.clone_id = 991 if mode == 'clone' else None
+        channel.is_active = state != 'inactive'
+        if state in ('on', 'off', 'inactive'):
+            db.session.add(OtherSettings(group_id=channel.id, auto_delete_channel_pin_msg=(state != 'off')))
+        db.session.commit()
+        notice = pin_notice(channel)
+        notice.set_bot(app.bot)
+        chat_id = int(channel.chat_id)
+        run(app.process_update(Update(301, channel_post=notice)))
+    assert delete.await_count == (1 if state == 'on' else 0)
+    if state == 'on':
+        args, kwargs = delete.await_args
+        mid = kwargs.get('message_id', args[1] if len(args) > 1 else None)
+        cid = kwargs.get('chat_id', args[0] if args else None)
+        assert mid == 100 and cid == chat_id
+    unpin.assert_not_awaited()
+    cleaner.assert_not_awaited()
+    sync.assert_awaited_once()
+
+
+@pytest.mark.parametrize('mode', ['main', 'clone'])
+def test_real_dispatcher_ordinary_channel_post_is_not_deleted_as_pin_notice(mode, pair, flask_app, monkeypatch):
+    app = dispatcher(mode, flask_app, monkeypatch)
+    delete = AsyncMock(return_value=True)
+    monkeypatch.setattr(ExtBot, 'delete_message', delete)
+    with flask_app.app_context():
+        channel, _ = models(pair)
+        channel.clone_id = 991 if mode == 'clone' else None
+        db.session.add(OtherSettings(group_id=channel.id, auto_delete_channel_pin_msg=True))
+        db.session.commit()
+        msg = post(channel)
+        msg.set_bot(app.bot)
+        run(app.process_update(Update(302, channel_post=msg)))
+    delete.assert_not_awaited()
+
+
+@pytest.mark.parametrize('clone', [None, 991])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_channel_pin_notice_uses_channel_setting_not_discussion_pin_toggle(clone, enabled, pair, flask_app):
+    b = bot()
+    b.unpin_chat_message = AsyncMock(return_value=True)
+    with flask_app.app_context():
+        ch, group = models(pair)
+        ch.clone_id = group.clone_id = clone
+        db.session.add_all([
+            OtherSettings(group_id=ch.id, auto_delete_channel_pin_msg=enabled, auto_delete_pin_msg=not enabled),
+            OtherSettings(group_id=group.id, auto_delete_pin_msg=not enabled),
+        ])
+        db.session.commit()
+        notice = pin_notice(ch)
+        notice.set_bot(b)
+        run(routes.handle_channel_pin_notice(Update(1, channel_post=notice), context(b, clone)))
+    assert b.delete_message.await_count == int(enabled)
+    b.unpin_chat_message.assert_not_awaited()
+
+
+def test_channel_pin_notice_save_explicit_off_and_group_page_hides_control(pair, flask_app, client):
+    with client.session_transaction() as session:
+        session['logged_in'] = True
+    with flask_app.app_context():
+        ch, group = models(pair)
+        db.session.add(OtherSettings(group_id=ch.id, auto_delete_channel_pin_msg=True))
+        db.session.commit()
+        gid, did = ch.id, group.id
+    assert client.post('/core/api/save_other_settings', json={
+        'group_id': gid, 'auto_delete_channel_pin_msg': False, 'auto_delete_pin_msg': True,
+    }).json['status'] == 'ok'
+    with flask_app.app_context():
+        settings = OtherSettings.query.filter_by(group_id=gid).one()
+        assert settings.auto_delete_channel_pin_msg is False
+        assert settings.auto_delete_pin_msg is True
+    channel_body = client.get(f'/core/group/{gid}/other_settings').get_data(as_text=True)
+    group_body = client.get(f'/core/group/{did}/other_settings').get_data(as_text=True)
+    assert 'id="auto_delete_channel_pin_msg"' in channel_body
+    assert 'id="auto_delete_channel_pin_msg"' not in group_body
+    assert '自动删除频道置顶提示消息' not in group_body

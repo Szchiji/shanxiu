@@ -444,6 +444,32 @@
                         <label class="small text-danger fw-bold">过期自动禁言</label>
                     </div>
                     <div class="small text-muted mb-3">开启后，认证用户到期会自动禁言；关闭则只标记过期，不再自动禁言。管理员仍不会被这条规则禁言。</div>
+
+                    <div class="form-check form-switch mb-1">
+                        <input class="form-check-input" type="checkbox" id="warn_auto_punish" {{ 'checked' if conf.get('warn_auto_punish') }} onchange="toggleWarnPunishFields()">
+                        <label class="small text-danger fw-bold">警告累计后自动处罚</label>
+                    </div>
+                    <div class="small text-muted mb-2">默认关闭，只记警告次数。开启并设置次数后，<code>/warn</code> 和关键词警告达到次数会自动处罚。管理员可用 <code>/unwarn</code> 清零。</div>
+                    <div id="warn_punish_fields" class="mb-3" style="{{ '' if conf.get('warn_auto_punish') else 'display:none;' }}">
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="small text-muted">警告几次后处罚</label>
+                                <input type="number" min="1" class="form-control form-control-sm" id="warn_threshold" value="{{ conf.get('warn_threshold', 3) }}">
+                            </div>
+                            <div class="col-4">
+                                <label class="small text-muted">处罚方式</label>
+                                <select class="form-control form-control-sm" id="warn_action" onchange="toggleWarnMuteMinutes()">
+                                    <option value="mute" {{ 'selected' if conf.get('warn_action', 'mute') == 'mute' }}>禁言</option>
+                                    <option value="kick" {{ 'selected' if conf.get('warn_action') == 'kick' }}>踢出</option>
+                                    <option value="ban" {{ 'selected' if conf.get('warn_action') == 'ban' }}>封禁</option>
+                                </select>
+                            </div>
+                            <div class="col-4" id="warn_mute_minutes_wrap" style="{{ '' if conf.get('warn_action', 'mute') == 'mute' else 'display:none;' }}">
+                                <label class="small text-muted">禁言时长（分钟）</label>
+                                <input type="number" min="1" class="form-control form-control-sm" id="warn_mute_minutes" value="{{ conf.get('warn_mute_minutes', 60) }}">
+                            </div>
+                        </div>
+                    </div>
                     
                     <label class="small text-muted fw-bold text-success">推送频道 ID</label>
                     <input id="push_channel_id" class="form-control mb-3" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">
@@ -615,8 +641,8 @@
                         <div class="card cmd-card" style="border-left: 3px solid #eab308;">
                             <div class="card-body">
                                 <h6 class="fw-bold mb-2"><i class="fa-solid fa-exclamation-triangle me-2"></i>/warn [原因]</h6>
-                                <p class="small mb-1"><strong>功能：</strong>警告用户</p>
-                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /warn 违反群规</p>
+                                <p class="small mb-1"><strong>功能：</strong>警告用户（可按上方规则累计处罚）</p>
+                                <p class="small text-muted mb-0"><strong>用法：</strong>回复用户消息后发送 /warn 违反群规；/unwarn 可清零次数</p>
                             </div>
                         </div>
                     </div>
@@ -960,6 +986,16 @@
         });
     });
 
+    function toggleWarnPunishFields() {
+        const on = document.getElementById('warn_auto_punish').checked;
+        document.getElementById('warn_punish_fields').style.display = on ? '' : 'none';
+        toggleWarnMuteMinutes();
+    }
+    function toggleWarnMuteMinutes() {
+        const action = document.getElementById('warn_action').value;
+        document.getElementById('warn_mute_minutes_wrap').style.display = action === 'mute' ? '' : 'none';
+    }
+
     function saveSettings() {
         saveTmp(); 
         const d = {
@@ -986,6 +1022,10 @@
                 auto_member_tag: document.getElementById('auto_member_tag').checked,
                 default_member_tag: document.getElementById('default_member_tag').value,
                 auto_mute_expired: document.getElementById('auto_mute_expired').checked,
+                warn_auto_punish: document.getElementById('warn_auto_punish').checked,
+                warn_threshold: parseInt(document.getElementById('warn_threshold').value) || 3,
+                warn_action: document.getElementById('warn_action').value || 'mute',
+                warn_mute_minutes: parseInt(document.getElementById('warn_mute_minutes').value) || 60,
                 
                 auto_reply_open: document.getElementById('auto_reply_open').checked,
                 scheduled_msg_open: document.getElementById('scheduled_msg_open').checked,

@@ -38,7 +38,7 @@
 {% call feature_description('group_lottery') %}
 <ul>
     <li>在群内创建限时抽奖活动，成员通过发言或随机方式参与。</li>
-    <li>支持 <strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（从所有群成员中随机抽取）三种方式。</li>
+    <li>支持 <strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（可选择从认证用户或全部群成员中抽取，默认认证用户）三种方式。</li>
     <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
     <li>创建好抽奖后，点击列表中的 <i class="fa-solid fa-bullhorn"></i> 按钮可立即将公告发送到 Telegram 群组。</li>
     <li>开奖后系统自动公布中奖名单并发送恭喜消息。</li>
@@ -77,7 +77,7 @@
                         {% elif lottery.lottery_type == 'message_rank' %}
                         前{{ lottery.top_n_winners }}名
                         {% else %}
-                        {{ lottery.top_n_winners }}人
+                        {{ lottery.top_n_winners }}人 · {{ '全部成员' if lottery.pool_source == 'all_members' else '认证用户' }}
                         {% endif %}
                     </td>
                     <td class="hide-mobile list-meta-stack">
@@ -146,6 +146,14 @@
                     <label class="form-label">获奖人数（人）</label>
                     <input type="number" class="form-control" id="top_n_winners" value="3" min="1">
                 </div>
+                <div class="mb-3" id="pool_source_field" style="display:none;">
+                    <label class="form-label">随机抽奖奖池</label>
+                    <select class="form-control" id="pool_source">
+                        <option value="certified">认证用户（默认，与现网一致）</option>
+                        <option value="all_members">全部群成员（使用已同步的成员表，排除机器人）</option>
+                    </select>
+                    <div class="form-text">「全部群成员」以后台已同步的成员表为准，开奖时不会现场向 Telegram 拉取名单。成员表若较旧，可能漏掉尚未同步的新成员。</div>
+                </div>
                 <div class="mb-3">
                     <label class="form-label">奖品描述</label>
                     <textarea class="form-control" id="prize_description" rows="2" placeholder="奖品详细描述"></textarea>
@@ -193,10 +201,16 @@ function toggleLotteryFields() {
     if (type === 'message_count') {
         document.getElementById('min_messages_field').style.display = 'block';
         document.getElementById('top_n_winners_field').style.display = 'none';
-    } else {
-        // message_rank and random both use top_n_winners
+        document.getElementById('pool_source_field').style.display = 'none';
+    } else if (type === 'random') {
         document.getElementById('min_messages_field').style.display = 'none';
         document.getElementById('top_n_winners_field').style.display = 'block';
+        document.getElementById('pool_source_field').style.display = 'block';
+    } else {
+        // message_rank uses top_n_winners
+        document.getElementById('min_messages_field').style.display = 'none';
+        document.getElementById('top_n_winners_field').style.display = 'block';
+        document.getElementById('pool_source_field').style.display = 'none';
     }
 }
 
@@ -211,6 +225,7 @@ function showAddModal() {
     document.getElementById('start_time').value = '';
     document.getElementById('end_time').value = '';
     document.getElementById('announce_channel_id').value = '';
+    document.getElementById('pool_source').value = 'certified';
     document.getElementById('status').value = 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -230,6 +245,7 @@ function editLottery(id) {
     document.getElementById('start_time').value = lottery.start_time || '';
     document.getElementById('end_time').value = lottery.end_time || '';
     document.getElementById('announce_channel_id').value = lottery.announce_channel_id || '';
+    document.getElementById('pool_source').value = lottery.pool_source || 'certified';
     document.getElementById('status').value = lottery.status || 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -254,6 +270,7 @@ function saveLottery() {
         start_time: document.getElementById('start_time').value || null,
         end_time: document.getElementById('end_time').value || null,
         announce_channel_id: document.getElementById('announce_channel_id').value.trim(),
+        pool_source: document.getElementById('pool_source').value || 'certified',
         status: document.getElementById('status').value
     };
     

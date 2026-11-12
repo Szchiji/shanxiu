@@ -19,6 +19,7 @@ WIRED = (
     'cmd_pin',
     'cmd_unpin',
     'cmd_warn',
+    'cmd_unwarn',
     'cmd_userinfo',
     'cmd_rank',
     'cmd_invite_rank',

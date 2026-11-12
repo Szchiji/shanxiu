@@ -8,9 +8,13 @@ import pytest
 from app.services.warning_service import (
     format_command_warn_reply,
     format_keyword_warn_reply,
+    format_punishment_line,
+    format_unwarn_reply,
     resolve_escalation,
     record_warning,
     count_warnings,
+    clear_warnings,
+    normalize_warn_settings,
 )
 
 
@@ -41,6 +45,47 @@ class TestResolveEscalation:
             action, label = resolve_escalation(n)
             assert action is None
             assert label is None
+        action, label = resolve_escalation(5, {})
+        assert action is None
+        assert label is None
+
+    def test_default_normalize_is_disabled(self):
+        cfg = normalize_warn_settings(None)
+        assert cfg['warn_auto_punish'] is False
+        assert cfg['warn_threshold'] == 3
+        assert cfg['warn_action'] == 'mute'
+
+    def test_triggers_at_and_above_threshold(self):
+        settings = {'warn_auto_punish': True, 'warn_threshold': 3, 'warn_action': 'ban'}
+        assert resolve_escalation(2, settings) == (None, None)
+        action, label = resolve_escalation(3, settings)
+        assert action == 'ban'
+        assert label == '封禁'
+        action, _ = resolve_escalation(4, settings)
+        assert action == 'ban'
+
+    def test_mute_and_kick_actions(self):
+        settings = {'warn_auto_punish': True, 'warn_threshold': 1, 'warn_action': 'mute', 'warn_mute_minutes': 15}
+        action, label = resolve_escalation(1, settings)
+        assert action == 'mute'
+        assert label == '禁言'
+        settings['warn_action'] = 'kick'
+        action, label = resolve_escalation(1, settings)
+        assert action == 'kick'
+        assert '踢' in label
+
+    def test_punishment_and_unwarn_text(self):
+        assert '禁言 15 分钟' in format_punishment_line('mute', 15)
+        assert '踢出' in format_punishment_line('kick')
+        assert '封禁' in format_punishment_line('ban')
+        text = format_command_warn_reply('Bob', '刷屏', 3, format_punishment_line('mute', 60))
+        assert '累计警告: 3 次' in text
+        assert '已执行处罚' in text
+        kw = format_keyword_warn_reply(3, format_punishment_line('ban'))
+        assert '3 次' in kw
+        assert '封禁' in kw
+        assert '没有警告' in format_unwarn_reply('Bob', 0)
+        assert '2 次' in format_unwarn_reply('Bob', 2)
 
 
 @pytest.mark.usefixtures('db')
@@ -89,3 +134,14 @@ class TestRecordAndCount:
         record_warning(g2.id, 1, reason='c')
         assert count_warnings(g1.id, 1) == 2
         assert count_warnings(g2.id, 1) == 1
+
+    def test_clear_warnings(self, db):
+        g = self._make_group(db)
+        record_warning(g.id, 7, reason='a')
+        record_warning(g.id, 7, reason='b')
+        record_warning(g.id, 8, reason='c')
+        cleared = clear_warnings(g.id, 7)
+        assert cleared == 2
+        assert count_warnings(g.id, 7) == 0
+        assert count_warnings(g.id, 8) == 1
+        assert clear_warnings(g.id, 7) == 0

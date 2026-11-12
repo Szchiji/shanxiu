@@ -1882,6 +1882,7 @@ def page_group_lottery(gid):
         'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
         'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
         'announce_channel_id': l.announce_channel_id or '',
+        'pool_source': getattr(l, 'pool_source', None) or 'certified',
         'status': l.status,
         'winner_ids': l.winner_ids
     } for l in lotteries], ensure_ascii=False)
@@ -2397,207 +2398,38 @@ def page_backup(gid):
 
 @core_bp.route('/group/<int:gid>/backup/export')
 def api_export_config(gid):
-    """导出群组配置为 JSON"""
-    if not session.get('logged_in'): 
+    """导出群组配置为 JSON（覆盖关键可配置项，不包含机密和运营名单）"""
+    if not session.get('logged_in'):
         return jsonify({'error': 'Not authenticated'}), 401
-    
-    group = get_group_or_403(gid)
-    
-    # Build configuration object
-    config = {
-        'group_info': {
-            'title': group.title,
-            'chat_id': group.chat_id,
-            'type': group.type
-        },
-        'config': json.loads(group.config) if group.config else {},
-        'fields_config': json.loads(group.fields_config) if group.fields_config else [],
-        'auto_replies': [
-            {
-                'trigger_keyword': ar.trigger_keyword,
-                'media_type': ar.media_type,
-                'media_url': ar.media_url,
-                'content': ar.content,
-                'links': json.loads(ar.links) if ar.links else [],
-                'delete_after': ar.delete_after,
-                'remark': ar.remark,
-                'is_active': ar.is_active
-            }
-            for ar in AutoReply.query.filter_by(group_id=gid).all()
-        ],
-        'scheduled_messages': [
-            {
-                'media_type': sm.media_type,
-                'media_url': sm.media_url,
-                'media_urls': json.loads(sm.media_urls) if sm.media_urls else [],
-                'content': sm.content,
-                'links': json.loads(sm.links) if sm.links else [],
-                'repeat_interval': sm.repeat_interval,
-                'delete_previous': sm.delete_previous,
-                'start_time': sm.start_time.isoformat() if sm.start_time else None,
-                'stop_time': sm.stop_time.isoformat() if sm.stop_time else None,
-                'remark': sm.remark,
-                'auto_pin': getattr(sm, 'auto_pin', False),
-                'is_active': sm.is_active
-            }
-            for sm in ScheduledMessage.query.filter_by(group_id=gid).all()
-        ],
-        'points_rules': [
-            {
-                'rule_name': pr.rule_name,
-                'rule_type': pr.rule_type,
-                'points_amount': pr.points_amount,
-                'is_active': pr.is_active
-            }
-            for pr in PointsRule.query.filter_by(group_id=gid).all()
-        ],
-        'member_levels': [
-            {
-                'level_name': ml.level_name,
-                'required_points': ml.required_points,
-                'permissions': json.loads(ml.permissions) if ml.permissions else {},
-                'badge_emoji': ml.badge_emoji
-            }
-            for ml in MemberLevel.query.filter_by(group_id=gid).all()
-        ],
-        'export_time': datetime.now().isoformat()
-    }
-    
-    return jsonify(config)
+
+    get_group_or_403(gid)
+    try:
+        from app.services.backup_service import export_group_config
+        return jsonify(export_group_config(gid))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': '导出失败，请稍后重试'}), 500
 
 
 @core_bp.route('/group/<int:gid>/backup/import', methods=['POST'])
 def api_import_config(gid):
-    """导入群组配置"""
-    if not session.get('logged_in'): 
+    """导入群组配置。兼容旧格式；缺的部分跳过，不报错崩掉。"""
+    if not session.get('logged_in'):
         return jsonify({'error': 'Not authenticated'}), 401
-    
-    group = get_group_or_403(gid)
-    
+
+    get_group_or_403(gid)
     try:
+        from app.services.backup_service import import_group_config
         config = request.get_json()
-        
-        # Validate config structure
-        if not isinstance(config, dict):
-            return jsonify({'error': '配置格式错误'}), 400
-        
-        # Update group config
-        if 'config' in config and isinstance(config['config'], dict):
-            group.config = json.dumps(config['config'], ensure_ascii=False)
-        
-        if 'fields_config' in config and isinstance(config['fields_config'], list):
-            group.fields_config = json.dumps(config['fields_config'], ensure_ascii=False)
-        
-        # Import auto_replies (optional: user can choose to import or not)
-        if 'auto_replies' in config and isinstance(config['auto_replies'], list):
-            for ar_data in config['auto_replies']:
-                if not isinstance(ar_data, dict):
-                    continue
-                # Check if auto reply with same keyword exists
-                existing = AutoReply.query.filter_by(
-                    group_id=gid,
-                    trigger_keyword=ar_data.get('trigger_keyword', '')
-                ).first()
-                if not existing:
-                    ar = AutoReply(
-                        group_id=gid,
-                        trigger_keyword=ar_data.get('trigger_keyword', ''),
-                        media_type=ar_data.get('media_type', 'text'),
-                        media_url=ar_data.get('media_url'),
-                        content=ar_data.get('content'),
-                        links=json.dumps(ar_data.get('links', []), ensure_ascii=False),
-                        delete_after=ar_data.get('delete_after', 0),
-                        remark=ar_data.get('remark'),
-                        is_active=ar_data.get('is_active', True)
-                    )
-                    db.session.add(ar)
-        
-        # Import scheduled_messages (optional)
-        if 'scheduled_messages' in config and isinstance(config['scheduled_messages'], list):
-            for sm_data in config['scheduled_messages']:
-                if not isinstance(sm_data, dict):
-                    continue
-                media_urls_val = sm_data.get('media_urls')
-                if isinstance(media_urls_val, list):
-                    media_urls_json = json.dumps(media_urls_val, ensure_ascii=False)
-                elif isinstance(media_urls_val, str) and media_urls_val.strip():
-                    media_urls_json = media_urls_val
-                elif sm_data.get('media_url'):
-                    media_urls_json = json.dumps([sm_data.get('media_url')])
-                else:
-                    media_urls_json = '[]'
-                sm = ScheduledMessage(
-                    group_id=gid,
-                    media_type=sm_data.get('media_type', 'text'),
-                    media_url=sm_data.get('media_url'),
-                    media_urls=media_urls_json,
-                    content=sm_data.get('content'),
-                    links=json.dumps(sm_data.get('links', []), ensure_ascii=False),
-                    repeat_interval=sm_data.get('repeat_interval', 0),
-                    delete_previous=sm_data.get('delete_previous', False),
-                    start_time=datetime.fromisoformat(sm_data['start_time']) if sm_data.get('start_time') else None,
-                    stop_time=datetime.fromisoformat(sm_data['stop_time']) if sm_data.get('stop_time') else None,
-                    remark=sm_data.get('remark'),
-                    auto_pin=sm_data.get('auto_pin', False),
-                    is_active=sm_data.get('is_active', True)
-                )
-                # Compute initial next_send_at aligned to start_time cadence
-                if sm.start_time and sm.is_active:
-                    now = get_beijing_now()
-                    if sm.start_time > now:
-                        sm.next_send_at = sm.start_time
-                    elif sm.repeat_interval > 0:
-                        sm.next_send_at = compute_aligned_next_send_at(
-                            sm.start_time, sm.repeat_interval, now
-                        )
-                db.session.add(sm)
-        
-        # Import points_rules (optional)
-        if 'points_rules' in config and isinstance(config['points_rules'], list):
-            for pr_data in config['points_rules']:
-                if not isinstance(pr_data, dict):
-                    continue
-                # Check if rule with same name exists
-                existing = PointsRule.query.filter_by(
-                    group_id=gid,
-                    rule_name=pr_data.get('rule_name', '')
-                ).first()
-                if not existing:
-                    pr = PointsRule(
-                        group_id=gid,
-                        rule_name=pr_data.get('rule_name', ''),
-                        rule_type=pr_data.get('rule_type', 'custom'),
-                        points_amount=pr_data.get('points_amount', 1),
-                        is_active=pr_data.get('is_active', True)
-                    )
-                    db.session.add(pr)
-        
-        # Import member_levels (optional)
-        if 'member_levels' in config and isinstance(config['member_levels'], list):
-            for ml_data in config['member_levels']:
-                if not isinstance(ml_data, dict):
-                    continue
-                # Check if level with same name exists
-                existing = MemberLevel.query.filter_by(
-                    group_id=gid,
-                    level_name=ml_data.get('level_name', '')
-                ).first()
-                if not existing:
-                    ml = MemberLevel(
-                        group_id=gid,
-                        level_name=ml_data.get('level_name', ''),
-                        required_points=ml_data.get('required_points', 0),
-                        permissions=json.dumps(ml_data.get('permissions', {}), ensure_ascii=False),
-                        badge_emoji=ml_data.get('badge_emoji')
-                    )
-                    db.session.add(ml)
-        
-        db.session.commit()
-        
-        return jsonify({'success': True, 'message': '配置导入成功'})
+        result = import_group_config(gid, config)
+        return jsonify({'success': True, 'message': '配置导入成功', 'imported': result.get('imported', [])})
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': '导入失败，请检查文件后重试'}), 500
 
 
 @core_bp.route('/health')
@@ -2767,6 +2599,9 @@ def api_save_settings():
         conf['auto_member_tag'] = bool(conf.get('auto_member_tag'))
     if 'auto_mute_expired' in conf:
         conf['auto_mute_expired'] = bool(conf.get('auto_mute_expired'))
+    from app.services.warning_service import normalize_warn_settings
+    warn_cfg = normalize_warn_settings(conf)
+    conf.update(warn_cfg)
     d['config'] = conf
     group.config = json.dumps(conf, ensure_ascii=False)
     db.session.commit()
@@ -5545,6 +5380,8 @@ def api_save_group_lottery():
             lottery.end_time = None
         lottery.status = d.get('status', 'pending')
         lottery.announce_channel_id = (d.get('announce_channel_id') or '').strip() or None
+        from app.services.lottery_service import normalize_pool_source
+        lottery.pool_source = normalize_pool_source(d.get('pool_source'))
         if not lottery.winner_ids:
             lottery.winner_ids = '[]'
         
@@ -10681,13 +10518,15 @@ async def run_lottery_draws(context):
                                     logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
 
                         elif lottery.lottery_type == 'random':
-                            # Pure random draw from all registered group members
-                            from app.services.lottery_service import pick_winners_random
+                            # Pure random draw: certified users (default) or synced group members
+                            from app.services.lottery_service import draw_random_winners, normalize_pool_source
                             top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                            all_users = GroupUser.query.filter_by(group_id=group.id).all()
-                            logging.info(f"🎲 [抽奖任务] 随机抽奖: 共 {len(all_users)} 名群成员，抽取 {top_n} 名")
-                            pool = [u.tg_id for u in all_users]
-                            winners = pick_winners_random(pool, top_n)
+                            pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
+                            # Do not call Telegram here — use the local member/certified table only.
+                            winners = draw_random_winners(group.id, pool_source, top_n)
+                            logging.info(
+                                f"🎲 [抽奖任务] 随机抽奖: 奖池={pool_source}, 抽出 {len(winners)}/{top_n} 名"
+                            )
                             if winners:
                                 logging.info(f"🎲 [抽奖任务] 随机抽中获奖者: {winners}")
                         
@@ -11036,29 +10875,57 @@ async def check_keyword_filter(update: Update, context):
                 return True
             elif matched_filter.action == 'warn':
                 warn_count = 0
+                punish_action = None
+                punish_minutes = 60
                 def _persist_kw_warn():
-                    from app.services.warning_service import record_warning
+                    from app.services.warning_service import (
+                        record_warning, normalize_warn_settings, resolve_escalation,
+                    )
                     with global_flask_app.app_context():
                         group = BotGroup.query.filter_by(
                             chat_id=str(chat.id),
                             clone_id=context.application.bot_data.get('clone_id'),
                         ).first()
                         if not group:
-                            return 0
-                        return record_warning(
+                            return {'count': 0}
+                        count = record_warning(
                             group.id,
                             user.id,
                             admin_id=None,
                             reason='关键词过滤',
                             source='keyword',
                         )
+                        settings = normalize_warn_settings(get_group_conf(group))
+                        action, _label = resolve_escalation(count, settings)
+                        return {
+                            'count': count,
+                            'action': action,
+                            'mute_minutes': settings['warn_mute_minutes'],
+                        }
                 try:
-                    warn_count = await asyncio.get_running_loop().run_in_executor(None, _persist_kw_warn)
+                    persisted = await asyncio.get_running_loop().run_in_executor(None, _persist_kw_warn)
+                    if isinstance(persisted, dict):
+                        warn_count = persisted.get('count') or 0
+                        punish_action = persisted.get('action')
+                        punish_minutes = persisted.get('mute_minutes') or 60
+                    else:
+                        warn_count = persisted or 0
                 except Exception as e:
                     print(f"Error persisting keyword warning: {e}")
                     warn_count = 0
-                from app.services.warning_service import format_keyword_warn_reply
-                await msg.reply_text(format_keyword_warn_reply(warn_count or 1))
+                from app.services.warning_service import format_keyword_warn_reply, format_punishment_line
+                from app.bot.handlers.commands import apply_warn_punishment
+                punishment_line = None
+                if punish_action:
+                    try:
+                        await apply_warn_punishment(
+                            context.bot, chat.id, user.id, punish_action, punish_minutes
+                        )
+                        punishment_line = format_punishment_line(punish_action, punish_minutes)
+                    except Exception as e:
+                        print(f"Error applying keyword warning punishment: {e}")
+                        punishment_line = "处罚执行失败，请管理员手动处理"
+                await msg.reply_text(format_keyword_warn_reply(warn_count or 1, punishment_line))
             elif matched_filter.action == 'mute':
                 try:
                     print(f"🔄 [内容过滤] 准备禁言触发关键词的用户 {user.id} in group {chat.id}", flush=True)
@@ -11939,6 +11806,7 @@ async def cmd_help(update: Update, context):
                 "• /mute [分钟] — 禁言用户（默认60分钟）",
                 "• /unmute — 解除禁言",
                 "• /warn [原因] — 警告用户",
+                "• /unwarn — 清除用户警告次数",
                 "• /userinfo — 查看用户详细信息",
                 "• /pin — 置顶消息",
                 "• /unpin — 取消置顶",
@@ -12330,6 +12198,8 @@ async def run_bot(app_instance):
     app.add_handler(CommandHandler("help", cmd_help))  # 显示帮助信息
     app.add_handler(CommandHandler("checkin", cmd_checkin))  # 每日打卡
     app.add_handler(CommandHandler("signin", cmd_signin))  # 每日签到
+    app.add_handler(CommandHandler("clones", cmd_clones))  # 主机器人也可私聊查看克隆列表
+    app.add_handler(CommandHandler("unwarn", cmd_unwarn))  # 清除警告次数
     
     # Periodic jobs
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
@@ -12480,6 +12350,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("top", cmd_rank))
     app.add_handler(CommandHandler("active", cmd_active))
     app.add_handler(CommandHandler("clones", cmd_clones))
+    app.add_handler(CommandHandler("unwarn", cmd_unwarn))
     app.add_handler(CommandHandler("invite_rank", cmd_invite_rank))  # 邀请排行榜
     app.add_handler(CommandHandler("invites", cmd_invite_rank))       # alias for invite_rank
     app.add_handler(CommandHandler("mylink", cmd_mylink))  # 获取专属邀请链接
@@ -13547,13 +13418,14 @@ async def cmd_lottery_draw(update: Update, context):
                         winners = [u.tg_id for u in top_users]
 
                 elif lottery.lottery_type == 'random':
-                    # Pure random draw from all registered group members
+                    from app.services.lottery_service import draw_random_winners, normalize_pool_source
                     top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                    all_users = GroupUser.query.filter_by(group_id=group.id).all()
-                    if all_users:
-                        sample_size = min(top_n, len(all_users))
-                        chosen = random.sample(all_users, sample_size)
-                        winners = [u.tg_id for u in chosen]
+                    pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
+                    bot_id = getattr(getattr(context, 'bot', None), 'id', None)
+                    winners = draw_random_winners(
+                        group.id, pool_source, top_n,
+                        exclude_user_ids=[bot_id] if bot_id else None,
+                    )
                 
                 # Update lottery
                 lottery.winner_ids = json.dumps(winners)
@@ -15030,7 +14902,12 @@ def _sched_del(context, msg, delay: int):
 
 async def on_non_text_message(update: Update, context):
     """Handle non-text messages (stickers, photos, videos, documents, audio, voice, animations).
-    Applies spam-protection, keyword filter (captions), forced subscription, then sync."""
+
+    Security (spam / keyword / forced sub) and sync run for every item, including
+    album parts.  Speech engagement (stats, points, lottery counts, auto-like,
+    member tags, name tracking) runs once per album and never treats a caption-less
+    image as a check-in / query trigger.
+    """
     if not global_flask_app:
         return
     try:
@@ -15050,9 +14927,109 @@ async def on_non_text_message(update: Update, context):
         if subscription_blocked:
             return
         # Cross-group media sync (text path already calls this from on_message)
+        # Album buffering lives inside the sync helper — run for every part.
         await handle_sync_group_messages(update, context)
+
+        msg = update.effective_message
+        from app.services.album_dedupe import (
+            MEDIA_ENGAGEMENT_CACHE,
+            album_should_count,
+            should_skip_text_path_duplicate,
+        )
+        # Captioned+text updates must not also run the text-path engagement.
+        if should_skip_text_path_duplicate(msg):
+            return
+        if not album_should_count(
+            MEDIA_ENGAGEMENT_CACHE,
+            chat.id,
+            getattr(msg, 'media_group_id', None) if msg else None,
+        ):
+            return
+
+        await check_and_mute_expired_user(update, context)
+        await update_user_activity(update, context)
+        await track_message_statistics(update, context)
+        await track_user_name_change(update, context)
+        await update_group_member(update, context)
+        await apply_media_speech_engagement(update, context)
     except Exception as e:
         print(f"Error in on_non_text_message: {e}")
+
+
+async def apply_media_speech_engagement(update: Update, context):
+    """Award points / lottery counts / auto-like / member tags for a media message.
+
+    Check-in, query, auto-reply and other text-trigger features are intentionally
+    not run here, even if the caption happens to match a trigger word.
+    """
+    if not global_flask_app:
+        return
+    chat = update.effective_chat
+    user = update.effective_user
+    msg = update.effective_message
+    if not chat or not user or not msg:
+        return
+
+    def _db_work():
+        from app.services.group_engagement import (
+            award_speech_points,
+            increment_lottery_message_counts,
+        )
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(
+                chat_id=str(chat.id),
+                clone_id=context.application.bot_data.get('clone_id'),
+            ).first()
+            if not group or not group.is_active:
+                return None
+            is_forward = hasattr(msg, 'forward_origin') and msg.forward_origin is not None
+            award_speech_points(group.id, user.id, is_forward=is_forward)
+            increment_lottery_message_counts(group.id, user.id)
+            conf = get_group_conf(group)
+            perk_token = None
+            clone_id = context.application.bot_data.get('clone_id')
+            if clone_id:
+                clone = BotClone.query.get(clone_id)
+                if clone:
+                    perk_token = clone.get_bot_token()
+            db_user = None
+            if conf.get('auto_like') or conf.get('auto_member_tag', True):
+                db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()
+            return {
+                'group_id': group.id,
+                'conf': conf,
+                'perk_token': perk_token,
+                'db_user_id': db_user.id if db_user else None,
+            }
+
+    try:
+        info = await asyncio.get_running_loop().run_in_executor(None, _db_work)
+    except Exception as e:
+        print(f"Error in apply_media_speech_engagement db: {e}")
+        return
+    if not info:
+        return
+    conf = info.get('conf') or {}
+    if not (conf.get('auto_like') or conf.get('auto_member_tag', True)):
+        return
+    if not info.get('db_user_id'):
+        return
+    perk_token = info.get('perk_token')
+    if conf.get('auto_like'):
+        emoji = normalize_like_emoji(conf.get('like_emoji', DEFAULT_LIKE_EMOJI))
+        asyncio.get_running_loop().run_in_executor(
+            None, do_like, chat.id, msg.message_id, emoji, perk_token
+        )
+    if conf.get('auto_member_tag', True):
+        asyncio.get_running_loop().run_in_executor(
+            None,
+            apply_telegram_member_tag_by_ids,
+            info['group_id'],
+            info['db_user_id'],
+            conf,
+            perk_token,
+            False,
+        )
 
 
 
@@ -16356,6 +16333,7 @@ from app.bot.handlers.commands import (  # noqa: E402
     cmd_pin,
     cmd_unpin,
     cmd_warn,
+    cmd_unwarn,
     cmd_userinfo,
     cmd_rank,
     cmd_invite_rank,

@@ -211,3 +211,84 @@ class TestRandomLotteryType:
         winners = run_lottery_draw('random', [], top_n_winners=2, fallback_pool=[1, 2, 3, 4])
         assert len(winners) == 2
         assert all(w in (1, 2, 3, 4) for w in winners)
+
+
+# ---------------------------------------------------------------------------
+# Random pool source (certified vs all members)
+# ---------------------------------------------------------------------------
+
+from app.services.lottery_service import (
+    normalize_pool_source,
+    load_random_pool,
+    draw_random_winners,
+    POOL_CERTIFIED,
+    POOL_ALL_MEMBERS,
+)
+
+
+class TestNormalizePoolSource:
+    def test_default_certified(self):
+        assert normalize_pool_source(None) == POOL_CERTIFIED
+        assert normalize_pool_source('') == POOL_CERTIFIED
+        assert normalize_pool_source('certified') == POOL_CERTIFIED
+        assert normalize_pool_source('unknown') == POOL_CERTIFIED
+
+    def test_all_members(self):
+        assert normalize_pool_source('all_members') == POOL_ALL_MEMBERS
+        assert normalize_pool_source('group_members') == POOL_ALL_MEMBERS
+
+
+@pytest.mark.usefixtures('db')
+class TestRandomPoolSources:
+    def _setup(self, db):
+        import uuid
+        from app.models import BotGroup, GroupUser, GroupMember
+        g = BotGroup(
+            chat_id=f'-lot-{uuid.uuid4().hex[:10]}',
+            title='lot',
+            type='supergroup',
+            is_active=True,
+        )
+        db.session.add(g)
+        db.session.commit()
+        # Certified users: 11, 12
+        db.session.add(GroupUser(group_id=g.id, tg_id=11))
+        db.session.add(GroupUser(group_id=g.id, tg_id=12))
+        # Synced members: 11, 12, 21, plus a bot and a left user
+        db.session.add(GroupMember(group_id=g.id, user_id=11, first_name='A', is_bot=False, status='member'))
+        db.session.add(GroupMember(group_id=g.id, user_id=12, first_name='B', is_bot=False, status='member'))
+        db.session.add(GroupMember(group_id=g.id, user_id=21, first_name='C', is_bot=False, status='member'))
+        db.session.add(GroupMember(group_id=g.id, user_id=99, first_name='Bot', is_bot=True, status='member'))
+        db.session.add(GroupMember(group_id=g.id, user_id=88, first_name='Gone', is_bot=False, status='left'))
+        db.session.commit()
+        return g
+
+    def test_certified_pool_is_group_users_only(self, db):
+        g = self._setup(db)
+        pool = load_random_pool(g.id, 'certified')
+        assert set(pool) == {11, 12}
+
+    def test_all_members_excludes_bots_and_left(self, db):
+        g = self._setup(db)
+        pool = load_random_pool(g.id, 'all_members', exclude_user_ids=[1000])
+        assert set(pool) == {11, 12, 21}
+        assert 99 not in pool
+        assert 88 not in pool
+
+    def test_excludes_bot_id(self, db):
+        g = self._setup(db)
+        pool = load_random_pool(g.id, 'all_members', exclude_user_ids=[21])
+        assert 21 not in pool
+        assert set(pool) == {11, 12}
+
+    def test_legacy_missing_pool_source_uses_certified(self, db):
+        g = self._setup(db)
+        winners = draw_random_winners(g.id, None, 2)
+        assert len(winners) == 2
+        assert set(winners) <= {11, 12}
+
+    def test_draw_from_all_members(self, db):
+        g = self._setup(db)
+        winners = draw_random_winners(g.id, 'all_members', 3)
+        assert len(winners) == 3
+        assert set(winners) == {11, 12, 21}

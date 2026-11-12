@@ -23,10 +23,10 @@ from app.services.entry_verification import (
 )
 from app.services.check_interval import (
     CHECK_INTERVAL_TICK_SECONDS,
-    DEFAULT_FORCED_SUB_INTERVAL,
     DEFAULT_INACTIVE_INTERVAL,
     is_interval_due,
 )
+from app.services.forced_subscription_check import collect_due_forced_subscriptions
 from app.services.forward_lookup_auth import (
     FORWARD_LOOKUP_DENIED_TEXT,
     is_forward_lookup_authorized,
@@ -10085,28 +10085,18 @@ async def check_channel_subscriptions(context):
     try:
         def _get_subscription_settings():
             with global_flask_app.app_context():
-                now = get_beijing_now()
-                due = []
-                rows = ForcedChannelSubscription.query.filter_by(enabled=True).all()
-                for settings in rows:
-                    if not is_interval_due(
-                        settings.last_checked_at,
-                        settings.check_interval,
-                        now,
-                        DEFAULT_FORCED_SUB_INTERVAL,
-                    ):
-                        continue
-                    settings.last_checked_at = now
-                    due.append(settings)
-                if due:
-                    db.session.commit()
-                return due
+                return collect_due_forced_subscriptions(get_beijing_now())
         
         settings_list = await asyncio.get_running_loop().run_in_executor(None, _get_subscription_settings)
         
         for settings in settings_list:
+            group_id = settings.get('group_id')
             try:
-                if not settings.channel_id:
+                settings_id = settings['id']
+                channel_id = settings['channel_id']
+                unsubscribe_action = settings['unsubscribe_action']
+                reward_points = settings['reward_points']
+                if not channel_id:
                     continue
                 
                 def _get_group_and_users(group_id):
@@ -10156,7 +10146,7 @@ async def check_channel_subscriptions(context):
                         db.session.commit()
                 
                 chat_id, group_clone_id, current_group_id, group_users = await asyncio.get_running_loop().run_in_executor(
-                    None, _get_group_and_users, settings.group_id
+                    None, _get_group_and_users, group_id
                 )
                 if chat_id is None:
                     continue
@@ -10174,7 +10164,7 @@ async def check_channel_subscriptions(context):
                     try:
                         # Check if user is subscribed to the channel
                         member = await bot.get_chat_member(
-                            settings.channel_id,
+                            channel_id,
                             tg_id
                         )
                         
@@ -10190,25 +10180,25 @@ async def check_channel_subscriptions(context):
                             # Check if user is chat owner/admin in the group - skip all actions for them
                             is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
-                                print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"⏭️ [频道订阅检测] 跳过惩罚操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {group_id} (chat_id={chat_id})", flush=True)
                                 continue
                             
-                            if settings.unsubscribe_action == 'kick':
+                            if unsubscribe_action == 'kick':
                                 await bot.ban_chat_member(chat_id, tg_id)
                                 await bot.unban_chat_member(chat_id, tg_id)
-                            elif settings.unsubscribe_action == 'ban':
+                            elif unsubscribe_action == 'ban':
                                 await bot.ban_chat_member(chat_id, tg_id)
-                            elif settings.unsubscribe_action == 'mute':
+                            elif unsubscribe_action == 'mute':
                                 try:
-                                    print(f"🔄 [频道订阅检测] 准备禁言未订阅用户 {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    print(f"🔄 [频道订阅检测] 准备禁言未订阅用户 {tg_id} in group {group_id} (chat_id={chat_id})", flush=True)
                                     await bot.restrict_chat_member(
                                         chat_id=chat_id,
                                         user_id=tg_id,
                                         permissions=get_muted_permissions()
                                     )
-                                    print(f"✅ [频道订阅检测] Successfully called restrict_chat_member API - Muted unsubscribed user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    print(f"✅ [频道订阅检测] Successfully called restrict_chat_member API - Muted unsubscribed user {tg_id} in group {group_id} (chat_id={chat_id})", flush=True)
                                 except Exception as restrict_error:
-                                    print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                    print(f"❌ [频道订阅检测] restrict_chat_member API failed for user {tg_id} in group {group_id} (chat_id={chat_id})", flush=True)
                                     print(f"   Error type: {type(restrict_error).__name__}", flush=True)
                                     print(f"   Error details: {str(restrict_error)}", flush=True)
                                     if 'Chat not found' in str(restrict_error):
@@ -10217,41 +10207,41 @@ async def check_channel_subscriptions(context):
                         # If subscribed (member, administrator, creator), unmute if action was mute
                         elif member.status in ['member', 'administrator', 'creator']:
                             await asyncio.get_running_loop().run_in_executor(
-                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, True, safe_int(settings.reward_points, 0), settings.id
+                                None, _update_subscription_state, current_group_id, user_info['row_id'], tg_id, True, safe_int(reward_points, 0), settings_id
                             )
-                            if settings.unsubscribe_action != 'mute':
+                            if unsubscribe_action != 'mute':
                                 continue
                             # Reuse cached owner check if already done; otherwise look it up
                             if is_owner is None:
                                 is_owner = await is_user_chat_owner(bot, chat_id, tg_id)
                             if is_owner:
-                                print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"⏭️ [频道订阅检测] 跳过解除禁言操作 - 用户 {tg_id} 是群主/管理员 (Owner/Admin) in group {group_id} (chat_id={chat_id})", flush=True)
                                 continue
                             
                             try:
-                                print(f"🔄 [频道订阅检测] 检测到用户 {tg_id} 已订阅频道，准备解除禁言 in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"🔄 [频道订阅检测] 检测到用户 {tg_id} 已订阅频道，准备解除禁言 in group {group_id} (chat_id={chat_id})", flush=True)
                                 await bot.restrict_chat_member(
                                     chat_id=chat_id,
                                     user_id=tg_id,
                                     permissions=get_unrestricted_permissions()
                                 )
-                                print(f"✅ [频道订阅检测] Successfully unmuted subscribed user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"✅ [频道订阅检测] Successfully unmuted subscribed user {tg_id} in group {group_id} (chat_id={chat_id})", flush=True)
                             except Exception as unmute_error:
-                                print(f"❌ [频道订阅检测] Failed to unmute user {tg_id} in group {settings.group_id} (chat_id={chat_id})", flush=True)
+                                print(f"❌ [频道订阅检测] Failed to unmute user {tg_id} in group {group_id} (chat_id={chat_id})", flush=True)
                                 print(f"   Error type: {type(unmute_error).__name__}", flush=True)
                                 print(f"   Error details: {str(unmute_error)}", flush=True)
                                 if 'Chat not found' in str(unmute_error):
                                     raise
                     except Exception as e:
                         if 'Chat not found' in str(e):
-                            print(f"⚠️ [频道订阅检测] Group {settings.group_id} (chat_id={chat_id}) not found, skipping remaining users", flush=True)
+                            print(f"⚠️ [频道订阅检测] Group {group_id} (chat_id={chat_id}) not found, skipping remaining users", flush=True)
                             group_chat_gone = True
                         else:
                             # User may not be in channel or bot doesn't have access
                             print(f"Error checking subscription for user {tg_id}: {e}")
                         
             except Exception as e:
-                print(f"Error processing channel subscription for group {settings.group_id}: {e}")
+                print(f"Error processing channel subscription for group {group_id}: {e}")
                 
     except Exception as e:
         print(f"Error in check_channel_subscriptions: {e}")

@@ -141,7 +141,7 @@
 </div>
 
 <script>
-const filtersData = {{ filters_json | safe }};
+const filtersData = JSON.parse({{ filters_json|tojson }});
 let currentModal = null;
 
 function showAddModal() {

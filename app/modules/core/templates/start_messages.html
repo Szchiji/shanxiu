@@ -440,7 +440,7 @@
 
 <script>
     const groupId = {{ group.id }};
-    let allItems = {{ start_messages_json|safe }};
+    let allItems = JSON.parse({{ start_messages_json|tojson }});
     let currentLinks = [];
     const existingConf = {{ conf | tojson | safe }};
     

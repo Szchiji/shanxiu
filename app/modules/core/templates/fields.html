@@ -145,7 +145,7 @@
 </div>
 
 <script>
-    let fields = {{ fields_json|safe }};
+    let fields = JSON.parse({{ fields_json|tojson }});
     const container = document.getElementById('fields-con');
 
     function render() {

@@ -152,7 +152,7 @@
 
 <script>
 const GROUP_ID = {{ group.id }};
-let currentLinks = {{ links_json|safe }};
+let currentLinks = JSON.parse({{ links_json|tojson }});
 
 document.addEventListener('DOMContentLoaded', function() {
     if (!Array.isArray(currentLinks)) currentLinks = [];

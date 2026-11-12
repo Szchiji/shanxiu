@@ -155,7 +155,7 @@
 </div>
 
 <script>
-const quizzesData = {{ quizzes_json | safe }};
+const quizzesData = JSON.parse({{ quizzes_json|tojson }});
 let currentModal = null;
 
 function showAddModal() {

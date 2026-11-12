@@ -183,7 +183,7 @@
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex justify-content-end">
-                            <button class="action-btn btn btn-sm btn-primary" title="调整积分" onclick="showAdjustPointsModal({{ member.user_id }}, '{{ member.first_name }}')">
+                            <button class="action-btn btn btn-sm btn-primary" title="调整积分" onclick="showAdjustPointsModal({{ member.user_id }}, {{ member.first_name|tojson|forceescape }})">
                                 <i class="fa-solid fa-coins"></i>
                             </button>
                         </div>

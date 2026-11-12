@@ -1454,7 +1454,7 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: {{ 'null' if group.type == 'channel' else "parseInt(document.getElementById('messageThreadId').value) || null" }},
+            message_thread_id: {{ (group.type == 'channel')|tojson }} ? null : (parseInt(document.getElementById('messageThreadId').value) || null),
             target_type: document.getElementById('targetType').value,
             target_channel_id: document.getElementById('targetChannelId').value.trim()
         };
@@ -1505,7 +1505,7 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: {{ 'null' if group.type == 'channel' else "parseInt(document.getElementById('messageThreadId').value) || null" }},
+            message_thread_id: {{ (group.type == 'channel')|tojson }} ? null : (parseInt(document.getElementById('messageThreadId').value) || null),
             target_type: document.getElementById('targetType').value,
             target_channel_id: document.getElementById('targetChannelId').value.trim()
         };

@@ -157,3 +157,109 @@ class TestExportImport:
         g = _group(db)
         with pytest.raises(ValueError):
             import_group_config(g.id, ['not', 'a', 'dict'])
+
+
+class TestOptionalUsersPoints:
+    def _seed(self, db):
+        from datetime import datetime
+        from app.models import GroupUser, UserPoints, PointsLog, MemberLevel
+        g = _group(db)
+        level = MemberLevel(group_id=g.id, level_name='VIP', required_points=10)
+        db.session.add(level)
+        db.session.flush()
+        db.session.add(GroupUser(group_id=g.id, tg_id=123, profile_data=json.dumps({
+            'name': '会员', 'bot_token': 'FAKE_TOKEN_MARKER', 'nested': {'session': 'FAKE_SESSION_MARKER'}
+        }), member_tags='["VIP"]', expiration_date=datetime(2030, 1, 1), is_banned=True))
+        db.session.add(UserPoints(group_id=g.id, user_id=123, points_balance=42, current_level_id=level.id))
+        db.session.add(PointsLog(group_id=g.id, user_id=123, points_change=42, balance_after=42, reason='test'))
+        db.session.commit()
+        return g
+
+    def test_default_has_no_operational_section(self, db):
+        g = self._seed(db)
+        data = export_group_config(g.id)
+        assert 'users_points' not in data
+        assert '会员' not in json.dumps(data, ensure_ascii=False)
+
+    def test_optional_includes_complete_snapshot_without_secrets(self, db):
+        g = self._seed(db)
+        data = export_group_config(g.id, include_users_points=True)
+        op = data['users_points']
+        assert op['certified_users'][0]['profile_data'] == {'name': '会员', 'nested': {}}
+        assert op['points_balances'][0]['points_balance'] == 42
+        assert op['points_balances'][0]['level_name'] == 'VIP'
+        assert op['points_logs'][0]['points_change'] == 42
+        dumped = json.dumps(data)
+        for forbidden in ('FAKE_TOKEN_MARKER', 'FAKE_SESSION_MARKER', 'auth_sessions', 'session_enc', '"api_hash":'):
+            assert forbidden not in dumped
+        assert set(op) == {'certified_users', 'points_balances', 'points_logs'}
+        assert '认证用户、积分余额与流水（完整快照）' in data['includes']
+
+    def test_old_backup_does_not_wipe_operational_data(self, db):
+        from app.models import GroupUser, UserPoints, PointsLog
+        g = self._seed(db)
+        import_group_config(g.id, {'config': {'checkin_open': False}})
+        assert GroupUser.query.filter_by(group_id=g.id).count() == 1
+        assert UserPoints.query.filter_by(group_id=g.id).one().points_balance == 42
+        assert PointsLog.query.filter_by(group_id=g.id).count() == 1
+
+    def test_restore_snapshot_replaces_target_only_and_is_idempotent(self, db):
+        from app.models import GroupUser, UserPoints, PointsLog, MemberLevel, GroupMember
+        src = self._seed(db)
+        dest = self._seed(db)
+        existing = GroupUser.query.filter_by(group_id=dest.id).one()
+        existing.tg_id = 999
+        db.session.add(GroupMember(group_id=dest.id, user_id=555))
+        db.session.commit()
+        data = export_group_config(src.id, include_users_points=True)
+        for _ in range(2):
+            result = import_group_config(dest.id, data)
+            assert 'users_points' in result['imported']
+            assert GroupUser.query.filter_by(group_id=dest.id).count() == 1
+            user = GroupUser.query.filter_by(group_id=dest.id).one()
+            assert user.tg_id == 123
+            assert user.is_banned is True
+            assert user.expiration_date.year == 2030
+            assert json.loads(user.member_tags) == ['VIP']
+            assert user.applied_telegram_tag is None
+            points = UserPoints.query.filter_by(group_id=dest.id).one()
+            assert points.points_balance == 42
+            assert points.current_level.group_id == dest.id
+            assert points.current_level.level_name == 'VIP'
+            assert PointsLog.query.filter_by(group_id=dest.id).count() == 1
+        assert GroupUser.query.filter_by(group_id=src.id).count() == 1
+        assert GroupMember.query.filter_by(group_id=dest.id).count() == 1
+
+    def test_explicit_empty_snapshot_clears_only_three_collections(self, db):
+        from app.models import GroupUser, UserPoints, PointsLog
+        g = self._seed(db)
+        import_group_config(g.id, {'users_points': {
+            'certified_users': [], 'points_balances': [], 'points_logs': []}})
+        for model in (GroupUser, UserPoints, PointsLog):
+            assert model.query.filter_by(group_id=g.id).count() == 0
+
+    @pytest.mark.parametrize('section', [None, {}, {'certified_users': []}, {
+        'certified_users': [], 'points_balances': [{'user_id': 1}], 'points_logs': []
+    }])
+    def test_invalid_snapshot_never_clears_existing(self, db, section):
+        from app.models import GroupUser, UserPoints
+        g = self._seed(db)
+        with pytest.raises(ValueError):
+            import_group_config(g.id, {'users_points': section})
+        assert GroupUser.query.filter_by(group_id=g.id).count() == 1
+        assert UserPoints.query.filter_by(group_id=g.id).one().points_balance == 42
+
+
+    def test_export_route_flag_and_unchecked_ui(self, db, client):
+        import re
+        g = self._seed(db)
+        with client.session_transaction() as session:
+            session['logged_in'] = True
+            session.pop('clone_id', None)
+        url = f'/core/group/{g.id}/backup'
+        assert 'users_points' not in client.get(url + '/export').get_json()
+        assert 'users_points' not in client.get(url + '/export?include_users_points=0').get_json()
+        assert 'users_points' in client.get(url + '/export?include_users_points=1').get_json()
+        body = client.get(url).get_data(as_text=True)
+        checkbox = re.search(r'<input[^>]+id="includeUsersPoints"[^>]*>', body).group()
+        assert 'checked' not in checkbox

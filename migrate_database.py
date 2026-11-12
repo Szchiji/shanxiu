@@ -191,7 +191,8 @@ def run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_user ON group_warnings(group_id, user_id)",
         "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
         "ALTER TABLE inactive_user_settings ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
-        # group_lottery: random draw pool (certified users vs all synced members)
+        # group_lottery: random draw pool (certified users vs live Telegram members)
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_error VARCHAR(255)",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS pool_source VARCHAR(20) DEFAULT 'certified'",
     ]
 

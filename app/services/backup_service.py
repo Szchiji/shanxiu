@@ -5,7 +5,8 @@ Version 2 expands coverage beyond the original six sections (group config,
 profile fields, auto replies, scheduled messages, points rules, member
 levels).  Import is backward-compatible: missing keys are skipped and
 never crash the restore.  Secrets (tokens, sessions, api_hash, etc.) are
-stripped from the exported JSON.
+stripped from the exported JSON. Certified users and a balance/ledger snapshot
+are included only with the explicit include_users_points flag.
 """
 
 from __future__ import annotations
@@ -153,7 +154,7 @@ def _safe_dict(item: Any) -> Optional[dict]:
 # Export
 # ---------------------------------------------------------------------------
 
-def export_group_config(group_id: int) -> dict:
+def export_group_config(group_id: int, *, include_users_points: bool = False) -> dict:
     """Build a sanitised JSON-serialisable backup for *group_id*."""
     from app.models import (
         AutoReply, BotGroup, ChannelCoupon, ChannelForwardRule,
@@ -396,6 +397,10 @@ def export_group_config(group_id: int) -> dict:
         ],
         'export_time': datetime.now().isoformat(),
     }
+    if include_users_points:
+        config['users_points'] = _export_users_points(group_id)
+        config['includes'].append('认证用户、积分余额与流水（完整快照）')
+        config['excludes'][0] = '群成员同步表、兑换记录'
     return sanitize_secrets(config)
 
 
@@ -573,6 +578,9 @@ def import_group_config(group_id: int, raw_config: Any) -> dict:
         raise ValueError('群组不存在')
 
     config = sanitize_secrets(raw_config)
+    # Validate before any writes; absent section must never clear operational data.
+    if 'users_points' in config:
+        _validate_users_points(config['users_points'])
     imported = []
 
     if isinstance(config.get('config'), dict):
@@ -610,6 +618,9 @@ def import_group_config(group_id: int, raw_config: Any) -> dict:
     _import_other_settings(group_id, config, imported)
     _import_plugin_settings(group_id, config, imported)
 
+    if 'users_points' in config:
+        _import_users_points(group_id, config['users_points'])
+        imported.append('users_points')
     db.session.commit()
     return {'imported': imported}
 
@@ -1230,3 +1241,88 @@ def _import_plugin_settings(group_id, config, imported):
         row = _get_or_create(GroupPluginSettings, group_id, plugin_name=name)
         row.enabled = bool(data.get('enabled', True))
     imported.append('plugin_settings')
+
+
+# Explicit allowlists: never serialise model __dict__ or auth sessions.
+_CERTIFIED_FIELDS = (
+    'tg_id', 'profile_data', 'member_tags', 'expiration_date', 'is_banned',
+    'is_muted_permanent', 'mute_reason', 'checkin_time', 'last_activity',
+    'join_source', 'created_at',
+)
+_USER_DATES = {'expiration_date', 'checkin_time', 'last_activity', 'created_at'}
+
+
+def _export_users_points(group_id):
+    from app import db
+    from app.models import GroupUser, UserPoints, PointsLog
+    from sqlalchemy.orm import Session
+    # A separate read-only snapshot keeps balances and ledger consistent even
+    # while points are awarded. PostgreSQL READ COMMITTED is not sufficient.
+    isolation = 'REPEATABLE READ' if db.engine.dialect.name == 'postgresql' else 'SERIALIZABLE'
+    with Session(bind=db.engine.execution_options(isolation_level=isolation)) as snapshot:
+        users = []
+        for row in snapshot.query(GroupUser).filter_by(group_id=group_id).all():
+            data = _export_singleton(row, _CERTIFIED_FIELDS)
+            data['profile_data'] = _json_load(row.profile_data, {})
+            data['member_tags'] = _json_load(row.member_tags, [])
+            users.append(data)
+        balances = [
+            {'user_id': r.user_id, 'points_balance': r.points_balance,
+             'level_name': r.current_level.level_name if r.current_level else None,
+             'updated_at': _iso(r.updated_at)}
+            for r in snapshot.query(UserPoints).filter_by(group_id=group_id).all()
+        ]
+        logs = [_export_singleton(r, ('user_id', 'points_change', 'reason', 'balance_after', 'created_at'))
+                for r in snapshot.query(PointsLog).filter_by(group_id=group_id).order_by(PointsLog.id).all()]
+        return {'certified_users': users, 'points_balances': balances, 'points_logs': logs}
+
+
+def _validate_users_points(data):
+    if not isinstance(data, dict) or any(
+        not isinstance(data.get(key), list)
+        for key in ('certified_users', 'points_balances', 'points_logs')
+    ):
+        raise ValueError('认证用户和积分快照不完整，未导入')
+    for key, id_key in (('certified_users', 'tg_id'), ('points_balances', 'user_id'), ('points_logs', 'user_id')):
+        seen = set()
+        for row in data[key]:
+            if not isinstance(row, dict) or type(row.get(id_key)) is not int or row[id_key] <= 0:
+                raise ValueError('认证用户和积分快照的用户 ID 无效')
+            if key != 'points_logs' and row[id_key] in seen:
+                raise ValueError('认证用户和积分快照有重复用户')
+            seen.add(row[id_key])
+            fields = ('points_balance',) if key == 'points_balances' else (
+                ('points_change', 'balance_after') if key == 'points_logs' else ())
+            if any(type(row.get(f)) is not int for f in fields):
+                raise ValueError('积分快照的数值无效')
+
+
+def _import_users_points(group_id, data):
+    """Explicit complete section replaces only this group's three collections.
+
+    Missing section leaves them untouched; an explicit empty snapshot clears
+    them. No sessions, redemption/invitation records or Telegram side effects.
+    Local primary keys and cached Telegram tag/subscription state are not copied.
+    """
+    from app import db
+    from app.models import GroupUser, UserPoints, PointsLog, MemberLevel
+    for model in (GroupUser, UserPoints, PointsLog):
+        model.query.filter_by(group_id=group_id).delete(synchronize_session='fetch')
+    for item in data['certified_users']:
+        fields = {k: item[k] for k in _CERTIFIED_FIELDS if k in item}
+        for key in _USER_DATES & fields.keys():
+            fields[key] = _parse_dt(fields[key])
+        for key, default in (('profile_data', '{}'), ('member_tags', '[]')):
+            if key in fields:
+                fields[key] = _json_dump(fields[key], default)
+        db.session.add(GroupUser(group_id=group_id, **fields))
+    for item in data['points_balances']:
+        level = MemberLevel.query.filter_by(group_id=group_id, level_name=item.get('level_name')).first() if item.get('level_name') else None
+        db.session.add(UserPoints(group_id=group_id, user_id=item['user_id'],
+                                  points_balance=item['points_balance'],
+                                  current_level_id=level.id if level else None,
+                                  updated_at=_parse_dt(item.get('updated_at'))))
+    for item in data['points_logs']:
+        db.session.add(PointsLog(group_id=group_id, user_id=item['user_id'],
+                                points_change=item['points_change'], balance_after=item['balance_after'],
+                                reason=item.get('reason'), created_at=_parse_dt(item.get('created_at'))))

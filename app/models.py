@@ -532,6 +532,7 @@ class GroupLottery(db.Model):
     end_time = db.Column(db.DateTime, nullable=True)
     announce_channel_id = db.Column(db.String(50), nullable=True)  # 公告频道ID
     pool_source = db.Column(db.String(20), default='certified')  # certified=认证用户, all_members=全部群成员
+    draw_error = db.Column(db.String(255), nullable=True)  # Safe live-roster failure shown to admins
     winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
     status = db.Column(db.String(20), default='pending')  # pending, active, ended
     created_at = db.Column(db.DateTime, default=datetime.now)

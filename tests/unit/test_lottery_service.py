@@ -268,15 +268,18 @@ class TestRandomPoolSources:
         pool = load_random_pool(g.id, 'certified')
         assert set(pool) == {11, 12}
 
-    def test_all_members_excludes_bots_and_left(self, db):
+    def test_all_members_uses_live_roster_not_stale_table(self, db, monkeypatch):
         g = self._setup(db)
+        monkeypatch.setattr('app.services.lottery_roster.fetch_live_member_ids', lambda chat: [11, 12, 777])
         pool = load_random_pool(g.id, 'all_members', exclude_user_ids=[1000])
-        assert set(pool) == {11, 12, 21}
+        assert set(pool) == {11, 12, 777}
+        assert 21 not in pool
         assert 99 not in pool
         assert 88 not in pool
 
-    def test_excludes_bot_id(self, db):
+    def test_excludes_bot_id(self, db, monkeypatch):
         g = self._setup(db)
+        monkeypatch.setattr('app.services.lottery_roster.fetch_live_member_ids', lambda chat: [11, 12, 21])
         pool = load_random_pool(g.id, 'all_members', exclude_user_ids=[21])
         assert 21 not in pool
         assert set(pool) == {11, 12}
@@ -287,8 +290,33 @@ class TestRandomPoolSources:
         assert len(winners) == 2
         assert set(winners) <= {11, 12}
 
-    def test_draw_from_all_members(self, db):
+    def test_draw_from_all_members(self, db, monkeypatch):
         g = self._setup(db)
+        monkeypatch.setattr('app.services.lottery_roster.fetch_live_member_ids', lambda chat: [777, 778, 779])
         winners = draw_random_winners(g.id, 'all_members', 3)
-        assert len(winners) == 3
-        assert set(winners) == {11, 12, 21}
+        assert set(winners) == {777, 778, 779}
+
+
+    def test_missing_userbot_never_falls_back(self, db, monkeypatch):
+        from app.services.lottery_roster import LiveRosterError
+        from app.userbot.manager import userbot_manager
+        g = self._setup(db)
+        monkeypatch.setattr(userbot_manager, 'client', None)
+        with pytest.raises(LiveRosterError, match='小号已登录'):
+            draw_random_winners(g.id, 'all_members', 3)
+
+    def test_unavailable_userbot_never_falls_back(self, db, monkeypatch):
+        from app.services.lottery_roster import LiveRosterError
+        g = self._setup(db)
+        def fail(chat):
+            raise LiveRosterError('小号无法访问该群，本次未开奖')
+        monkeypatch.setattr('app.services.lottery_roster.fetch_live_member_ids', fail)
+        with pytest.raises(LiveRosterError, match='未开奖'):
+            draw_random_winners(g.id, 'all_members', 3)
+
+    def test_certified_does_not_fetch_roster(self, db, monkeypatch):
+        g = self._setup(db)
+        def fail(chat):
+            raise AssertionError('default must not fetch Telegram')
+        monkeypatch.setattr('app.services.lottery_roster.fetch_live_member_ids', fail)
+        assert set(draw_random_winners(g.id, None, 2)) == {11, 12}

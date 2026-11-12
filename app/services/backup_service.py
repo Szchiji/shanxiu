@@ -551,6 +551,7 @@ def _export_other_settings(group_id: int) -> Optional[dict]:
         'auto_delete_leave_msg': row.auto_delete_leave_msg,
         'auto_delete_promote_msg': row.auto_delete_promote_msg,
         'auto_delete_pin_msg': row.auto_delete_pin_msg,
+        'auto_delete_channel_pin_msg': row.auto_delete_channel_pin_msg,
         'cancel_channel_pin': row.cancel_channel_pin,
         'auto_delete_channel_discussion_msg': row.auto_delete_channel_discussion_msg,
         'channel_auto_buttons': row.channel_auto_buttons,
@@ -1220,7 +1221,7 @@ def _import_other_settings(group_id, config, imported):
     row = _get_or_create(OtherSettings, group_id)
     for field in (
         'auto_delete_join_msg', 'auto_delete_leave_msg', 'auto_delete_promote_msg',
-        'auto_delete_pin_msg', 'cancel_channel_pin',
+        'auto_delete_pin_msg', 'auto_delete_channel_pin_msg', 'cancel_channel_pin',
         'auto_delete_channel_discussion_msg', 'channel_auto_buttons',
         'channel_discussion_keyword_filter',
     ):

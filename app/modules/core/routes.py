@@ -4489,6 +4489,8 @@ def api_save_other_settings():
             conf['channel_settings_configured'] = True
             if 'auto_delete_pin_msg' in d:
                 conf['channel_pin_notice_configured'] = True
+            if 'auto_delete_channel_pin_msg' in d:
+                settings.auto_delete_channel_pin_msg = bool(d['auto_delete_channel_pin_msg'])
             conf['first_comment_enabled'] = bool(enabled)
             conf['first_comment_text'] = text
             group.config = json.dumps(conf, ensure_ascii=False)
@@ -10361,6 +10363,40 @@ async def handle_auto_delete_messages(update: Update, context):
     except Exception as e:
         print(f"Error in handle_auto_delete_messages: {e}")
 
+
+async def handle_channel_pin_notice(update: Update, context):
+    """Delete the in-channel pin SERVICE notice only (not the pinned post, not unpin)."""
+    if not global_flask_app:
+        return
+
+    try:
+        msg = update.channel_post
+        chat = update.effective_chat
+        if not msg or not getattr(msg, 'pinned_message', None):
+            return
+        if not chat or chat.type != 'channel':
+            return
+
+        with global_flask_app.app_context():
+            group = BotGroup.query.filter_by(
+                chat_id=str(chat.id),
+                clone_id=context.application.bot_data.get('clone_id'),
+            ).first()
+            if not group or group.type != 'channel' or not group.is_active:
+                return
+            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not settings or not settings.auto_delete_channel_pin_msg:
+                return
+
+        try:
+            # Delete the service notice itself. Never unpin or delete the pinned original post.
+            await msg.delete()
+        except Exception as e:
+            print(f"Error deleting channel pin notice {getattr(msg, 'message_id', None)} in {chat.id}: {e}")
+    except Exception as e:
+        print(f"Error in handle_channel_pin_notice: {e}")
+
+
 async def check_channel_subscriptions(context):
     """Background task to check forced channel subscriptions"""
     if not global_flask_app:
@@ -12368,12 +12404,20 @@ async def run_bot(app_instance):
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
     
     # 🆕 Auto-delete system messages (must come early to delete before processing)
+    # Exclude CHANNEL_POSTS: StatusUpdate.PINNED_MESSAGE also matches in-channel pin notices.
     app.add_handler(MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS | 
-        filters.StatusUpdate.LEFT_CHAT_MEMBER | 
-        filters.StatusUpdate.PINNED_MESSAGE,
+        (filters.StatusUpdate.NEW_CHAT_MEMBERS | 
+         filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+         filters.StatusUpdate.PINNED_MESSAGE) & ~filters.UpdateType.CHANNEL_POSTS,
         handle_auto_delete_messages
     ), group=-1)
+
+    # In-channel pin service notices arrive as channel_post; use a separate group so
+    # neither the group cleaner nor CHANNEL_POSTS sync can swallow this update.
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.StatusUpdate.PINNED_MESSAGE,
+        handle_channel_pin_notice
+    ), group=-2)
     
     # 🆕 Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL & ~filters.StatusUpdate.ALL, handle_channel_pin))
@@ -12532,12 +12576,20 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
     
     # Add auto-delete system messages
+    # Exclude CHANNEL_POSTS: StatusUpdate.PINNED_MESSAGE also matches in-channel pin notices.
     app.add_handler(MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS | 
-        filters.StatusUpdate.LEFT_CHAT_MEMBER | 
-        filters.StatusUpdate.PINNED_MESSAGE,
+        (filters.StatusUpdate.NEW_CHAT_MEMBERS | 
+         filters.StatusUpdate.LEFT_CHAT_MEMBER | 
+         filters.StatusUpdate.PINNED_MESSAGE) & ~filters.UpdateType.CHANNEL_POSTS,
         handle_auto_delete_messages
     ), group=-1)
+
+    # In-channel pin service notices arrive as channel_post; use a separate group so
+    # neither the group cleaner nor CHANNEL_POSTS sync can swallow this update.
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POSTS & filters.StatusUpdate.PINNED_MESSAGE,
+        handle_channel_pin_notice
+    ), group=-2)
     
     # Handle channel messages for pin control
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL & ~filters.StatusUpdate.ALL, handle_channel_pin))

@@ -15,6 +15,12 @@
 {% endfor %}
 </div>
 {% endif %}
+{% if is_channel %}
+<div class="card p-3 mb-3"><h5>频道系统消息</h5>
+<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="auto_delete_channel_pin_msg" {{ 'checked' if settings and settings.auto_delete_channel_pin_msg }}><label class="form-check-label" for="auto_delete_channel_pin_msg">自动删除频道置顶提示消息</label></div>
+<p class="text-muted">仅删除频道里「已置顶一条消息」的系统提示，不取消置顶，也不删除被置顶的原帖。需要机器人在频道有删除消息权限。静默置顶可能不会产生这条提示。默认关闭。与下方「讨论群置顶提示」是两项功能。</p>
+</div>
+{% endif %}
 <div class="card p-3"><h5>关联频道讨论设置{{ '（旧配置兼容）' if not is_channel else '' }}</h5>
 {% if not is_channel %}<p class="text-muted">来源频道已保存频道设置时以频道设置为准；否则继续使用这里的旧设置。</p>{% endif %}
 {% if is_channel %}
@@ -39,7 +45,7 @@
 <script>
 function saveSettings() {
  const data = {group_id: {{ group.id }}, channel_discussion_keyword_filter: document.getElementById('channel_discussion_keyword_filter').value.trim()};
- for (const key of ['auto_delete_join_msg','auto_delete_leave_msg','auto_delete_promote_msg','auto_delete_pin_msg','cancel_channel_pin','auto_delete_channel_discussion_msg','channel_auto_buttons']) {
+ for (const key of ['auto_delete_join_msg','auto_delete_leave_msg','auto_delete_promote_msg','auto_delete_pin_msg','auto_delete_channel_pin_msg','cancel_channel_pin','auto_delete_channel_discussion_msg','channel_auto_buttons']) {
   const el = document.getElementById(key); if (el) data[key] = el.checked;
  }
  const comment = document.getElementById('first_comment_enabled');

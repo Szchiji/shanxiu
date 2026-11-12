@@ -249,7 +249,8 @@ function saveClone() {
             showToast('保存成功！', 'success');
                 setTimeout(() => location.reload(), 1000);
         } else {
-            alert('❌ ' + (result.msg || '保存失败'));
+            // 配置可能已保存，但启动/重启失败时必须保留并显示服务端提示。
+            alert('❌ ' + (result.msg || '保存或启动失败，请稍后重试'));
         }
     })
     .catch(err => {

@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify, abort, Response
 from app import db, limiter
 from app import get_bot_instance_role, is_clone_instance, is_main_instance
-from app.models import ChannelPostRecord
+from app.models import ChannelPostRecord, ChannelFirstComment, ChannelDiscussionPost
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
@@ -662,7 +662,14 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
             return e['caption'], None, e.get('caption_entities')
         return None, None, None
 
+    def _collect(msgs):
+        if collected_ids is not None:
+            for m in msgs or []:
+                if m.message_id not in collected_ids:
+                    collected_ids.append(m.message_id)
+
     def _remember(chunk, msgs):
+        _collect(msgs)
         # 下载上传的 t.me 媒体：记住返回的 file_id，下次直接复用
         try:
             for e, m in zip(chunk, msgs or []):
@@ -690,6 +697,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                 remove_caption=bool(content), **extra_kwargs
             )
             sent_all.extend(copied or [])
+            _collect(copied)
             continue
         items = seg[1]
         for start in range(0, len(items), MAX_MEDIA_GROUP_SIZE):
@@ -769,6 +777,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                                     raise
                             if msg:
                                 group_msgs.append(msg)
+                                _collect([msg])
                         if cap:
                             cap = None
                         _remember(chunk, group_msgs)
@@ -777,8 +786,7 @@ async def send_multi_media(bot, chat_id, media_type, media_urls, content=None, r
                 caption_used = True
 
     # 收集所有已发送消息的ID（用于 delete_previous 整组删除）
-    if collected_ids is not None and sent_all:
-        collected_ids.extend(m.message_id for m in sent_all)
+    _collect(sent_all)
 
     last_sent = sent_all[-1] if sent_all else None
 
@@ -1163,7 +1171,7 @@ def _delete_group_cascade(group_id: int) -> None:
         GroupVote, QuizGame, QuizSession, RedPacket,
         AdminActionLog, GroupMember,
         ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon,
-        ChannelPostButtonConfig, ChannelMessageStats, ChannelPostRecord,
+        ChannelPostButtonConfig, ChannelMessageStats, ChannelPostRecord, ChannelFirstComment, ChannelDiscussionPost,
     ):
         model.query.filter_by(group_id=group_id).delete(synchronize_session=False)
 
@@ -1575,7 +1583,7 @@ def page_auto_replies(gid):
     
     auto_replies = query.order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
     
-    return render_template('auto_replies.html', page='auto_replies', group=group, 
+    return render_template('auto_replies.html', page='auto_replies', group=group, conf=get_group_conf(group),
                           auto_replies=auto_replies,
                           current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items, search=search_query)
 
@@ -1708,7 +1716,7 @@ def page_other_settings(gid):
         settings = OtherSettings(group_id=gid)
         db.session.add(settings)
         db.session.commit()
-    return render_template('other_settings.html', page='other_settings', group=group, settings=settings)
+    return render_template('other_settings.html', page='other_settings', group=group, settings=settings, conf=get_group_conf(group))
 
 @core_bp.route('/group/<int:gid>/invitation_activity')
 def page_invitation_activity(gid):
@@ -3245,6 +3253,27 @@ def api_push_user():
         return jsonify({'status':'error','msg':str(e)})
 
 # --- Auto Reply API Routes ---
+@core_bp.route('/api/set_channel_auto_reply', methods=['POST'])
+def api_set_channel_auto_reply():
+    """Channel-local master switch, including legacy OFF recovery."""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
+    data = request.get_json(silent=True) or {}
+    group = db.session.get(BotGroup, data.get('group_id')) if data.get('group_id') else None
+    if not group or group.type != 'channel':
+        return jsonify({'status': 'error', 'msg': 'Channel not found'}), 404
+    err = _api_check_group_access(group)
+    if err:
+        return err
+    if not isinstance(data.get('enabled'), bool):
+        return jsonify({'status': 'error', 'msg': 'enabled 必须是布尔值'}), 400
+    conf = get_group_conf(group)
+    conf['auto_reply_open'] = data['enabled']
+    group.config = json.dumps(conf, ensure_ascii=False)
+    db.session.commit()
+    return jsonify({'status': 'ok'})
+
+
 @core_bp.route('/api/save_auto_reply', methods=['POST'])
 def api_save_auto_reply():
     """保存自动回复规则"""
@@ -4437,6 +4466,14 @@ def api_save_other_settings():
     err = _api_check_group_access(group)
     if err: return err
 
+    if group.type == 'channel':
+        text = d.get('first_comment_text', get_group_conf(group).get('first_comment_text', '')) or ''
+        enabled = d.get('first_comment_enabled', get_group_conf(group).get('first_comment_enabled', False))
+        if not isinstance(text, str) or not isinstance(enabled, bool):
+            return jsonify({'status': 'error', 'msg': '首条评论开关必须是布尔值，内容必须是文本'}), 400
+        text = text.strip()
+        if (enabled and not text) or len(text) > 4096:
+            return jsonify({'status': 'error', 'msg': '首条评论开启时内容不能为空，且不能超过4096字'}), 400
     try:
         settings = OtherSettings.query.filter_by(group_id=d['group_id']).first()
         if not settings:
@@ -4447,11 +4484,16 @@ def api_save_other_settings():
             settings.auto_delete_join_msg = d.get('auto_delete_join_msg', False)
             settings.auto_delete_leave_msg = d.get('auto_delete_leave_msg', False)
             settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
-            settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
         else:
             conf = get_group_conf(group)
             conf['channel_settings_configured'] = True
+            if 'auto_delete_pin_msg' in d:
+                conf['channel_pin_notice_configured'] = True
+            conf['first_comment_enabled'] = bool(enabled)
+            conf['first_comment_text'] = text
             group.config = json.dumps(conf, ensure_ascii=False)
+        if 'auto_delete_pin_msg' in d:
+            settings.auto_delete_pin_msg = bool(d['auto_delete_pin_msg'])
         settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
         settings.auto_delete_channel_discussion_msg = d.get('auto_delete_channel_discussion_msg', False)
         settings.channel_auto_buttons = d.get('channel_auto_buttons', False)
@@ -9400,6 +9442,10 @@ async def _flush_channel_post_button_album(buffer_key):
             source = BotGroup.query.filter_by(chat_id=str(buf.get('chat_id')), clone_id=buffer_key[0]).first()
             if source and not source.is_active:
                 return
+            if source:
+                parts = ChannelDiscussionPost.query.filter_by(group_id=source.id, source_album=buffer_key[2]).all()
+                if any(p.has_buttons or p.applied for p in parts):
+                    return
     _note_album_flushed('channel_post_buttons', buffer_key, buf)
     messages = buf.get('messages') or []
     bot = buf.get('bot')
@@ -9425,7 +9471,10 @@ async def _flush_channel_post_button_album(buffer_key):
     keyboard = build_inline_keyboard_from_links(links)
     if not keyboard:
         return
-    await _edit_channel_post_buttons(bot, chat_id, mid, InlineKeyboardMarkup(keyboard))
+    from app.services.channel_discussion import keyboard_for_post, mark_applied
+    keyboard = await keyboard_for_post(bot, chat_id, mid, buffer_key[0], keyboard)
+    if keyboard and await _edit_channel_post_buttons(bot, chat_id, mid, InlineKeyboardMarkup(keyboard)):
+        mark_applied(chat_id, mid, buffer_key[0])
 
 
 def _enqueue_channel_post_button_album(*, bot, clone_id, chat_id, msg, links):
@@ -9488,6 +9537,11 @@ async def _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id):
         if not links:
             return
 
+        from app.services.channel_discussion import note_original
+        observed = note_original(group, msg)
+        if observed.applied:
+            return
+
         mgid = getattr(msg, 'media_group_id', None)
         if mgid:
             # Album: always buffer; flush decides skip-if-has-buttons across all parts
@@ -9499,6 +9553,9 @@ async def _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id):
                 links=links,
             )
             return
+
+        if observed.has_buttons:
+            return  # A previously observed original keyboard always wins, even on a stale echo.
 
         if not should_attach_channel_post_buttons(True, links, msg):
             if message_has_inline_buttons(msg):
@@ -9512,9 +9569,13 @@ async def _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id):
         keyboard = build_inline_keyboard_from_links(links)
         if not keyboard:
             return
-        await _edit_channel_post_buttons(
-            bot, chat.id, msg.message_id, InlineKeyboardMarkup(keyboard),
-        )
+        from app.services.channel_discussion import keyboard_for_post, mark_applied
+        keyboard = await keyboard_for_post(bot, chat.id, msg.message_id, clone_id, keyboard)
+        if not keyboard:
+            return
+        if await _edit_channel_post_buttons(bot, chat.id, msg.message_id, InlineKeyboardMarkup(keyboard)):
+            mark_applied(chat.id, msg.message_id, clone_id)
+
     except Exception as e:
         print(f"[channel_post_buttons] error: {e}", flush=True)
 
@@ -9956,6 +10017,29 @@ async def handle_sync_group_messages(update: Update, context):
 
 
 
+async def _send_auto_reply_content(bot, context, chat_id, rule, reply_markup, *, reply_text=None):
+    content = sanitize_html_for_telegram(rule.content or '')
+    urls = rule.get_media_url_list()
+    sent_ids, last = [], None
+    try:
+        if rule.media_type in ('image', 'video', 'media') and urls:
+            typed = rule.get_media_url_with_types()
+            last = await send_multi_media(bot, chat_id, rule.media_type, urls,
+                content=content, reply_markup=reply_markup,
+                media_url_types=[t for _, t in typed] if typed else None,
+                collected_ids=sent_ids)
+        elif content:
+            kw = dict(reply_markup=reply_markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
+            if reply_text:
+                last = await reply_text(content, **kw)
+            else:
+                last = await bot.send_message(chat_id=chat_id, text=content, parse_mode='HTML', **kw)
+        return last
+    finally:
+        # A later media send may fail after earlier parts succeeded: still clean those up.
+        _schedule_auto_reply_delete(context, chat_id, last, sent_ids, rule.delete_after)
+
+
 async def _maybe_send_channel_auto_reply(bot, msg, chat, group, context):
     """Reply in-channel when a channel post hits an AutoReply rule for this channel BotGroup.
 
@@ -9989,29 +10073,8 @@ async def _maybe_send_channel_auto_reply(bot, msg, chat, group, context):
         except Exception:
             pass
         reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-        content = sanitize_html_for_telegram(auto_reply.content or '')
-        media_urls = auto_reply.get_media_url_list()
-        sent_reply = None
-        if auto_reply.media_type in ('image', 'video', 'media') and media_urls:
-            url_with_types = auto_reply.get_media_url_with_types()
-            sent_reply = await send_multi_media(
-                bot, chat.id, auto_reply.media_type, media_urls,
-                content=content, reply_markup=reply_markup,
-                media_url_types=[t for _, t in url_with_types] if url_with_types else None,
-            )
-        elif content:
-            sent_reply = await bot.send_message(
-                chat_id=chat.id,
-                text=content,
-                parse_mode='HTML',
-                reply_markup=reply_markup,
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )
-        if sent_reply and getattr(auto_reply, 'delete_after', 0) and auto_reply.delete_after > 0:
-            try:
-                context.job_queue.run_once(_auto_delete_msg, auto_reply.delete_after, data=sent_reply)
-            except Exception:
-                pass
+        await _send_auto_reply_content(bot, context, chat.id, auto_reply, reply_markup)
+
     except Exception as e:
         print(f"Channel auto reply error: {e}")
 
@@ -10086,7 +10149,7 @@ async def _sync_channel_post_core(bot, msg, chat, user, clone_id, *, context=Non
     ``own_bot_post=True``: the post was sent by OUR bot (Telegram never delivers a bot's own
     messages back to it as channel_post updates, so :mod:`app.services.own_post_sync` calls
     this after a successful send). Only targets with ``sync_own_bot_posts`` enabled are used,
-    and channel auto-reply / auto-buttons are not run for it.
+    and channel auto-reply is not run for it; original-post buttons still apply.
     """
     from app.services.sync_service import (
         build_channel_sender_prefix,
@@ -10109,15 +10172,19 @@ async def _sync_channel_post_core(bot, msg, chat, user, clone_id, *, context=Non
                 return
             from app.services.channel_admin import record_post
             record_post(group, msg)
+            if get_group_conf(group).get('first_comment_enabled', False):
+                from app.services.channel_admin import check_first_comment_link
+                probe = asyncio.create_task(check_first_comment_link(bot, chat.id, group.id))
+                _background_tasks.add(probe)
+                probe.add_done_callback(_background_tasks.discard)
+
 
             if not own_bot_post:
                 # Channel auto-reply is independent of sync settings
                 await _maybe_send_channel_auto_reply(bot, msg, chat, group, context)
 
-                # Channel post auto-buttons (edit original post); independent of sync
-                await _maybe_attach_channel_post_buttons(
-                    bot, msg, chat, group, clone_id,
-                )
+            # Buttons also apply to our ordinary posts (never replace existing buttons).
+            await _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id)
 
             # Single gate: SyncGroupMessages.enabled
             sync_settings = SyncGroupMessages.query.filter_by(
@@ -10255,10 +10322,22 @@ async def handle_auto_delete_messages(update: Update, context):
             if not group:
                 return
             
+            if not group.is_active:
+                return
             settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            pinned = msg.pinned_message
+            if pinned and getattr(pinned, 'is_automatic_forward', False):
+                origin = getattr(pinned, 'forward_origin', None)
+                source = getattr(origin, 'chat', None) or getattr(pinned, 'sender_chat', None)
+                channel = BotGroup.query.filter_by(chat_id=str(getattr(source, 'id', '')),
+                    clone_id=context.application.bot_data.get('clone_id'), type='channel').first()
+                if channel and not channel.is_active:
+                    return
+                from app.services.channel_admin import discussion_settings
+                settings = discussion_settings(channel, group)
             if not settings:
                 return
-            
+
             should_delete = False
             
             # Check for join messages
@@ -12294,10 +12373,10 @@ async def run_bot(app_instance):
         filters.StatusUpdate.LEFT_CHAT_MEMBER | 
         filters.StatusUpdate.PINNED_MESSAGE,
         handle_auto_delete_messages
-    ))
+    ), group=-1)
     
     # 🆕 Handle channel messages for pin control
-    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL, handle_channel_pin))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL & ~filters.StatusUpdate.ALL, handle_channel_pin))
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
@@ -12458,10 +12537,10 @@ def setup_clone_handlers(app, flask_app, clone_id):
         filters.StatusUpdate.LEFT_CHAT_MEMBER | 
         filters.StatusUpdate.PINNED_MESSAGE,
         handle_auto_delete_messages
-    ))
+    ), group=-1)
     
     # Handle channel messages for pin control
-    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL, handle_channel_pin))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL & ~filters.StatusUpdate.ALL, handle_channel_pin))
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
@@ -13258,9 +13337,12 @@ async def handle_channel_pin(update: Update, context):
         with global_flask_app.app_context():
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
+                if msg.is_automatic_forward:
+                    print(f"[first-comment] skip unregistered discussion={chat.id}", flush=True)
                 return
 
             if not group.is_active:
+                print(f"[first-comment] skip inactive discussion={chat.id}", flush=True)
                 return
 
             # Channel sidebar saves forward/templates/coupons on the *channel* BotGroup.
@@ -13271,8 +13353,16 @@ async def handle_channel_pin(update: Update, context):
                     clone_id=context.application.bot_data.get('clone_id'),
                 ).first()
             if channel_group and not channel_group.is_active:
+                print(f"[first-comment] skip inactive channel={channel_group.chat_id}", flush=True)
                 return
-            from app.services.channel_admin import discussion_settings, source_message_id
+            from app.services.channel_admin import discussion_settings, source_message_id, maybe_first_comment
+            await maybe_first_comment(context.bot, msg, channel_group, group)
+            from app.services.channel_discussion import record_forward, resume_pending
+            source_mid = record_forward(channel_group, group, msg)
+            if source_mid is not None:
+                pending = asyncio.create_task(resume_pending(context.bot, channel_group.id, source_mid))
+                _background_tasks.add(pending)
+                pending.add_done_callback(_background_tasks.discard)
             settings = discussion_settings(channel_group, group)
             automation_gid = resolve_channel_automation_group_id(
                 channel_group.id if channel_group else None,
@@ -15050,10 +15140,28 @@ async def on_my_chat_member(update: Update, context):
 # NOTE: cmd_clones lives in app.bot.handlers.commands and is rebound
 # at the bottom of this module for run_bot / setup_clone_handlers.
 
+def _schedule_auto_reply_delete(context, chat_id, last_message, message_ids, delay):
+    ids = list(dict.fromkeys(message_ids))
+    mid = getattr(last_message, 'message_id', None)
+    if isinstance(mid, int) and mid not in ids:
+        ids.append(mid)
+    if delay and delay > 0 and ids:
+        context.job_queue.run_once(_auto_delete_msg, delay,
+                                  data={'chat_id': chat_id, 'message_ids': ids})
+
+
 async def _auto_delete_msg(context):
-    """Job callback: delete the message stored in job.data."""
+    """New replies carry complete IDs; retain legacy single-Message jobs."""
+    data = context.job.data
+    if isinstance(data, dict):
+        for mid in dict.fromkeys(data['message_ids']):
+            try:
+                await context.bot.delete_message(chat_id=data['chat_id'], message_id=mid)
+            except Exception as exc:
+                print(f"[auto-reply-delete] chat={data['chat_id']} msg={mid}: {type(exc).__name__}", flush=True)
+        return
     try:
-        await context.job.data.delete()
+        await data.delete()
     except Exception:
         pass
 
@@ -16100,28 +16208,8 @@ async def on_message(update: Update, context):
                             
                             reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
                             
-                            # 发送回复
-                            sent_reply = None
-                            content = sanitize_html_for_telegram(auto_reply.content or '')
-                            media_urls = auto_reply.get_media_url_list()
-                            
-                            if auto_reply.media_type in ('image', 'video', 'media') and media_urls:
-                                url_with_types = auto_reply.get_media_url_with_types()
-                                sent_reply = await send_multi_media(
-                                    context.bot, chat.id, auto_reply.media_type, media_urls,
-                                    content=content, reply_markup=reply_markup,
-                                    media_url_types=[t for _, t in url_with_types] if url_with_types else None
-                                )
-                            elif content:
-                                sent_reply = await msg.reply_html(
-                                    content,
-                                    reply_markup=reply_markup,
-                                    link_preview_options=LinkPreviewOptions(is_disabled=True)
-                                )
-                            
-                            # 自动删除回复
-                            if sent_reply and auto_reply.delete_after > 0:
-                                context.job_queue.run_once(_auto_delete_msg, auto_reply.delete_after, data=sent_reply)
+                            await _send_auto_reply_content(context.bot, context, chat.id, auto_reply,
+                                                           reply_markup, reply_text=msg.reply_html)
                         except Exception as e:
                             print(f"Auto reply error: {e}")
                 # Continue to check for query functionality

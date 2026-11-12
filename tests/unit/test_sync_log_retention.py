@@ -86,7 +86,7 @@ def test_cleanup_batches(flask_app, monkeypatch):
     from app.utils import get_beijing_now
     monkeypatch.setattr(r, 'BATCH_SIZE', 3)
     with flask_app.app_context():
-        now = get_beijing_now()
+        now = get_beijing_now().replace(hour=16, minute=0, second=0, microsecond=0)
         gid = _group('-1004')
         for i in range(10):
             _log(gid, 48, now, mid=i)

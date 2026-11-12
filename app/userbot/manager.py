@@ -640,17 +640,20 @@ class UserbotManager:
             return rules, own, synced
         from app.models import BotGroup, SyncGroupMessages, UserbotSyncRule
         with self.flask_app.app_context():
-            groups = {g.chat_id: g.id for g in BotGroup.query.filter(BotGroup.clone_id.is_(None)).all()}
+            groups = {g.chat_id: g for g in BotGroup.query.filter(BotGroup.clone_id.is_(None)).all()}
             rules = []
             for r in UserbotSyncRule.query.filter_by(enabled=True).all():
+                source = groups.get(str(r.source_chat_id))
+                if source and source.type == 'channel' and not source.is_active:
+                    continue
                 rules.append({
                     'id': r.id, 'enabled': True, 'source_chat_id': r.source_chat_id,
                     'sender_mode': r.sender_mode, 'sender_filter': r.sender_filter,
                     'target_chat_ids': r.target_chat_ids, 'include_sender_prefix': r.include_sender_prefix,
                     'sender_prefix_style': r.sender_prefix_style, 'sync_media': r.sync_media,
-                    'filter_keywords': r.filter_keywords, 'source_group_id': groups.get(str(r.source_chat_id)),
+                    'filter_keywords': r.filter_keywords, 'source_group_id': source.id if source else None,
                 })
-            gid_to_chat = {v: k for k, v in groups.items()}
+            gid_to_chat = {v.id: k for k, v in groups.items() if v.type != 'channel' or v.is_active}
             synced = frozenset(
                 (gid_to_chat[s.source_group_id], str(s.target_group_id))
                 for s in SyncGroupMessages.query.filter_by(enabled=True).all()

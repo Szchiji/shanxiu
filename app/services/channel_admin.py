@@ -6,9 +6,8 @@ from app.models import BotGroup, OtherSettings, ChannelPostRecord
 from app.utils import get_beijing_now
 
 CHANNEL_FIELDS = ('cancel_channel_pin', 'auto_delete_channel_discussion_msg',
-                  'channel_auto_buttons', 'channel_discussion_keyword_filter')
-GROUP_FIELDS = ('auto_delete_join_msg', 'auto_delete_leave_msg',
-                'auto_delete_promote_msg', 'auto_delete_pin_msg')
+                  'channel_auto_buttons', 'channel_discussion_keyword_filter', 'auto_delete_pin_msg')
+GROUP_FIELDS = ('auto_delete_join_msg', 'auto_delete_leave_msg', 'auto_delete_promote_msg')
 
 
 def discussion_settings(channel, discussion):
@@ -24,6 +23,9 @@ def discussion_settings(channel, discussion):
     selected = primary if use_primary else legacy
     values = {f: getattr(legacy, f, False) if legacy else False for f in GROUP_FIELDS}
     values.update({f: getattr(selected, f, None) if selected else None for f in CHANNEL_FIELDS})
+    # Old channel saves must not turn off a working legacy group pin-notice setting.
+    if not (primary and (conf.get('channel_pin_notice_configured') or primary.auto_delete_pin_msg)):
+        values['auto_delete_pin_msg'] = bool(legacy and legacy.auto_delete_pin_msg)
     return SimpleNamespace(**values)
 
 
@@ -95,3 +97,73 @@ def source_metadata(chat_id, ids, clone_id):
     captions = {r.post_key: r.message_text for r in siblings if r.message_text}
     return {r.message_id: dict(media_type=r.media_type, text=captions.get(r.post_key, r.message_text or ''),
                               post_key=r.post_key, is_forward=bool(r.is_forward)) for r in rows}
+
+
+async def maybe_first_comment(bot, msg, channel, discussion):
+    """Reply immediately to a NEW automatic discussion forward. No history/login lookup.
+
+    The automatic forward proves the linked relationship. Claim before I/O (also
+    across workers/restarts); never retry blindly after an ambiguous send failure.
+    """
+    from app.models import ChannelFirstComment
+    from app.modules.core.routes import get_group_conf
+    if not channel or channel.type != 'channel':
+        return
+    conf = get_group_conf(channel)
+    if not conf.get('first_comment_enabled', False):
+        return
+    if not channel.is_active or not discussion or not discussion.is_active:
+        print(f"[first-comment] skip inactive/missing discussion channel={channel.chat_id}", flush=True)
+        return
+    if not getattr(msg, 'is_automatic_forward', False) or getattr(msg, 'edit_date', None):
+        return
+    if str(getattr(getattr(msg, 'chat', None), 'id', '')) != str(discussion.chat_id):
+        print(f"[first-comment] skip unlinked discussion channel={channel.chat_id}", flush=True)
+        return
+    if str(getattr(getattr(msg, 'sender_chat', None), 'id', '')) != str(channel.chat_id):
+        return
+    text = (conf.get('first_comment_text') or '').strip()
+    if not text:
+        print(f"[first-comment] skip empty content channel={channel.chat_id}", flush=True)
+        return
+    from app.services.sync_loop_guard import is_sync_output
+    if is_sync_output(channel.chat_id, source_message_id(msg)):
+        return
+    album = getattr(msg, 'media_group_id', None)
+    key = f'album:{album}' if album else f'message:{source_message_id(msg)}'
+    claim = ChannelFirstComment(group_id=channel.id, discussion_chat_id=str(discussion.chat_id), post_key=key)
+    try:
+        with db.session.begin_nested():
+            db.session.add(claim)
+            db.session.flush()
+    except IntegrityError:
+        return
+    db.session.commit()
+    try:
+        sent = await bot.send_message(chat_id=discussion.chat_id, text=text,
+                                      reply_to_message_id=msg.message_id,
+                                      allow_sending_without_reply=False)
+        claim.status = 'sent'
+        claim.comment_message_id = sent.message_id
+        print(f"[first-comment] sent channel={channel.chat_id} discussion={discussion.chat_id} post={key}", flush=True)
+    except Exception as exc:
+        claim.status = 'failed'
+        print(f"[first-comment] skipped channel={channel.chat_id}: {type(exc).__name__}", flush=True)
+    db.session.commit()
+
+
+_link_probe_times = {}
+
+async def check_first_comment_link(bot, channel_id, group_id):
+    """Diagnostic only, launched in the background so discussion replies are not delayed."""
+    import time
+    now = time.monotonic()
+    if now - _link_probe_times.get(group_id, 0) < 60:
+        return
+    _link_probe_times[group_id] = now
+    try:
+        info = await bot.get_chat(channel_id)
+        if not getattr(info, 'linked_chat_id', None):
+            print(f"[first-comment] skip no linked discussion channel={channel_id}", flush=True)
+    except Exception as exc:
+        print(f"[first-comment] cannot inspect discussion channel={channel_id}: {type(exc).__name__}", flush=True)

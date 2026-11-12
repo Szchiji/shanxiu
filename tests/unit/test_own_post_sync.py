@@ -129,7 +129,8 @@ class TestCoreAndToggle:
         side = AsyncMock()
         monkeypatch.setattr(routes, '_deliver_sync_copy', fake_deliver)
         monkeypatch.setattr(routes, '_maybe_send_channel_auto_reply', side)
-        monkeypatch.setattr(routes, '_maybe_attach_channel_post_buttons', side)
+        buttons = AsyncMock()
+        monkeypatch.setattr(routes, '_maybe_attach_channel_post_buttons', buttons)
         chat = SimpleNamespace(id=-1007770001, type='channel', title='src', username=None)
         msg = SimpleNamespace(message_id=5, chat=chat, text='定时帖', caption=None, media_group_id=None,
                               forward_origin=None, from_user=None, photo=None, video=None, document=None,
@@ -138,7 +139,8 @@ class TestCoreAndToggle:
         msg_out = SimpleNamespace(**{**msg.__dict__, 'message_id': 6})
         _run(ops._process(object(), None, '-1007770001', 'send_message', {}, [msg, msg_out]))
         assert delivered == [('-100888000', 5)]
-        side.assert_not_awaited()  # auto-reply / auto-buttons not run for own posts
+        side.assert_not_awaited()  # still no auto-reply recursion
+        buttons.assert_awaited_once()  # ordinary own post only, not the sync output
 
 
 def test_channel_page_has_toggle(flask_app, client):

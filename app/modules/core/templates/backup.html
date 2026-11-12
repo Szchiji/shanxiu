@@ -84,7 +84,12 @@
         <li>同步规则、抽奖、投票、问答、插件开关</li>
         <li>频道转发规则、消息模板、频道帖按钮、优惠券配置</li>
     </ul>
-    <p class="info-text mb-3">不会导出：认证用户名单、积分余额与流水、同步日志、邀请记录、警告和统计等运营数据，以及 Bot Token、小号 session、api_hash 等机密信息。</p>
+    <p class="info-text mb-3">默认不含认证用户和积分。无论是否勾选，均不导出群成员同步表、兑换记录、同步日志、邀请记录、警告和统计等运营数据，以及 Bot Token、小号 session、api_hash 等机密信息。</p>
+    <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" id="includeUsersPoints">
+        <label class="form-check-label" for="includeUsersPoints">包含认证用户和积分（含余额与流水）</label>
+        <div class="info-text">导入此快照会替换目标群的认证用户名单、积分余额与流水；不含此部分的旧备份不会修改它们。请妥善保管用户资料。</div>
+    </div>
     <button class="btn btn-export" onclick="exportConfig()">
         <i class="bi bi-file-earmark-arrow-down"></i> 导出配置
     </button>
@@ -110,8 +115,11 @@
 
 <script>
 function exportConfig() {
-    fetch('/core/group/{{ group.id }}/backup/export')
-        .then(response => response.json())
+    fetch('/core/group/{{ group.id }}/backup/export?include_users_points=' + (document.getElementById('includeUsersPoints').checked ? '1' : '0'))
+        .then(response => {
+            if (!response.ok) throw new Error('配置导出失败，请检查登录状态后重试');
+            return response.json();
+        })
         .then(data => {
             // Create download link
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -139,7 +147,7 @@ function importConfig(file) {
         try {
             const config = JSON.parse(e.target.result);
             
-            if (!confirm('确定要导入此配置吗？这将覆盖部分现有配置。')) {
+            if (!confirm('确定要导入此配置吗？这将覆盖部分现有配置。' + (Object.prototype.hasOwnProperty.call(config, 'users_points') ? '\n⚠️ 此文件含完整运营快照，将替换本群全部认证用户、积分余额与流水（包括空快照）。' : ''))) {
                 return;
             }
             

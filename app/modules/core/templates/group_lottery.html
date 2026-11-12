@@ -88,6 +88,7 @@
                         <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }}">
                             {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else '已结束') }}
                         </span>
+                        {% if lottery.draw_error %}<div class="text-danger small mt-1">未开奖：{{ lottery.draw_error }}（自动任务会重试，也可修复小号后手动开奖）</div>{% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center justify-content-end">
@@ -150,9 +151,9 @@
                     <label class="form-label">随机抽奖奖池</label>
                     <select class="form-control" id="pool_source">
                         <option value="certified">认证用户（默认，与现网一致）</option>
-                        <option value="all_members">全部群成员（使用已同步的成员表，排除机器人）</option>
+                        <option value="all_members">全部群成员（开奖现场拉取，排除机器人）</option>
                     </select>
-                    <div class="form-text">「全部群成员」以后台已同步的成员表为准，开奖时不会现场向 Telegram 拉取名单。成员表若较旧，可能漏掉尚未同步的新成员。</div>
+                    <div class="form-text">「全部群成员」开奖时向 Telegram 现场拉取当前成员，需要小号已登录且在该群、有权查看完整名单。限时 20 秒、最多 2 万人；名单隐藏、不完整、限流或失败时不开奖，不使用旧成员表。</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">奖品描述</label>

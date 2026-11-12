@@ -2399,14 +2399,16 @@ def page_backup(gid):
 
 @core_bp.route('/group/<int:gid>/backup/export')
 def api_export_config(gid):
-    """导出群组配置为 JSON（覆盖关键可配置项，不包含机密和运营名单）"""
+    """导出配置；认证用户和积分须显式勾选，始终不含机密。"""
     if not session.get('logged_in'):
         return jsonify({'error': 'Not authenticated'}), 401
 
     get_group_or_403(gid)
     try:
         from app.services.backup_service import export_group_config
-        return jsonify(export_group_config(gid))
+        response = jsonify(export_group_config(gid, include_users_points=request.args.get('include_users_points') == '1'))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
@@ -10641,12 +10643,19 @@ async def run_lottery_draws(context):
                                     logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
 
                         elif lottery.lottery_type == 'random':
-                            # Pure random draw: certified users (default) or synced group members
+                            # Certified users (default) or a complete live Telegram roster
                             from app.services.lottery_service import draw_random_winners, normalize_pool_source
                             top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                             pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
-                            # Do not call Telegram here — use the local member/certified table only.
-                            winners = draw_random_winners(group.id, pool_source, top_n)
+                            from app.services.lottery_roster import LiveRosterError
+                            try:
+                                winners = draw_random_winners(group.id, pool_source, top_n)
+                            except LiveRosterError as error:
+                                lottery.draw_error = str(error)
+                                db.session.commit()
+                                logging.warning("抽奖 %s 未开奖: %s", lid, error)
+                                return None
+                            lottery.draw_error = None
                             logging.info(
                                 f"🎲 [抽奖任务] 随机抽奖: 奖池={pool_source}, 抽出 {len(winners)}/{top_n} 名"
                             )
@@ -13516,10 +13525,17 @@ async def cmd_lottery_draw(update: Update, context):
                     top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
                     pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
                     bot_id = getattr(getattr(context, 'bot', None), 'id', None)
-                    winners = draw_random_winners(
-                        group.id, pool_source, top_n,
-                        exclude_user_ids=[bot_id] if bot_id else None,
-                    )
+                    from app.services.lottery_roster import LiveRosterError
+                    try:
+                        winners = draw_random_winners(
+                            group.id, pool_source, top_n,
+                            exclude_user_ids=[bot_id] if bot_id else None,
+                        )
+                    except LiveRosterError as error:
+                        lottery.draw_error = str(error)
+                        db.session.commit()
+                        return "error", str(error)
+                    lottery.draw_error = None
                 
                 # Update lottery
                 lottery.winner_ids = json.dumps(winners)

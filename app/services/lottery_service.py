@@ -3,8 +3,8 @@ app/services/lottery_service.py
 --------------------------------
 Pure-function layer for lottery (抽奖) draw logic.
 
-None of the functions here touch the database or the Telegram API, which
-makes them cheap to unit-test without any mocking.
+The draw helpers are pure; pool loading uses the database or a bounded live
+Telegram roster, depending on the explicitly selected source.
 """
 
 from __future__ import annotations
@@ -170,9 +170,6 @@ POOL_CERTIFIED = 'certified'
 POOL_ALL_MEMBERS = 'all_members'
 VALID_POOL_SOURCES = (POOL_CERTIFIED, POOL_ALL_MEMBERS)
 
-# Statuses that mean the user is no longer in the group.
-_LEFT_STATUSES = ('left', 'kicked')
-
 
 def normalize_pool_source(value: str | None) -> str:
     """Return a valid pool source. Unknown / empty values default to certified."""
@@ -187,38 +184,20 @@ def load_random_pool(
     *,
     exclude_user_ids: List[int] | None = None,
 ) -> List[int]:
-    """Build a random-lottery candidate pool from the database only.
+    """Certified users by default; all_members requires a complete live roster.
 
-    * ``certified`` (default): authenticated users in ``GroupUser``.
-    * ``all_members``: rows in the synced ``GroupMember`` table, excluding
-      bots, left/kicked members, and *exclude_user_ids* (typically the bot
-      itself).  Does **not** call the Telegram API, so a stale member table
-      is used as-is rather than blocking the draw.
+    Never silently substitute the synced GroupMember table for Telegram.
     """
-    from app.models import GroupMember, GroupUser
+    from app.models import BotGroup, GroupUser
 
     source = normalize_pool_source(pool_source)
     exclude = {int(x) for x in (exclude_user_ids or []) if x is not None}
-
     if source == POOL_ALL_MEMBERS:
-        query = GroupMember.query.filter_by(group_id=group_id).filter(
-            GroupMember.is_bot.is_(False)
-        )
-        # Also drop left/kicked when the status column is populated.
-        query = query.filter(
-            ~GroupMember.status.in_(_LEFT_STATUSES)
-        )
-        ids = []
-        seen = set()
-        for (user_id,) in query.with_entities(GroupMember.user_id).all():
-            if user_id is None:
-                continue
-            uid = int(user_id)
-            if uid in exclude or uid in seen:
-                continue
-            seen.add(uid)
-            ids.append(uid)
-        return ids
+        from app.services.lottery_roster import fetch_live_member_ids
+        group = BotGroup.query.get(group_id)
+        if not group:
+            raise ValueError('群组不存在')
+        return [uid for uid in fetch_live_member_ids(group.chat_id) if uid not in exclude]
 
     ids = []
     seen = set()

@@ -32,6 +32,8 @@ class GroupUser(db.Model):
     applied_telegram_tag = db.Column(db.String(16), nullable=True)
     # Skip retry marker: 'admin' (bot cannot tag other admins) or 'left' (user departed).
     telegram_tag_skip = db.Column(db.String(16), nullable=True)
+    # Expected unrestrictable members; not successful mutes.
+    expired_mute_skip = db.Column(db.String(16), nullable=True)
     expiration_date = db.Column(db.DateTime, nullable=True)  # Consider adding composite index: (expiration_date, is_banned)
     is_banned = db.Column(db.Boolean, default=False)
     is_muted_permanent = db.Column(db.Boolean, default=False)  # Track if user needs admin to unlock

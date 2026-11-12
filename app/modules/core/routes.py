@@ -81,9 +81,10 @@ SCHEDULED_MESSAGE_CHECK_INTERVAL = 60  # Check scheduled messages every minute (
 MAX_LOTTERY_PARTICIPANTS = 100  # Maximum participants to consider in lottery fallback
 MAX_LOTTERY_MESSAGE_COUNT_RECORDS = 10000  # Maximum message count records to load for lottery
 MAX_AUCTION_WINNERS = 100  # Maximum winners in auction/lottery ranking
-CLONE_START_TIMEOUT = 10  # Timeout for starting clone bots (in seconds)
-CLONE_STOP_TIMEOUT = 10  # Timeout for stopping clone bots (in seconds)
-CLONE_RESTART_TIMEOUT = 15  # Timeout for restarting clone bots (in seconds)
+# Wait beyond the manager's bounded retries + cleanup, not PTB's old 5s default.
+CLONE_START_TIMEOUT = bot_clone_manager.CLONE_START_BUDGET + 15  # 229s
+CLONE_STOP_TIMEOUT = bot_clone_manager.CLONE_STOP_BUDGET + 5
+CLONE_RESTART_TIMEOUT = CLONE_START_TIMEOUT + CLONE_STOP_TIMEOUT + 5
 SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Users checked per run in forced-channel subscription task
 
 # Simple in-memory cache for Telegram photos: key -> (timestamp, bytes, content_type)
@@ -5929,6 +5930,12 @@ def api_refresh_sync_target_title():
         return jsonify({'status':'error','msg':str(e)})
 
 
+def _clone_saved_start_error(restarting=False):
+    action = '重启' if restarting else '启动'
+    return jsonify({'status': 'error', 'msg':
+                    f'克隆配置已保存，但{action}失败（连接 Telegram 超时或服务异常），请稍后重试。'})
+
+
 @core_bp.route('/api/save_bot_clone', methods=['POST'])
 @require_main_instance
 def api_save_bot_clone():
@@ -6008,8 +6015,14 @@ def api_save_bot_clone():
         
         db.session.commit()
         
+        if (clone.is_active and
+                (not clone.expiration_date or clone.expiration_date >= get_beijing_now()) and
+                not (global_bot_loop and global_flask_app)):
+            return _clone_saved_start_error()
+
         # If clone was running and was edited, restart or stop it depending on new is_active state
         if was_running and clone_id and global_bot_loop and global_flask_app:
+            future = None
             try:
                 now = get_beijing_now()
                 if clone.is_active and (not clone.expiration_date or clone.expiration_date >= now):
@@ -6030,7 +6043,9 @@ def api_save_bot_clone():
                         ),
                         global_bot_loop
                     )
-                    future.result(timeout=CLONE_RESTART_TIMEOUT)  # Wait for restart
+                    success = future.result(timeout=CLONE_RESTART_TIMEOUT)
+                    if not success:
+                        return _clone_saved_start_error(restarting=True)
                     logging.info(f"✅ Clone bot {clone_id} restarted after edit")
                 else:
                     # is_active set to False (or expired) — stop the running clone
@@ -6041,11 +6056,14 @@ def api_save_bot_clone():
                     future.result(timeout=CLONE_STOP_TIMEOUT)
                     logging.info(f"✅ Clone bot {clone_id} stopped after being disabled via edit")
             except Exception as e:
+                if future is not None:
+                    future.cancel()
                 logging.warning(f"⚠️ Failed to restart/stop clone bot {clone_id} after edit: {e}")
-                # Don't fail the API call, just log the error
+                return _clone_saved_start_error(restarting=True)
         
         # If this is an existing clone that was NOT running but is now enabled, start it
         elif clone_id and not was_running and clone.is_active and global_bot_loop and global_flask_app:
+            future = None
             try:
                 now = get_beijing_now()
                 if not clone.expiration_date or clone.expiration_date >= now:
@@ -6070,12 +6088,16 @@ def api_save_bot_clone():
                         logging.info(f"✅ Clone bot {clone_id} started after being enabled via edit")
                     else:
                         logging.warning(f"⚠️ Clone bot {clone_id} failed to start after being enabled via edit")
+                        return _clone_saved_start_error()
             except Exception as e:
+                if future is not None:
+                    future.cancel()
                 logging.warning(f"⚠️ Failed to start clone bot {clone_id} after edit: {e}")
-                # Don't fail the API call, just log the error
+                return _clone_saved_start_error()
         
         # If this is a brand-new active clone, start it immediately without waiting for a server restart
         elif not clone_id and clone.is_active and global_bot_loop and global_flask_app:
+            future = None
             try:
                 now = get_beijing_now()
                 if not clone.expiration_date or clone.expiration_date >= now:
@@ -6100,9 +6122,12 @@ def api_save_bot_clone():
                         logging.info(f"✅ New clone bot {clone.id} started immediately after creation")
                     else:
                         logging.warning(f"⚠️ New clone bot {clone.id} failed to start after creation")
+                        return _clone_saved_start_error()
             except Exception as e:
+                if future is not None:
+                    future.cancel()
                 logging.warning(f"⚠️ Failed to start new clone bot {clone.id} after creation: {e}")
-                # Don't fail the API call, just log the error
+                return _clone_saved_start_error()
         
         return jsonify({'status':'ok'})
     except Exception as e:

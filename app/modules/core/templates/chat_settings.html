@@ -67,7 +67,7 @@
                     <div class="d-flex gap-2 flex-wrap">
                         <span class="badge bg-white text-dark border cursor-pointer hover-shadow" onclick="insert('{onlineEmoji}')">🟢 在线表情</span>
                         {% for f in fields %}
-                        <span class="badge bg-white text-primary border cursor-pointer hover-shadow" onclick="insert('{'+'{{ f.label }}'+'Value}')">{{ f.label }}</span>
+                        <span class="badge bg-white text-primary border cursor-pointer hover-shadow" onclick="insert({{ ('{' ~ f.label ~ 'Value}')|tojson|forceescape }})">{{ f.label }}</span>
                         {% endfor %}
                     </div>
                 </div>
@@ -94,11 +94,11 @@
 <script>
     // 存储当前所有文案的字典
     let msgData = {
-        user_template: `{{ s.user_template|safe }}`,
-        msg_success: `{{ s.msg_success|safe }}`,
-        msg_repeat: `{{ s.msg_repeat|safe }}`,
-        msg_fail: `{{ s.msg_fail|safe }}`,
-        msg_query_head: `{{ s.msg_query_head|safe }}`
+        user_template: {{ s.user_template|default('')|tojson }},
+        msg_success: {{ s.msg_success|default('')|tojson }},
+        msg_repeat: {{ s.msg_repeat|default('')|tojson }},
+        msg_fail: {{ s.msg_fail|default('')|tojson }},
+        msg_query_head: {{ s.msg_query_head|default('')|tojson }}
     };
 
     document.addEventListener('DOMContentLoaded', loadEditorContent);
@@ -136,7 +136,7 @@
                 del_time: document.getElementById('del_time').value,
                 auto_like: document.getElementById('auto_like').checked,
                 like_emoji: document.getElementById('like_emoji').value,
-                online_emoji: "{{ s.online_emoji }}"
+                online_emoji: {{ s.online_emoji|default('')|tojson }}
             }
         };
 

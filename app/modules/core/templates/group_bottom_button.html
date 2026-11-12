@@ -167,7 +167,7 @@
 
 <script>
 let buttonModal;
-let buttonsData = {{ buttons_json|safe }};
+let buttonsData = JSON.parse({{ buttons_json|tojson }});
 
 document.addEventListener('DOMContentLoaded', function() {
     buttonModal = new bootstrap.Modal(document.getElementById('buttonModal'));

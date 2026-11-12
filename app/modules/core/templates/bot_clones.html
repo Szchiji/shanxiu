@@ -161,7 +161,7 @@
 
 <script>
 let cloneModal;
-const clonesData = {{ clones_json|safe }};
+const clonesData = JSON.parse({{ clones_json|tojson }});
 const railwayDomain = {{ railway_domain | tojson }};
 
 document.addEventListener('DOMContentLoaded', function() {

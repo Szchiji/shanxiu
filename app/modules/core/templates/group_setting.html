@@ -201,7 +201,7 @@
             <div class="p-3 border-bottom bg-light d-flex flex-wrap gap-2">
                 <span class="text-muted fw-bold">变量:</span>
                 <span class="cursor-pointer text-primary" onclick="insert('{onlineEmoji}')">表情</span>
-                {% for f in fields %}<span class="cursor-pointer text-primary" onclick="insert('{'+'{{ f.label }}'+'}')">{{ f.label }}</span>{% endfor %}
+                {% for f in fields %}<span class="cursor-pointer text-primary" onclick="insert({{ ('{' ~ f.label ~ '}')|tojson|forceescape }})">{{ f.label }}</span>{% endfor %}
             </div>
             <div id="richEditor" class="p-3" contenteditable="true" style="min-height:200px;outline:none"></div>
         </div>

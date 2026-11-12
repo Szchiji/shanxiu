@@ -522,7 +522,7 @@
                     <span class="badge-variable badge bg-info text-white border" onmousedown="insert('{序号}', event)">#️⃣序号</span>
                     <span class="badge-variable badge bg-dark text-white border" onmousedown="insert('{成员标签}', event)" title="认证用户自定义成员标签">🏷️成员标签</span>
                     {% for f in fields %}
-                    <span class="badge-variable badge bg-primary text-white border" onmousedown="insert('{'+'{{ f.label }}'+'}', event)">{{ f.label }}</span>
+                    <span class="badge-variable badge bg-primary text-white border" onmousedown="insert({{ ('{' ~ f.label ~ '}')|tojson|forceescape }}, event)">{{ f.label }}</span>
                     {% endfor %}
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                     <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{积分}', event)" title="本次签到获得积分">+积分</span>
@@ -693,16 +693,16 @@
 
 <script>
     let msgs = {
-        template: `{{ conf.template|safe }}`,
-        push_template: `{{ conf.push_template|safe }}`,
-        msg_checkin_success: `{{ conf.msg_checkin_success|safe }}`,
-        msg_not_registered: `{{ conf.msg_not_registered|safe }}`,
-        msg_repeat_checkin: `{{ conf.msg_repeat_checkin|safe }}`,
-        msg_query_header: `{{ conf.msg_query_header|safe }}`,
-        msg_filter_header: `{{ conf.msg_filter_header|safe }}`,
-        msg_expired_ban: `{{ conf.msg_expired_ban|safe }}`,
-        msg_signin_success: `{{ conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')|safe }}`,
-        msg_repeat_signin: `{{ conf.get('msg_repeat_signin', '🔄 <b>今日已签到，当前余额：{余额}</b>')|safe }}`
+        template: {{ conf.template|default('')|tojson }},
+        push_template: {{ conf.push_template|default('')|tojson }},
+        msg_checkin_success: {{ conf.msg_checkin_success|default('')|tojson }},
+        msg_not_registered: {{ conf.msg_not_registered|default('')|tojson }},
+        msg_repeat_checkin: {{ conf.msg_repeat_checkin|default('')|tojson }},
+        msg_query_header: {{ conf.msg_query_header|default('')|tojson }},
+        msg_filter_header: {{ conf.msg_filter_header|default('')|tojson }},
+        msg_expired_ban: {{ conf.msg_expired_ban|default('')|tojson }},
+        msg_signin_success: {{ conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')|tojson }},
+        msg_repeat_signin: {{ conf.get('msg_repeat_signin', '🔄 <b>今日已签到，当前余额：{余额}</b>')|tojson }}
     };
     
     const currentGroupId = {{ group.id }};
@@ -1033,8 +1033,8 @@
                 push_channel_id: document.getElementById('push_channel_id').value,
                 auto_push_on_add: document.getElementById('auto_push_on_add').checked,
                 custom_buttons: JSON.stringify(btnData.filter(b => b.text && b.url)), 
-                online_emoji: "{{ conf.online_emoji }}", 
-                offline_emoji: "{{ conf.offline_emoji }}"
+                online_emoji: {{ conf.online_emoji|default('')|tojson }},
+                offline_emoji: {{ conf.offline_emoji|default('')|tojson }}
             }
         };
         fetch('/core/api/save_settings', {

@@ -191,7 +191,7 @@
 
 <script>
 let lotteryModal;
-const lotteriesData = {{ lotteries_json|safe }};
+const lotteriesData = JSON.parse({{ lotteries_json|tojson }});
 
 document.addEventListener('DOMContentLoaded', function() {
     lotteryModal = new bootstrap.Modal(document.getElementById('lotteryModal'));

@@ -681,3 +681,88 @@ class TestScheduledMessagesSearch:
         body = r.data.decode()
         assert f'data-id="{mid}"' in body
         assert 'id="searchForm"' in body
+
+
+class TestScheduledPageJavaScript:
+    """Compile browser-parsed Flask output with production autoescaping enabled."""
+
+    @pytest.mark.parametrize('group_type', ['supergroup', 'group', 'channel'])
+    @pytest.mark.parametrize('with_rows', [False, True])
+    def test_all_inline_scripts_compile(self, flask_app, admin, tmp_path, group_type, with_rows):
+        import shutil
+        import subprocess
+        from html.parser import HTMLParser
+        from app import db
+        from app.models import BotGroup, ScheduledMessage
+
+        node = shutil.which('node')
+        if not node:
+            pytest.skip('Node.js required to compile rendered JavaScript')
+        media_url = 'https://cdn.example/a.jpg?name="quoted"&other=1'
+        media_urls = json.dumps([{'type': 'image', 'url': media_url}])
+        links = json.dumps([{'text': '按钮 "双引号" <文字>',
+                             'url': 'https://example.org/?q="a"&b=2', 'row': 0, 'order': 0}])
+        content = '<b title="a">正文</b> " & </script><script>notExecutable()</script>'
+        remark = "' \" <img src=x> & </script>"
+        with flask_app.app_context():
+            group = BotGroup(chat_id=f'-100audit{next(_ids)}', title='audit',
+                             type=group_type, is_active=True)
+            db.session.add(group)
+            db.session.flush()
+            gid = group.id
+            if with_rows:
+                db.session.add(ScheduledMessage(
+                    group_id=gid, media_type='media', media_url=media_url,
+                    media_urls=media_urls, links=links, content=content, remark=remark,
+                    target_type='channel', target_channel_id='-100123', message_thread_id=123,
+                    repeat_interval=10, is_active=True))
+            db.session.commit()
+        response = admin.get(f'/core/group/{gid}/scheduled_messages')
+        assert response.status_code == 200
+
+        class Collector(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.scripts, self.rows, self.handlers = [], [], []
+                self.inside = False
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'script':
+                    self.inside = True
+                    self.scripts.append('')
+                if tag == 'tr' and 'data-id' in attrs:
+                    self.rows.append(attrs)
+                self.handlers.extend(value for key, value in attrs.items()
+                                     if key.startswith('on') and value)
+            def handle_endtag(self, tag):
+                if tag == 'script':
+                    self.inside = False
+            def handle_data(self, data):
+                if self.inside:
+                    self.scripts[-1] += data
+
+        parsed = Collector()
+        parsed.feed(response.get_data(as_text=True))
+        assert len(parsed.rows) == int(with_rows)
+        if with_rows:
+            row = parsed.rows[0]
+            for key, expected in [('media-url', media_url), ('media-urls', media_urls),
+                                  ('links', links), ('content', content), ('remark', remark)]:
+                assert row['data-' + key] == expected
+            assert json.loads(row['data-media-urls']) == json.loads(media_urls)
+            assert json.loads(row['data-links']) == json.loads(links)
+        combined = '\n'.join(parsed.scripts)
+        for handler in ['openAddModal', 'sendNow', 'batchAction']:
+            assert 'function ' + handler in combined
+        assert 'notExecutable()' not in combined
+        # HTML entities are NOT decoded in script raw-text nodes.
+        for index, script in enumerate(parsed.scripts):
+            path = tmp_path / f'script-{index}.js'
+            path.write_text(script)
+            result = subprocess.run([node, '--check', str(path)], capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
+        handler_file = tmp_path / 'handlers.js'
+        handler_file.write_text('\n'.join('function handler%d(event) {%s}' % (i, handler)
+                                          for i, handler in enumerate(parsed.handlers)))
+        result = subprocess.run([node, '--check', str(handler_file)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr

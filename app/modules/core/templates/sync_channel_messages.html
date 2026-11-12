@@ -36,6 +36,7 @@
 {% call feature_description('sync_channel') %}
 <ul>
     <li>同步的是<strong>本频道发布的帖子</strong>，可同步到多个目标；与讨论群「转发规则」不同。</li>
+    <li>本机器人复制旧帖时，优先使用已观测的来源内容校验过滤；Bot API 无法读取的历史内容，在配置关键词/媒体限制时会安全跳过并记入同步日志，不会绕过限制。</li>
     <li>目标填写 Telegram chat_id（<code>-100…</code>）；添加时自动 getChat 拉取名称。</li>
     <li>机器人须是<strong>源频道管理员</strong>（否则收不到帖）且是各目标管理员。</li>
 </ul>

@@ -22,7 +22,7 @@
 <div class="page-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h4 class="fw-bold mb-1"><i class="fa-solid fa-chart-line me-2"></i>频道消息统计</h4>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-chart-line me-2"></i>频道讨论自动化记录</h4>
             <p class="mb-0 opacity-75" style="font-size: 0.85rem;">查看频道消息自动化触发记录与规则使用情况</p>
         </div>
         <button class="btn btn-light fw-bold" onclick="clearStats()">
@@ -33,8 +33,8 @@
 
 {% call feature_description('channel_stats') %}
 <ul>
-    <li>记录最近的频道消息处理结果，便于排查关键词匹配、模板回复和转发规则。</li>
-    <li>支持查看今日消息数、启用中的规则/模板/优惠券数量。</li>
+    <li>仅记录讨论群中的频道消息处理结果（不是频道帖子总数），便于排查关键词匹配、模板回复和转发规则。</li>
+    <li>支持查看今日处理记录数、启用中的规则/模板/优惠券数量。</li>
     <li>清空统计不会影响实际规则配置，仅删除历史记录。</li>
 </ul>
 {% endcall %}
@@ -42,13 +42,13 @@
 <div class="row g-3">
     <div class="col-md-4 col-xl">
         <div class="stats-card">
-            <div class="text-muted small mb-2">累计消息</div>
+            <div class="text-muted small mb-2">累计处理记录</div>
             <div class="stats-value">{{ stats_summary.total_messages }}</div>
         </div>
     </div>
     <div class="col-md-4 col-xl">
         <div class="stats-card">
-            <div class="text-muted small mb-2">今日消息</div>
+            <div class="text-muted small mb-2">今日处理记录</div>
             <div class="stats-value">{{ stats_summary.today_messages }}</div>
         </div>
     </div>

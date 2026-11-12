@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, session, jsonify, abort, Response
 from app import db, limiter
 from app import get_bot_instance_role, is_clone_instance, is_main_instance
+from app.models import ChannelPostRecord
 from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, AuthSession, AutoReply, ScheduledMessage, StartMessage,
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
@@ -1107,6 +1108,13 @@ def get_group_or_403(gid: int) -> BotGroup:
     session_clone_id = session.get('clone_id')
     if session_clone_id and group.clone_id != session_clone_id:
         abort(403)
+    if group.type == 'channel' and request.method == 'GET' and '/group/' in request.path:
+        channel_pages = {'dashboard', 'auto_replies', 'scheduled_messages', 'other_settings',
+                         'channel_forward_rules', 'channel_templates', 'channel_coupons',
+                         'channel_post_buttons', 'channel_stats', 'message_statistics',
+                         'sync_channel_messages', 'sync_group_messages', 'sync_message_logs', 'backup'}
+        if request.path.rstrip('/').rsplit('/', 1)[-1] not in channel_pages:
+            abort(404)
     return group
 
 
@@ -1155,7 +1163,7 @@ def _delete_group_cascade(group_id: int) -> None:
         GroupVote, QuizGame, QuizSession, RedPacket,
         AdminActionLog, GroupMember,
         ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon,
-        ChannelPostButtonConfig, ChannelMessageStats,
+        ChannelPostButtonConfig, ChannelMessageStats, ChannelPostRecord,
     ):
         model.query.filter_by(group_id=group_id).delete(synchronize_session=False)
 
@@ -1293,6 +1301,11 @@ def page_dashboard(gid):
         MessageStatistics.date >= week_ago.date()
     ).scalar() or 0
     
+    if group.type == 'channel':
+        from app.services.channel_admin import post_count
+        today_messages = post_count(gid, today)
+        week_messages = post_count(gid, week_ago)
+
     # 🆕 Get new users this week
     new_users_week = GroupUser.query.filter(
         GroupUser.group_id == gid,
@@ -1322,7 +1335,9 @@ def page_dashboard(gid):
     forced_subscription = ForcedChannelSubscription.query.filter_by(group_id=gid).first()
     keyword_filter_count = KeywordFilter.query.filter_by(group_id=gid, is_active=True).count()
     
+    from app.services.channel_admin import post_count
     stats = {
+        'channel_posts': post_count(gid) if group.type == 'channel' else 0,
         'users': total_users,
         'online': online_users,
         'today_checkins': today_checkins,
@@ -2092,6 +2107,19 @@ def page_message_statistics(gid):
     session['current_group_id'] = gid
     group = get_group_or_403(gid)
     
+    if group.type == 'channel':
+        from app.services.channel_admin import post_count, post_summary
+        posts = post_summary(gid)
+        today = get_beijing_today()
+        days = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
+        counts = []
+        for day in days:
+            count = db.session.query(db.func.count()).select_from(posts).filter(
+                posts.c.posted_at >= day, posts.c.posted_at < day + timedelta(days=1)).scalar() or 0
+            counts.append((day, count))
+        return render_template('channel_message_statistics.html', page='message_statistics', group=group,
+                               counts=counts, total_posts=post_count(gid), today_posts=post_count(gid, today))
+
     # Get statistics for the last 7 days
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=7)
@@ -2503,6 +2531,8 @@ def api_toggle_group():
         db.session.delete(g)
     elif d['action'] == 'toggle':
         g.is_active = not g.is_active
+        from app.services.own_post_sync import invalidate
+        invalidate()
     else:
         return jsonify({'status':'error','msg':'Invalid action'})
     
@@ -3542,7 +3572,7 @@ def api_save_scheduled_message():
 
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
-        item.message_thread_id = safe_int(d.get('message_thread_id'), None)
+        item.message_thread_id = None if group.type == 'channel' else safe_int(d.get('message_thread_id'), None)
         item.target_type = 'channel' if d.get('target_type') == 'channel' else 'group'
         item.target_channel_id = (d.get('target_channel_id') or '').strip() or None
         if item.target_type != 'channel':
@@ -3591,7 +3621,7 @@ def api_send_scheduled_message_now(message_id):
 
         item.remark = d.get('remark', '').strip() or None
         item.auto_pin = bool(d.get('auto_pin', False))
-        item.message_thread_id = safe_int(d.get('message_thread_id'), None)
+        item.message_thread_id = None if item.group.type == 'channel' else safe_int(d.get('message_thread_id'), None)
         item.target_type = 'channel' if d.get('target_type') == 'channel' else 'group'
         item.target_channel_id = (d.get('target_channel_id') or '').strip() or None
         if item.target_type != 'channel':
@@ -4413,10 +4443,15 @@ def api_save_other_settings():
             settings = OtherSettings(group_id=d['group_id'])
             db.session.add(settings)
         
-        settings.auto_delete_join_msg = d.get('auto_delete_join_msg', False)
-        settings.auto_delete_leave_msg = d.get('auto_delete_leave_msg', False)
-        settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
-        settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
+        if group.type != 'channel':
+            settings.auto_delete_join_msg = d.get('auto_delete_join_msg', False)
+            settings.auto_delete_leave_msg = d.get('auto_delete_leave_msg', False)
+            settings.auto_delete_promote_msg = d.get('auto_delete_promote_msg', False)
+            settings.auto_delete_pin_msg = d.get('auto_delete_pin_msg', False)
+        else:
+            conf = get_group_conf(group)
+            conf['channel_settings_configured'] = True
+            group.config = json.dumps(conf, ensure_ascii=False)
         settings.cancel_channel_pin = d.get('cancel_channel_pin', False)
         settings.auto_delete_channel_discussion_msg = d.get('auto_delete_channel_discussion_msg', False)
         settings.channel_auto_buttons = d.get('channel_auto_buttons', False)
@@ -8982,6 +9017,10 @@ async def _flush_sync_media_group(buffer_key):
     if not messages or not plans or not bot or not flask_app:
         return
 
+    with flask_app.app_context():
+        source = BotGroup.query.get(source_group_id)
+        if source and not source.is_active:
+            return
     preview = None
     for m in messages:
         if getattr(m, 'caption', None):
@@ -9201,6 +9240,7 @@ def _enqueue_forward_media_group_item(*, bot, clone_id, chat_id, msg, rules, blo
         'rules': list(rules or []),
         'from_chat_id': chat_id,
         'blocked': False,
+        'source_channel_chat_id': getattr(getattr(msg, 'sender_chat', None), 'id', None),
     })
     if blocked:
         buf['blocked'] = True
@@ -9265,6 +9305,14 @@ async def _flush_forward_media_group(buffer_key):
     buf = _FORWARD_MEDIA_GROUP_BUFFERS.pop(buffer_key, None)
     if not buf:
         return
+    if global_flask_app:
+        with global_flask_app.app_context():
+            for cid in (buf.get('from_chat_id'), buf.get('source_channel_chat_id')):
+                if cid is None:
+                    continue
+                source = BotGroup.query.filter_by(chat_id=str(cid), clone_id=buffer_key[0]).first()
+                if source and not source.is_active:
+                    return
     _note_album_flushed('forward', buffer_key, buf)
     if buf.get('blocked'):
         print(f"{_album_log_prefix('forward', buffer_key)} dropped (blocked by keyword filter)", flush=True)
@@ -9347,6 +9395,11 @@ async def _flush_channel_post_button_album(buffer_key):
     buf = _CHANNEL_POST_BUTTON_ALBUM_BUFFERS.pop(buffer_key, None)
     if not buf:
         return
+    if global_flask_app:
+        with global_flask_app.app_context():
+            source = BotGroup.query.filter_by(chat_id=str(buf.get('chat_id')), clone_id=buffer_key[0]).first()
+            if source and not source.is_active:
+                return
     _note_album_flushed('channel_post_buttons', buffer_key, buf)
     messages = buf.get('messages') or []
     bot = buf.get('bot')
@@ -9425,6 +9478,8 @@ async def _maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id):
         should_attach_channel_post_buttons,
     )
 
+    if not group or not group.is_active:
+        return
     try:
         cfg = ChannelPostButtonConfig.query.filter_by(group_id=group.id).first()
         if not cfg or not cfg.enabled:
@@ -9908,6 +9963,8 @@ async def _maybe_send_channel_auto_reply(bot, msg, chat, group, context):
     channel_post updates only hit handle_sync_channel_posts. Exact keyword match
     (comma-separated), same as group on_message path.
     """
+    if not group or not group.is_active:
+        return
     try:
         conf = get_group_conf(group)
         if not conf.get('auto_reply_open', True):
@@ -9996,6 +10053,14 @@ async def handle_sync_channel_posts(update: Update, context):
         if not msg or not is_channel_chat(chat):
             return
 
+        with global_flask_app.app_context():
+            source = BotGroup.query.filter_by(chat_id=str(chat.id),
+                         clone_id=context.application.bot_data.get('clone_id')).first()
+            if not source or not source.is_active:
+                return
+            from app.services.channel_admin import record_post
+            record_post(source, msg)
+
         # Anti-loop (precise): skip only posts that are themselves sync / forward-rule outputs.
         # Posts by any bot — including our own (scheduled posts, broadcasts …) — are synced.
         # Updates are processed sequentially, so an output is registered before its echo arrives.
@@ -10039,6 +10104,11 @@ async def _sync_channel_post_core(bot, msg, chat, user, clone_id, *, context=Non
             if not group:
                 print(f"[sync] skip channel {chat.id}: no BotGroup for clone_id={clone_id}")
                 return
+
+            if not group.is_active:
+                return
+            from app.services.channel_admin import record_post
+            record_post(group, msg)
 
             if not own_bot_post:
                 # Channel auto-reply is independent of sync settings
@@ -12227,7 +12297,7 @@ async def run_bot(app_instance):
     ))
     
     # 🆕 Handle channel messages for pin control
-    app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL, handle_channel_pin))
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
@@ -12391,7 +12461,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     ))
     
     # Handle channel messages for pin control
-    app.add_handler(MessageHandler(filters.SenderChat.CHANNEL, handle_channel_pin))
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.SenderChat.CHANNEL, handle_channel_pin))
 
     # Channel post sync (channel_post updates — not group-member messages)
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, handle_sync_channel_posts))
@@ -13190,8 +13260,8 @@ async def handle_channel_pin(update: Update, context):
             if not group:
                 return
 
-            # Discussion-group settings (pin/delete). Missing row must NOT block forward rules.
-            settings = OtherSettings.query.filter_by(group_id=group.id).first()
+            if not group.is_active:
+                return
 
             # Channel sidebar saves forward/templates/coupons on the *channel* BotGroup.
             channel_group = None
@@ -13200,6 +13270,10 @@ async def handle_channel_pin(update: Update, context):
                     chat_id=str(msg.sender_chat.id),
                     clone_id=context.application.bot_data.get('clone_id'),
                 ).first()
+            if channel_group and not channel_group.is_active:
+                return
+            from app.services.channel_admin import discussion_settings, source_message_id
+            settings = discussion_settings(channel_group, group)
             automation_gid = resolve_channel_automation_group_id(
                 channel_group.id if channel_group else None,
                 group.id,
@@ -13261,8 +13335,14 @@ async def handle_channel_pin(update: Update, context):
             # Wait a moment for Telegram to auto-pin, then unpin — in the background so
             # sequential update processing is not stalled (album parts must arrive within
             # the forward-rule debounce window).
-            async def _delayed_unpin(bot=context.bot, chat_id=chat.id, message_id=msg.message_id):
+            async def _delayed_unpin(bot=context.bot, chat_id=chat.id, message_id=msg.message_id,
+                                     discussion_gid=group.id, source_gid=channel_group.id if channel_group else None):
                 await asyncio.sleep(1)
+                with global_flask_app.app_context():
+                    current = db.session.get(BotGroup, discussion_gid)
+                    source = db.session.get(BotGroup, source_gid) if source_gid else None
+                    if not current or not current.is_active or (source and not source.is_active):
+                        return
                 try:
                     await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
                     print(f"Unpinned channel message {message_id} in chat {chat_id}")
@@ -13408,7 +13488,7 @@ async def handle_channel_pin(update: Update, context):
             db.session.add(ChannelMessageStats(
                 group_id=stats_group_id,
                 channel_chat_id=str(msg.sender_chat.id) if msg.sender_chat else None,
-                channel_message_id=getattr(msg, 'forward_from_message_id', None) or msg.message_id,
+                channel_message_id=source_message_id(msg),
                 discussion_chat_id=str(chat.id),
                 discussion_message_id=msg.message_id,
                 media_type='image' if msg.photo else ('video' if msg.video else 'text'),

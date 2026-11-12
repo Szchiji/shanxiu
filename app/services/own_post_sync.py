@@ -72,7 +72,7 @@ def own_sync_sources(clone_id, flask_app=None) -> frozenset:
             q = q.filter(BotGroup.clone_id.is_(None)) if clone_id is None else q.filter_by(clone_id=clone_id)
             # Channels only: supergroup ids also start with -100, and in groups our own
             # messages are already relayed by the 小号 (userbot) → would be delivered twice.
-            groups = {g.id: str(g.chat_id) for g in q.all() if (g.type or '').lower() == 'channel'}
+            groups = {g.id: str(g.chat_id) for g in q.all() if (g.type or '').lower() == 'channel' and g.is_active}
             for s in SyncGroupMessages.query.filter_by(enabled=True).all():
                 if s.source_group_id in groups and getattr(s, 'sync_own_bot_posts', True) is not False:
                     out.add(groups[s.source_group_id])
@@ -137,7 +137,7 @@ async def sync_ids_by_copy(bot, clone_id, chat_id: str, ids: list, reply_markup=
         q = BotGroup.query.filter_by(chat_id=chat_id, type='channel')
         q = q.filter(BotGroup.clone_id.is_(None)) if clone_id is None else q.filter_by(clone_id=clone_id)
         group = q.first()
-        if not group:
+        if not group or not group.is_active:
             return
         settings = [s for s in SyncGroupMessages.query.filter_by(source_group_id=group.id, enabled=True).all()
                     if getattr(s, 'sync_own_bot_posts', True) is not False]
@@ -146,8 +146,18 @@ async def sync_ids_by_copy(bot, clone_id, chat_id: str, ids: list, reply_markup=
             chat = await bot.get_chat(int(chat_id))
         except Exception:
             chat = None
+        from app.services.channel_admin import source_metadata
+        metadata = source_metadata(chat_id, ids, clone_id)
         for s in settings:
+            selected, reasons = filter_id_posts(s, ids, metadata)
             target = s.target_group_id
+            if reasons:
+                db.session.add(SyncMessageLog(source_group_id=group.id, target_group_id=str(target),
+                    source_message_id=ids[0], status='filtered', error_message='; '.join(reasons)[:500],
+                    synced_at=get_beijing_now()))
+                db.session.commit()
+            if not selected:
+                continue
             if is_same_source_target(chat_id, target):
                 continue
             status, err, first = 'success', None, None
@@ -155,40 +165,136 @@ async def sync_ids_by_copy(bot, clone_id, chat_id: str, ids: list, reply_markup=
                 prefix = build_channel_sender_prefix(chat, bool(getattr(s, 'include_sender_prefix', False)))
                 style = normalize_prefix_style(getattr(s, 'sender_prefix_style', None))
                 if prefix and style == 'forward':
-                    sent = await tbot.forward_messages(chat_id=target, from_chat_id=int(chat_id), message_ids=ids)
+                    sent = await tbot.forward_messages(chat_id=target, from_chat_id=int(chat_id), message_ids=selected)
                 else:
                     if prefix:
                         from telegram import LinkPreviewOptions
                         await tbot.send_message(chat_id=target, text=prefix.rstrip('\n'), parse_mode='HTML',
                                                 link_preview_options=LinkPreviewOptions(is_disabled=True))
-                    if len(ids) == 1:
-                        kw = dict(chat_id=target, from_chat_id=int(chat_id), message_id=ids[0])
+                    if len(selected) == 1:
+                        kw = dict(chat_id=target, from_chat_id=int(chat_id), message_id=selected[0])
                         if reply_markup is not None:
                             kw['reply_markup'] = reply_markup
                         sent = [await tbot.copy_message(**kw)]
                     else:
-                        sent = await tbot.copy_messages(chat_id=target, from_chat_id=int(chat_id), message_ids=ids)
+                        sent = await tbot.copy_messages(chat_id=target, from_chat_id=int(chat_id), message_ids=selected)
                 first = getattr(sent[0], 'message_id', None) if sent else None
             except Exception as e:
                 status, err = 'failed', str(e)[:500]
                 print(f"[sync] own-bot ids copy to {target} failed: {type(e).__name__}: {e}", flush=True)
             db.session.add(SyncMessageLog(
-                source_group_id=group.id, target_group_id=str(target), source_message_id=ids[0],
-                target_message_id=first, message_type='media_group' if len(ids) > 1 else 'copy',
+                source_group_id=group.id, target_group_id=str(target), source_message_id=selected[0],
+                target_message_id=first, message_type='media_group' if len(selected) > 1 else 'copy',
                 status=status, error_message=err, synced_at=get_beijing_now(),
             ))
             db.session.commit()
+
+
+def filter_id_posts(setting, ids, metadata):
+    """Filter whole albums; unknown content fails closed only for content restrictions.
+    Bot API cannot fetch historical text by message id. Never leak unknown content
+    through a configured blacklist or media restriction.
+    """
+    import json
+    from app.services.sync_service import keyword_blocks_sync
+    try:
+        keywords = json.loads(setting.filter_keywords or '[]')
+        if not isinstance(keywords, list):
+            raise ValueError('invalid blacklist')
+        invalid = False
+    except (ValueError, TypeError):
+        keywords = []
+        invalid = True
+    groups = {}
+    for mid in ids:
+        meta = metadata.get(mid, {})
+        groups.setdefault(meta.get('post_key', f'unknown:{mid}'), []).append(mid)
+    selected, reasons = [], []
+    for mids in groups.values():
+        metas = [metadata.get(mid, {}) for mid in mids]
+        unknown = any(not m or m.get('media_type') == 'unknown' for m in metas)
+        text = '\n'.join(m.get('text', '') for m in metas)
+        reason = None
+        if invalid:
+            reason = '黑名单格式无效，安全跳过'
+        elif not setting.sync_forwards and any(m.get('is_forward') for m in metas):
+            reason = '已关闭同步转发内容'
+        elif unknown and (keywords or not setting.sync_media):
+            reason = '来源内容不可读取，无法校验关键词/媒体限制，安全跳过'
+        elif not setting.sync_media and any(m.get('media_type') != 'text' for m in metas):
+            reason = '已关闭同步媒体文件'
+        elif keywords and keyword_blocks_sync(text, setting.filter_keywords):
+            reason = '命中黑名单关键词'
+        if reason:
+            reasons.append(reason)
+        else:
+            selected.extend(mids)
+    return selected, list(dict.fromkeys(reasons))
+
+
+async def observe_result(clone_id, chat_id, method, payload, result):
+    """Count all active-channel sends, including sync outputs (but never relay those).
+    ID-only copies use locally observed source metadata; no credential or history fetch.
+    """
+    from types import SimpleNamespace
+    from app.modules.core import routes
+    from app.models import BotGroup
+    from app.services.channel_admin import record_post, source_metadata
+    if routes.global_flask_app is None:
+        return
+    items = list(result) if isinstance(result, (tuple, list)) else [result]
+    if not items or not any(isinstance(getattr(m, 'message_id', None), int) for m in items):
+        return
+    with routes.global_flask_app.app_context():
+        group = BotGroup.query.filter_by(chat_id=chat_id, clone_id=clone_id, type='channel').first()
+        if not group or not group.is_active:
+            return
+        if method in MESSAGE_METHODS:
+            for msg in items:
+                if getattr(getattr(msg, 'chat', None), 'type', None) == 'channel':
+                    record_post(group, msg)
+            return
+        source_ids = payload.get('message_ids') or [payload.get('message_id')]
+        metadata = source_metadata(payload.get('from_chat_id'), source_ids, clone_id)
+        mapped = len(items) == len(source_ids)
+        first = items[0].message_id
+        for i, msg in enumerate(items):
+            meta = metadata.get(source_ids[i], {}) if mapped else {}
+            origin_key = meta.get('post_key', 'unknown-batch')
+            key = f'copy:{first}:{origin_key}'
+            text = payload.get('caption') if payload.get('caption') is not None else meta.get('text', '')
+            record_post(group, SimpleNamespace(message_id=msg.message_id), batch_key=key,
+                        media_type=meta.get('media_type', 'unknown'), text=text,
+                        is_forward=method == 'forward_messages')
+
+
+async def _after_send(bot, clone_id, chat_id, method, payload, result, hit):
+    try:
+        await observe_result(clone_id, chat_id, method, payload, result)
+        if hit:
+            await _process(bot, clone_id, chat_id, method, payload, result)
+    except Exception as e:
+        print(f"[own-post-sync] post processing failed: {type(e).__name__}", flush=True)
 
 
 def _wrap(name, orig):
     async def wrapper(self, *args, **kwargs):
         result = await orig(self, *args, **kwargs)
         try:
+            payload = dict(kwargs)
+            # Preserve positional chat/source/message arguments as well as kwargs.
+            import inspect
+            try:
+                bound = inspect.signature(orig).bind(self, *args, **kwargs)
+                payload.update({k: v for k, v in bound.arguments.items() if k not in ('self', 'args', 'kwargs')})
+            except (TypeError, ValueError):
+                pass
+
             hit = should_handle(self, name, args, kwargs)
-            if hit:
-                clone_id, chat_id = hit
+            chat_id = _chat_id_of(args, kwargs)
+            if id(self) in _bots and chat_id and chat_id.startswith('-100'):
                 asyncio.get_running_loop().create_task(
-                    _process(self, clone_id, chat_id, name, dict(kwargs), result))
+                    _after_send(self, _bots[id(self)], chat_id, name, payload, result, hit))
         except Exception as e:
             print(f"[own-post-sync] hook error: {type(e).__name__}: {e}", flush=True)
         return result

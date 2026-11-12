@@ -786,6 +786,22 @@ class ChannelCoupon(db.Model):
     group = db.relationship('BotGroup', backref='channel_coupons', lazy=True)
 
 
+class ChannelPostRecord(db.Model):
+    """Observed channel posts (not discussion automation). One row per message,
+    a shared post_key makes an album count once; no historical reconstruction.
+    """
+    __tablename__ = 'channel_post_records'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    message_id = db.Column(db.BigInteger, nullable=False)
+    post_key = db.Column(db.String(128), nullable=False, index=True)
+    media_type = db.Column(db.String(20), default='text')
+    message_text = db.Column(db.Text, nullable=True)
+    is_forward = db.Column(db.Boolean, default=False)
+    posted_at = db.Column(db.DateTime, nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint('group_id', 'message_id', name='uq_channel_post_message'),)
+
+
 class ChannelMessageStats(db.Model):
     """频道消息统计"""
     __tablename__ = 'channel_message_stats'

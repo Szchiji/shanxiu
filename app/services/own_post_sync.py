@@ -268,11 +268,48 @@ async def observe_result(clone_id, chat_id, method, payload, result):
                         is_forward=method == 'forward_messages')
 
 
+async def _attach_own_post_buttons(bot, clone_id, chat_id, method, payload, result):
+    """No sync target is required for original-post buttons. Never overwrite known buttons."""
+    from types import SimpleNamespace
+    from app.modules.core import routes
+    from app.models import BotGroup
+    from app.services.sync_loop_guard import IN_SYNC_DELIVERY, is_sync_output
+    if IN_SYNC_DELIVERY.get() or routes.global_flask_app is None:
+        return
+    await asyncio.sleep(SETTLE_DELAY)
+    items = list(result) if isinstance(result, (tuple, list)) else [result]
+    with routes.global_flask_app.app_context():
+        group = BotGroup.query.filter_by(chat_id=str(chat_id), clone_id=clone_id, type='channel').first()
+        if not group or not group.is_active:
+            return
+        for msg in items:
+            mid = getattr(msg, 'message_id', None)
+            if not isinstance(mid, int) or is_sync_output(chat_id, mid, routes.global_flask_app):
+                continue
+            chat = getattr(msg, 'chat', None)
+            if chat is None:
+                # copyMessage(s) creates new messages without inherited keyboards; an
+                # explicit keyboard belongs to the sender and must never be replaced.
+                # forwardMessages only returns IDs and can retain source keyboards:
+                # absence cannot be verified, so fail closed rather than overwrite.
+                if method == 'forward_messages':
+                    print(f"[channel_post_buttons] skip unverifiable forwarded keyboard chat={chat_id} msg={mid}", flush=True)
+                    continue
+                chat = SimpleNamespace(id=int(chat_id), type='channel')
+                msg = SimpleNamespace(message_id=mid, chat=chat, reply_markup=payload.get('reply_markup'),
+                    media_group_id=f'copy:{items[0].message_id}' if len(items) > 1 else None,
+                    text=payload.get('text'), caption=payload.get('caption'))
+            if getattr(chat, 'type', None) == 'channel':
+                await routes._maybe_attach_channel_post_buttons(bot, msg, chat, group, clone_id)
+
+
 async def _after_send(bot, clone_id, chat_id, method, payload, result, hit):
     try:
         await observe_result(clone_id, chat_id, method, payload, result)
         if hit:
             await _process(bot, clone_id, chat_id, method, payload, result)
+        if not hit or method in ID_METHODS:
+            await _attach_own_post_buttons(bot, clone_id, chat_id, method, payload, result)
     except Exception as e:
         print(f"[own-post-sync] post processing failed: {type(e).__name__}", flush=True)
 

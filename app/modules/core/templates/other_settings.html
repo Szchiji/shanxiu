@@ -17,6 +17,10 @@
 {% endif %}
 <div class="card p-3"><h5>关联频道讨论设置{{ '（旧配置兼容）' if not is_channel else '' }}</h5>
 {% if not is_channel %}<p class="text-muted">来源频道已保存频道设置时以频道设置为准；否则继续使用这里的旧设置。</p>{% endif %}
+{% if is_channel %}
+<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="auto_delete_pin_msg" {{ 'checked' if settings and settings.auto_delete_pin_msg }}><label class="form-check-label" for="auto_delete_pin_msg">自动删除讨论群置顶提示消息</label></div>
+<p class="text-muted">仅删除关联讨论群中“置顶了一条消息”的系统提示，不取消置顶、不删除频道原帖；需讨论群删除消息权限。</p>
+{% endif %}
 {% for key, label in [('cancel_channel_pin','取消频道消息置顶'),('auto_delete_channel_discussion_msg','自动删除频道关联留言'),('channel_auto_buttons','自动发送频道按钮')] %}
 <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="{{ key }}" {{ 'checked' if settings and settings[key] }}><label class="form-check-label" for="{{ key }}">{{ label }}</label></div>
 {% endfor %}
@@ -24,11 +28,25 @@
 <label class="form-label" for="channel_discussion_keyword_filter">频道讨论关键词过滤</label>
 <textarea class="form-control" id="channel_discussion_keyword_filter" rows="3" placeholder="逗号或换行分隔">{{ settings.channel_discussion_keyword_filter if settings and settings.channel_discussion_keyword_filter else '' }}</textarea>
 </div>
+{% if is_channel %}
+<div class="card p-3 mt-3"><h5>首条评论（抢占）</h5>
+<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="first_comment_enabled" {{ 'checked' if conf.get('first_comment_enabled', False) }}><label class="form-check-label" for="first_comment_enabled">启用自动首条评论（默认关闭）</label></div>
+<label class="form-label" for="first_comment_text">自定义评论内容（纯文本）</label>
+<textarea class="form-control" id="first_comment_text" rows="4" maxlength="4096">{{ conf.get('first_comment_text', '') }}</textarea>
+<p class="text-muted mt-2">需绑定讨论群且机器人能在讨论群发言。收到频道帖自动转发后立即回复该帖；相册仅回复一次，不处理编辑。网络和其他评论者可能更快，无法保证绝对第一。开启时内容不能为空；发送失败记日志，不自动重复发送。同时开启删除关联留言可能移除评论入口，请按需配置。</p>
+</div>
+{% endif %}
 <script>
 function saveSettings() {
  const data = {group_id: {{ group.id }}, channel_discussion_keyword_filter: document.getElementById('channel_discussion_keyword_filter').value.trim()};
  for (const key of ['auto_delete_join_msg','auto_delete_leave_msg','auto_delete_promote_msg','auto_delete_pin_msg','cancel_channel_pin','auto_delete_channel_discussion_msg','channel_auto_buttons']) {
   const el = document.getElementById(key); if (el) data[key] = el.checked;
+ }
+ const comment = document.getElementById('first_comment_enabled');
+ if (comment) {
+  data.first_comment_enabled = comment.checked;
+  data.first_comment_text = document.getElementById('first_comment_text').value.trim();
+  if (comment.checked && !data.first_comment_text) { showToast('请填写首条评论内容','error'); return; }
  }
  showLoading('保存设置中...');
  fetch('/core/api/save_other_settings', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})

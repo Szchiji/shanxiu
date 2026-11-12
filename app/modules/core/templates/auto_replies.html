@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import feature_description %}
 {% block content %}
+{% set is_channel = group.type == 'channel' %}
 <style>
 .search-box {
         background: var(--bg-card);
@@ -416,12 +417,29 @@
     </div>
 </div>
 
+{% if is_channel %}
+<div class="card p-3 mb-3">
+ <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="channel_auto_reply_open" {{ 'checked' if conf.get('auto_reply_open', True) }} onchange="saveChannelReplySwitch(this)"><label class="form-check-label" for="channel_auto_reply_open">启用本频道自动回复（总开关）</label></div>
+ <small class="text-muted">总开关和规则均启用才回复；停用频道时不回复。默认开启，显示当前实际保存值。</small>
+</div>
+<script>
+async function saveChannelReplySwitch(el) {
+ el.disabled = true;
+ try {
+  const r = await fetch('/core/api/set_channel_auto_reply', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:{{ group.id }},enabled:el.checked})});
+  const data = await r.json(); if (!r.ok || data.status !== 'ok') throw new Error(data.msg || '保存失败');
+  showToast('频道自动回复总开关已保存','success');
+ } catch(e) { el.checked = !el.checked; showToast(e.message || '保存失败','error'); }
+ finally { el.disabled = false; }
+}
+</script>
+{% endif %}
 {% call feature_description('auto_replies') %}
 <ul>
-    <li>设置关键词触发的自动回复：成员发送含关键词的消息时，机器人自动回复设定内容。</li>
-    <li>支持<strong>精确匹配</strong>和<strong>包含匹配</strong>两种触发方式。</li>
-    <li>回复内容支持：文字、图片、视频、文件等多媒体格式。</li>
-    <li>可设置<strong>回复冷却时间</strong>，防止同一关键词被频繁触发刷屏。</li>
+    <li>{{ '频道新帖的文字或说明与关键词完全一致时，在频道内发送回复；不在讨论区回复，不对本机器人自发帖触发自动回复。' if is_channel else '群成员消息与关键词完全一致时，机器人回复设定内容。' }}</li>
+    <li>仅支持<strong>精确匹配</strong>，区分大小写；多个关键词用英文逗号分隔。</li>
+    <li>回复内容支持：文字、图片、视频、图片+视频；可附链接按钮。</li>
+    <li>可设置回复后的自动删除时间；相册及其跟随消息一起删除（需要删除权限）。</li>
     <li>支持导入/导出配置文件，方便批量管理。</li>
 </ul>
 {% endcall %}
@@ -537,7 +555,7 @@
                         <label class="form-label fw-bold">触发关键词 <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="triggerKeyword" required placeholder="用户发送此关键词时触发">
                         <div class="form-text">支持完全匹配，区分大小写。可以填写多个关键词，用英文逗号分隔，例如：你好,您好,hi</div>
-                        <div class="form-text text-warning"><i class="fa-solid fa-info-circle me-1"></i>注意：/start 命令请使用「/start 消息」功能配置</div>
+                        {% if not is_channel %}<div class="form-text text-warning"><i class="fa-solid fa-info-circle me-1"></i>注意：/start 命令请使用「/start 消息」功能配置</div>{% endif %}
                     </div>
                     
                     <!-- 消息类型选择 -->

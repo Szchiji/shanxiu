@@ -802,6 +802,38 @@ class ChannelPostRecord(db.Model):
     __table_args__ = (db.UniqueConstraint('group_id', 'message_id', name='uq_channel_post_message'),)
 
 
+class ChannelDiscussionPost(db.Model):
+    """Observed source keyboard state + real discussion root; never invent a comment ID."""
+    __tablename__ = 'channel_discussion_posts'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    message_id = db.Column(db.BigInteger, nullable=False)
+    source_album = db.Column(db.String(128), nullable=True, index=True)
+    source_username = db.Column(db.String(255), nullable=True)
+    has_caption = db.Column(db.Boolean, default=False)
+    original_known = db.Column(db.Boolean, default=False)
+    has_buttons = db.Column(db.Boolean, default=False)
+    applied = db.Column(db.Boolean, default=False)
+    discussion_chat_id = db.Column(db.String(50), nullable=True)
+    discussion_message_id = db.Column(db.BigInteger, nullable=True)
+    discussion_username = db.Column(db.String(255), nullable=True)
+    __table_args__ = (db.UniqueConstraint('group_id', 'message_id', name='uq_channel_discussion_post'),)
+
+
+class ChannelFirstComment(db.Model):
+    """Durable claim before sending: duplicate webhooks/album parts cannot comment twice."""
+    __tablename__ = 'channel_first_comments'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False)
+    discussion_chat_id = db.Column(db.String(50), nullable=False)
+    post_key = db.Column(db.String(128), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='claimed')
+    comment_message_id = db.Column(db.BigInteger, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    __table_args__ = (db.UniqueConstraint('group_id', 'discussion_chat_id', 'post_key',
+                                        name='uq_channel_first_comment'),)
+
+
 class ChannelMessageStats(db.Model):
     """频道消息统计"""
     __tablename__ = 'channel_message_stats'

@@ -497,8 +497,23 @@ def _log(flask_app, item: UbMessage, plan: dict, *, status: str, message_type: s
         print(f"[userbot-sync] log write failed: {type(e).__name__}", flush=True)
 
 
+def source_channel_active(flask_app, chat_id):
+    """Unregistered sources remain allowed; registered paused channels stop immediately."""
+    if flask_app is None:
+        return True  # Pure/no-DB callers; production always supplies the bound Flask app.
+    from app.models import BotGroup
+    with flask_app.app_context():
+        source = BotGroup.query.filter_by(chat_id=str(chat_id), clone_id=None, type='channel').first()
+        active = not source or source.is_active
+    if not active:
+        print(f"[userbot-sync] skip inactive channel={chat_id}", flush=True)
+    return active
+
+
 async def deliver_to_plans(bot, flask_app, item: UbMessage, plans: list, download: Optional[DownloadFn] = None):
     for plan in plans:
+        if not source_channel_active(flask_app, item.chat_id):
+            return
         if keyword_blocks_sync(item.text, plan.get('filter_keywords')):
             _log(flask_app, item, plan, status='filtered', message_type=item.media_kind or 'text')
             continue
@@ -539,6 +554,8 @@ async def flush_userbot_album(buffer_key):
     caption = next((m.text for m in items if m.text), '')
     head = items[0]
     for plan in buf.get('plans') or []:
+        if not source_channel_active(flask_app, head.chat_id):
+            return
         if keyword_blocks_sync(caption, plan.get('filter_keywords')):
             _log(flask_app, head, plan, status='filtered', message_type='media_group', preview=caption[:100])
             continue
@@ -566,7 +583,7 @@ async def flush_userbot_album(buffer_key):
 
 async def process_item(bot, flask_app, item: UbMessage, plans: list, download: Optional[DownloadFn] = None):
     """Entry point on the bot loop."""
-    if not plans:
+    if not plans or not source_channel_active(flask_app, item.chat_id):
         return
     if item.from_own_bot:
         # Precise loop guard: our own bot's message is skipped only if WE produced it via

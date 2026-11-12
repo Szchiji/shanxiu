@@ -79,6 +79,61 @@ def _sched_del(context, msg, delay: int):
         pass
 
 
+def clones_command_denial(chat_type: str, user_id: int, admin_id: int) -> str | None:
+    """Return a safe denial message, or None if the user may list clones.
+
+    Never include tokens or other secrets in the returned text.
+    """
+    if chat_type != 'private':
+        return '❌ 此命令只能在私聊中使用'
+    try:
+        admin_id = int(admin_id or 0)
+    except (TypeError, ValueError):
+        admin_id = 0
+    if not admin_id or int(user_id) != admin_id:
+        return '❌ 只有管理员才能使用此命令'
+    return None
+
+
+def public_clone_list_item(clone) -> dict:
+    """Serialize a BotClone for the /clones list. Token/session fields omitted."""
+    expiration = getattr(clone, 'expiration_date', None)
+    return {
+        'id': clone.id,
+        'clone_name': clone.clone_name,
+        'owner_user_id': clone.owner_user_id,
+        'is_active': clone.is_active,
+        'expiration_date': expiration.strftime('%Y-%m-%d %H:%M:%S') if expiration else '无期限',
+        'description': clone.description or '无描述',
+    }
+
+
+async def apply_warn_punishment(bot, chat_id, user_id, action: str, mute_minutes: int = 60) -> bool:
+    """Execute mute / kick / ban after a warning reaches the configured threshold."""
+    if action == 'mute':
+        try:
+            minutes = max(1, int(mute_minutes or 60))
+        except (TypeError, ValueError):
+            minutes = 60
+        await bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            permissions=get_muted_permissions(),
+            until_date=datetime.now() + timedelta(minutes=minutes),
+        )
+        return True
+    if action == 'kick':
+        await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+        await bot.unban_chat_member(chat_id=chat_id, user_id=user_id)
+        return True
+    if action == 'ban':
+        await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+        return True
+    return False
+
+
+
+
 async def _ensure_plugin_enabled(update: Update, context, plugin_name: str) -> bool:
     """Return True if *plugin_name* should run for this chat (default-on).
 
@@ -432,16 +487,23 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reason = " ".join(context.args) if context.args else "违反群规"
 
     warn_count = 0
+    punish_action = None
+    punish_minutes = 60
     if _state.global_flask_app:
         def _persist():
-            from app.services.warning_service import record_warning
+            import json as _json
+            from app.services.warning_service import (
+                record_warning,
+                normalize_warn_settings,
+                resolve_escalation,
+            )
             with _state.global_flask_app.app_context():
                 group = BotGroup.query.filter_by(
                     chat_id=str(chat.id),
                     clone_id=context.application.bot_data.get('clone_id'),
                 ).first()
                 if not group:
-                    return 0
+                    return {'count': 0}
                 count = record_warning(
                     group.id,
                     target_user.id,
@@ -449,8 +511,21 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reason=reason,
                     source='command',
                 )
+                conf = {}
+                if group.config:
+                    try:
+                        conf = _json.loads(group.config)
+                        if isinstance(conf, dict) and 'config' in conf:
+                            conf = conf['config']
+                    except Exception:
+                        conf = {}
+                settings = normalize_warn_settings(conf if isinstance(conf, dict) else {})
+                action, _label = resolve_escalation(count, settings)
                 admin_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
                 target_name = target_user.first_name + (f" {target_user.last_name}" if target_user.last_name else "")
+                details = f"reason={reason}; count={count}"
+                if action:
+                    details += f"; punish={action}"
                 log_admin_action(
                     group.id,
                     user.id,
@@ -458,18 +533,98 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'warn',
                     target_user.id,
                     target_name,
-                    details=f"reason={reason}; count={count}",
+                    details=details,
                 )
-                return count
+                return {
+                    'count': count,
+                    'action': action,
+                    'mute_minutes': settings['warn_mute_minutes'],
+                }
         try:
-            warn_count = await asyncio.get_running_loop().run_in_executor(None, _persist)
+            persisted = await asyncio.get_running_loop().run_in_executor(None, _persist)
+            if isinstance(persisted, dict):
+                warn_count = persisted.get('count') or 0
+                punish_action = persisted.get('action')
+                punish_minutes = persisted.get('mute_minutes') or 60
+            else:
+                warn_count = persisted or 0
         except Exception as e:
             print(f"Error persisting warning: {e}")
             warn_count = 0
 
-    from app.services.warning_service import format_command_warn_reply
-    warning_text = format_command_warn_reply(target_user.first_name, reason, warn_count or 1)
+    from app.services.warning_service import format_command_warn_reply, format_punishment_line
+    punishment_line = None
+    if punish_action:
+        try:
+            await apply_warn_punishment(
+                context.bot, chat.id, target_user.id, punish_action, punish_minutes
+            )
+            punishment_line = format_punishment_line(punish_action, punish_minutes)
+        except Exception as e:
+            print(f"Error applying warning punishment: {e}")
+            punishment_line = "处罚执行失败，请管理员手动处理"
+
+    warning_text = format_command_warn_reply(
+        target_user.first_name, reason, warn_count or 1, punishment_line
+    )
     await update.message.reply_text(warning_text)
+
+
+
+async def cmd_unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """清除用户警告 /unwarn — 回复目标消息后清零累计次数"""
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type not in ['group', 'supergroup']:
+        _sched_del(context, await update.message.reply_text("❌ 此命令只能在群组中使用"), 20)
+        return
+    if not await _ensure_plugin_enabled(update, context, 'moderation'):
+        return
+
+    is_admin = await is_user_admin_in_group(context.bot, chat.id, user.id)
+    if not is_admin:
+        _sched_del(context, await update.message.reply_text("❌ 只有管理员才能使用此命令"), 20)
+        return
+
+    if not update.message.reply_to_message:
+        _sched_del(context, await update.message.reply_text("❌ 请回复要清除警告的用户消息"), 20)
+        return
+
+    target_user = update.message.reply_to_message.from_user
+    cleared = 0
+    if _state.global_flask_app:
+        def _clear():
+            from app.services.warning_service import clear_warnings
+            with _state.global_flask_app.app_context():
+                group = BotGroup.query.filter_by(
+                    chat_id=str(chat.id),
+                    clone_id=context.application.bot_data.get('clone_id'),
+                ).first()
+                if not group:
+                    return 0
+                count = clear_warnings(group.id, target_user.id)
+                admin_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
+                target_name = target_user.first_name + (f" {target_user.last_name}" if target_user.last_name else "")
+                log_admin_action(
+                    group.id,
+                    user.id,
+                    admin_name,
+                    'unwarn',
+                    target_user.id,
+                    target_name,
+                    details=f"cleared={count}",
+                )
+                return count
+        try:
+            cleared = await asyncio.get_running_loop().run_in_executor(None, _clear)
+        except Exception as e:
+            print(f"Error clearing warnings: {e}")
+            _sched_del(context, await update.message.reply_text("❌ 清除警告失败"), 20)
+            return
+
+    from app.services.warning_service import format_unwarn_reply
+    await update.message.reply_text(format_unwarn_reply(target_user.first_name, cleared))
 
 
 async def cmd_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -914,32 +1069,21 @@ async def cmd_clones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat = update.effective_chat
     admin_id = safe_int(os.getenv('ADMIN_ID', 0))
-    
-    # Only work in private chat
-    if chat.type != 'private':
-        await update.message.reply_text("❌ 此命令只能在私聊中使用")
+
+    denial = clones_command_denial(chat.type, user_id, admin_id)
+    if denial:
+        if update.message:
+            await update.message.reply_text(denial)
         return
-    
-    # Check if user is admin
-    if user_id != admin_id:
-        await update.message.reply_text("❌ 只有管理员才能使用此命令")
-        return
-    
+
     if not _state.global_flask_app:
         await update.message.reply_text("❌ 系统未就绪")
         return
-    
+
     def _get_clones():
         with _state.global_flask_app.app_context():
             clones = BotClone.query.order_by(BotClone.created_at.desc()).all()
-            return [{
-                'id': c.id,
-                'clone_name': c.clone_name,
-                'owner_user_id': c.owner_user_id,
-                'is_active': c.is_active,
-                'expiration_date': c.expiration_date.strftime('%Y-%m-%d %H:%M:%S') if c.expiration_date else '无期限',
-                'description': c.description or '无描述'
-            } for c in clones]
+            return [public_clone_list_item(c) for c in clones]
     
     clones = await asyncio.get_running_loop().run_in_executor(None, _get_clones)
     

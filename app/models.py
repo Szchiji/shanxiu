@@ -529,6 +529,7 @@ class GroupLottery(db.Model):
     start_time = db.Column(db.DateTime, nullable=True)
     end_time = db.Column(db.DateTime, nullable=True)
     announce_channel_id = db.Column(db.String(50), nullable=True)  # 公告频道ID
+    pool_source = db.Column(db.String(20), default='certified')  # certified=认证用户, all_members=全部群成员
     winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
     status = db.Column(db.String(20), default='pending')  # pending, active, ended
     created_at = db.Column(db.DateTime, default=datetime.now)
@@ -1308,4 +1309,9 @@ DEFAULT_SYSTEM = {
     "red_packet_min_total": 1,       # 单次红包最少总积分
     "red_packet_max_total": 0,       # 单次红包最多总积分（0=不限）
     "red_packet_expire_hours": 24,   # 红包有效期（小时）
+    # 警告累计自动处罚（默认关，与历史「只记次数」一致）
+    "warn_auto_punish": False,
+    "warn_threshold": 3,
+    "warn_action": "mute",           # mute, kick, ban
+    "warn_mute_minutes": 60,
 }

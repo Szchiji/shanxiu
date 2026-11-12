@@ -160,3 +160,86 @@ def run_lottery_draw(
             count = 1 if lottery_type == 'message_count' else top_n_winners
             return pick_winners_random(fallback_pool, count)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Random-lottery pool source
+# ---------------------------------------------------------------------------
+
+POOL_CERTIFIED = 'certified'
+POOL_ALL_MEMBERS = 'all_members'
+VALID_POOL_SOURCES = (POOL_CERTIFIED, POOL_ALL_MEMBERS)
+
+# Statuses that mean the user is no longer in the group.
+_LEFT_STATUSES = ('left', 'kicked')
+
+
+def normalize_pool_source(value: str | None) -> str:
+    """Return a valid pool source. Unknown / empty values default to certified."""
+    if value in (POOL_ALL_MEMBERS, 'all', 'members', 'group_members', 'all_members'):
+        return POOL_ALL_MEMBERS
+    return POOL_CERTIFIED
+
+
+def load_random_pool(
+    group_id: int,
+    pool_source: str | None,
+    *,
+    exclude_user_ids: List[int] | None = None,
+) -> List[int]:
+    """Build a random-lottery candidate pool from the database only.
+
+    * ``certified`` (default): authenticated users in ``GroupUser``.
+    * ``all_members``: rows in the synced ``GroupMember`` table, excluding
+      bots, left/kicked members, and *exclude_user_ids* (typically the bot
+      itself).  Does **not** call the Telegram API, so a stale member table
+      is used as-is rather than blocking the draw.
+    """
+    from app.models import GroupMember, GroupUser
+
+    source = normalize_pool_source(pool_source)
+    exclude = {int(x) for x in (exclude_user_ids or []) if x is not None}
+
+    if source == POOL_ALL_MEMBERS:
+        query = GroupMember.query.filter_by(group_id=group_id).filter(
+            GroupMember.is_bot.is_(False)
+        )
+        # Also drop left/kicked when the status column is populated.
+        query = query.filter(
+            ~GroupMember.status.in_(_LEFT_STATUSES)
+        )
+        ids = []
+        seen = set()
+        for (user_id,) in query.with_entities(GroupMember.user_id).all():
+            if user_id is None:
+                continue
+            uid = int(user_id)
+            if uid in exclude or uid in seen:
+                continue
+            seen.add(uid)
+            ids.append(uid)
+        return ids
+
+    ids = []
+    seen = set()
+    for (tg_id,) in GroupUser.query.filter_by(group_id=group_id).with_entities(GroupUser.tg_id).all():
+        if tg_id is None:
+            continue
+        uid = int(tg_id)
+        if uid in exclude or uid in seen:
+            continue
+        seen.add(uid)
+        ids.append(uid)
+    return ids
+
+
+def draw_random_winners(
+    group_id: int,
+    pool_source: str | None,
+    count: int,
+    *,
+    exclude_user_ids: List[int] | None = None,
+) -> List[int]:
+    """Pick *count* winners from the pool described by *pool_source*."""
+    pool = load_random_pool(group_id, pool_source, exclude_user_ids=exclude_user_ids)
+    return pick_winners_random(pool, count)

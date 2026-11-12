@@ -75,7 +75,16 @@
 
 <div class="backup-section">
     <h5><i class="bi bi-download"></i> 导出配置</h5>
-    <p>导出当前群组的所有配置为 JSON 文件，包括自动回复、定时消息、积分规则、会员等级等。</p>
+    <p>导出当前群组/频道的可配置项为 JSON 文件。现已包含：</p>
+    <ul class="info-text" style="padding-left: 1.25rem;">
+        <li>群配置与资料字段（功能配置、其他设置中的开关和文案）</li>
+        <li>自动回复、定时消息、/start 消息、群底部按钮</li>
+        <li>积分规则、积分回复、积分商城/兑换、竞拍、成员等级</li>
+        <li>关键词过滤、进退群、垃圾防护、强制订阅、不活跃用户、定时开关群、邀请活动</li>
+        <li>同步规则、抽奖、投票、问答、插件开关</li>
+        <li>频道转发规则、消息模板、频道帖按钮、优惠券配置</li>
+    </ul>
+    <p class="info-text mb-3">不会导出：认证用户名单、积分余额与流水、同步日志、邀请记录、警告和统计等运营数据，以及 Bot Token、小号 session、api_hash 等机密信息。</p>
     <button class="btn btn-export" onclick="exportConfig()">
         <i class="bi bi-file-earmark-arrow-down"></i> 导出配置
     </button>
@@ -86,7 +95,7 @@
 
 <div class="backup-section">
     <h5><i class="bi bi-upload"></i> 导入配置</h5>
-    <p>从 JSON 文件导入配置。注意：导入会覆盖当前的部分配置。</p>
+    <p>从 JSON 文件导入配置。兼容旧版备份（只含自动回复、定时消息、积分规则、成员等级等字段的文件也可以导入，缺的部分会跳过，不会报错）。导入会更新已有的群配置，其他项目按名称补齐，不会清空未包含在文件里的数据。</p>
     
     <div class="file-upload" id="fileUpload">
         <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--accent);"></i>

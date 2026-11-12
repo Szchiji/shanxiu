@@ -439,10 +439,11 @@
                         机器人需有群管理权限 <code>can_manage_tags</code>。
                     </div>
                     
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.auto_mute_expired }}>
+                    <div class="form-check form-switch mb-1">
+                        <input class="form-check-input" type="checkbox" id="auto_mute_expired" {{ 'checked' if conf.get('auto_mute_expired', True) }}>
                         <label class="small text-danger fw-bold">过期自动禁言</label>
                     </div>
+                    <div class="small text-muted mb-3">开启后，认证用户到期会自动禁言；关闭则只标记过期，不再自动禁言。管理员仍不会被这条规则禁言。</div>
                     
                     <label class="small text-muted fw-bold text-success">推送频道 ID</label>
                     <input id="push_channel_id" class="form-control mb-3" value="{{ conf.push_channel_id or '' }}" placeholder="-100xxxxxxx">

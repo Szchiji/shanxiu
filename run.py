@@ -257,6 +257,9 @@ def fix_database_schema(app):
             "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
             # sync_message_logs.via: "userbot" for messages relayed by the userbot listener
             "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
+            # Per-group check interval tracking for forced subscription / inactive users
+            "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
+            "ALTER TABLE inactive_user_settings ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
         ]
         
         # Execute each statement in its own transaction to handle PostgreSQL properly
@@ -283,6 +286,15 @@ def fix_database_schema(app):
         _ensure_report_tables(db)
 
         print("✅ 数据库结构检查完成", flush=True)
+
+        # One-time: wire「过期自动禁言」without turning off historical mute-on-expiry.
+        try:
+            from app.services.expired_mute import backfill_auto_mute_expired_on
+            n = backfill_auto_mute_expired_on(db.session)
+            if n:
+                print(f"✅ 已将 {n} 个群的「过期自动禁言」迁移为默认开启（与现网到期即禁言一致）", flush=True)
+        except Exception as e:
+            print(f"⚠️ 过期自动禁言默认值迁移跳过: {e}", flush=True)
 
 def run_flask():
     port = int(os.getenv('PORT', 5000))

@@ -487,18 +487,25 @@
 </ul>
 {% endcall %}
 
-<!-- Search Box -->
+<!-- Search Box: real GET form so 搜索/Enter/清除 work even if page JS fails to parse. -->
 <div class="search-box">
-    <div class="d-flex align-items-center flex-wrap gap-2">
+    <form method="get" class="d-flex align-items-center flex-wrap gap-2" id="searchForm" role="search">
         <i class="fa-solid fa-search text-muted ms-2"></i>
-        <input id="searchInput" type="text" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索备注内容...">
-        <button class="btn btn-primary btn-sm" onclick="searchItems()">
+        <input id="searchInput" name="search" type="search" value="{{ search or '' }}" class="form-control border-0 shadow-none flex-grow-1 search-input" placeholder="搜索备注、内容或按钮链接..." enterkeyhint="search">
+        {% if per_page and per_page != 20 %}
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        {% endif %}
+        <button type="submit" class="btn btn-primary btn-sm">
             <i class="fa-solid fa-search me-1"></i>搜索
         </button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="clearSearch()">
+        {% if per_page and per_page != 20 %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('core.page_scheduled_messages', gid=group.id, per_page=per_page) }}">
+        {% else %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('core.page_scheduled_messages', gid=group.id) }}">
+        {% endif %}
             <i class="fa-solid fa-times me-1"></i>清除
-        </button>
-    </div>
+        </a>
+    </form>
 </div>
 
 <!-- Batch Action Bar -->
@@ -543,8 +550,8 @@
                 {% for item in scheduled_messages %}
                 <tr data-id="{{ item.id }}"
                     data-media-type="{{ item.media_type }}"
-                    data-media-url="{{ item.media_url or '' }}"
-                    data-media-urls="{{ item.media_urls or '[]' }}"
+                    data-media-url="{{ (item.media_url or '')|e }}"
+                    data-media-urls="{{ (item.media_urls or '[]')|e }}"
                     data-content="{{ (item.content or '')|e }}"
                     data-links="{{ (item.links or '[]')|e }}"
                     data-repeat-interval="{{ item.repeat_interval or 0 }}"
@@ -609,7 +616,7 @@
                         -
                         {% endif %}
                     </td>
-                    <td><span class="remark-cell" title="{{ (item.remark or '-')|e }}">{{ item.remark or '-' }}</span></td>
+                    <td><span class="remark-cell" title="{{ (item.remark or '-')|e }}">{{ (item.remark or '-')|e }}</span></td>
                     <td>
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>
@@ -635,7 +642,7 @@
                 <tr id="emptyRow">
                     <td colspan="12" class="text-center py-4 py-md-5 text-muted">
                         <i class="fa-solid fa-inbox fa-2x fa-md-3x mb-2 mb-md-3 d-block opacity-50"></i>
-                        暂无定时消息，点击上方按钮添加
+                        {% if search %}没有匹配的定时消息{% else %}暂无定时消息，点击上方按钮添加{% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -883,15 +890,20 @@
         }
     }
     
-    // Initialize
+    // Initialize. Bind Enter first so a later init error cannot skip it.
+    // Search also works via the GET form if this script never runs.
     document.addEventListener('DOMContentLoaded', function() {
-        renderLinksContainer();
-        updateTargetFields();
-        
-        // Enter key for search
-        document.getElementById('searchInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') searchItems();
-        });
+        try {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && typeof searchItems === 'function') searchItems();
+                });
+            }
+        } finally {
+            try { renderLinksContainer(); } catch (err) {}
+            try { updateTargetFields(); } catch (err) {}
+        }
     });
     
     // Search functionality

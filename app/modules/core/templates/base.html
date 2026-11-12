@@ -1274,8 +1274,8 @@
                             </button>
                             <div class="collapse{% if ch_analytics_active %} show{% endif %}" id="sg_analytics">
                                 <ul class="nav flex-column sidebar-submenu">
-                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 消息统计</a></li>
-                                    <li><a href="/core/group/{{ current_group.id }}/channel_stats" class="nav-link {% if page == 'channel_stats' %}active{% endif %}"><i class="fa-solid fa-wave-square"></i> 频道统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/message_statistics" class="nav-link {% if page == 'message_statistics' %}active{% endif %}"><i class="fa-solid fa-chart-line"></i> 帖子统计</a></li>
+                                    <li><a href="/core/group/{{ current_group.id }}/channel_stats" class="nav-link {% if page == 'channel_stats' %}active{% endif %}"><i class="fa-solid fa-wave-square"></i> 讨论自动化记录</a></li>
                                 </ul>
                             </div>
                         </li>
@@ -1310,7 +1310,7 @@
                         <!-- Other Settings -->
                         <li class="nav-item">
                             <a href="/core/group/{{ current_group.id }}/other_settings" class="nav-link {% if page == 'other_settings' %}active{% endif %}">
-                                <i class="fa-solid fa-cog"></i> 其他设置
+                                <i class="fa-solid fa-cog"></i> 频道设置
                             </a>
                         </li>
 

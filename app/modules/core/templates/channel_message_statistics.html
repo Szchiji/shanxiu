@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header"><h4>频道帖子统计</h4><p>从本版本上线起记录实际收到及本机器人发布的频道新帖；相册只计一次，编辑和重复更新不重复计数。不代表浏览量或订阅者活跃度，停用期间不记录，不补抓历史。Bot API 不提供来源详情的批量复制按一次发布记录。</p></div>
+<div class="card p-3 mb-3">累计帖子：<strong>{{ total_posts }}</strong>　今日帖子：<strong>{{ today_posts }}</strong></div>
+<table class="table"><thead><tr><th>日期（北京时间）</th><th>帖子数</th></tr></thead><tbody>
+{% for day, count in counts %}<tr><td>{{ day.strftime('%Y-%m-%d') }}</td><td>{{ count }}</td></tr>{% endfor %}
+</tbody></table>
+<a href="/core/group/{{ group.id }}/channel_stats">讨论区自动化处理记录</a>
+{% endblock %}

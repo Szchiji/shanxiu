@@ -154,14 +154,14 @@
                         </p>
                     </div>
                 </div>
-                <div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
+                {% if group.type != 'channel' %}<div class="d-flex flex-wrap gap-2 mt-2 mt-md-0">
                     <div class="stat-badge">
                         <i class="fa-solid fa-users me-1"></i>{{ stats.users }}
                     </div>
                     <div class="stat-badge">
                         <i class="fa-solid fa-circle text-success me-1" style="font-size: 9px;"></i>{{ stats.online }}
                     </div>
-                </div>
+                </div>{% endif %}
             </div>
         </div>
     </div>
@@ -173,12 +173,12 @@
     <div class="mini-stat-card">
         <div class="icon"><i class="fa-solid fa-message"></i></div>
         <h3>{{ stats.today_messages }}</h3>
-        <p>今日消息</p>
+        <p>今日帖子</p>
     </div>
     <div class="mini-stat-card">
         <div class="icon"><i class="fa-solid fa-filter"></i></div>
-        <h3>{{ stats.keyword_filters }}</h3>
-        <p>关键词过滤</p>
+        <h3>{{ stats.channel_posts }}</h3>
+        <p>累计帖子</p>
     </div>
     <div class="mini-stat-card">
         <div class="icon"><i class="fa-solid fa-clock"></i></div>
@@ -241,12 +241,12 @@
         <div class="security-status">
             <h6 class="fw-bold mb-3"><i class="fa-solid fa-chart-bar me-2 text-primary"></i>频道消息统计</h6>
             <div class="security-item">
-                <span><i class="fa-solid fa-message me-2"></i>今日消息数</span>
+                <span><i class="fa-solid fa-message me-2"></i>今日帖子数</span>
                 <span class="fw-bold text-primary">{{ stats.today_messages }}</span>
             </div>
             <div class="security-item">
-                <span><i class="fa-solid fa-filter me-2"></i>关键词规则数</span>
-                <span class="fw-bold text-primary">{{ stats.keyword_filters }}</span>
+                <span><i class="fa-solid fa-filter me-2"></i>累计帖子数</span>
+                <span class="fw-bold text-primary">{{ stats.channel_posts }}</span>
             </div>
         </div>
     </div>
@@ -284,7 +284,7 @@
                     <i class="fa-solid fa-chart-bar fa-lg" style="color: #8b5cf6;"></i>
                     <h6 class="fw-bold mb-0" style="color: var(--text-primary);">消息统计</h6>
                 </div>
-                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">查看频道消息统计和活跃度分析</p>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">查看实际接收的频道帖子统计（相册计一次）</p>
                 <span class="badge badge-purple">{{ stats.today_messages }} 今日</span>
             </div>
         </a>
@@ -297,9 +297,9 @@
             <div class="card-body p-3">
                 <div class="d-flex align-items-center gap-3 mb-2">
                     <i class="fa-solid fa-cog fa-lg icon-settings"></i>
-                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">其他设置</h6>
+                    <h6 class="fw-bold mb-0" style="color: var(--text-primary);">频道设置</h6>
                 </div>
-                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">频道其他功能与高级配置</p>
+                <p class="mb-2" style="color: var(--text-muted); font-size: 0.82rem;">配置频道关联讨论设置</p>
                 <span class="badge bg-secondary">配置</span>
             </div>
         </a>

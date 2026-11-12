@@ -483,7 +483,7 @@
     <li><strong>消息类型：</strong>支持文本、图片、视频三种格式。</li>
     <li><strong>重复发送：</strong>设置间隔（分钟）可以让消息定期循环发送，0 表示只发一次。</li>
     <li><strong>时间控制：</strong>可设置开始时间和停止时间，控制消息发送的时间范围。</li>
-    <li><strong>自动删除：</strong>启用「删除上一条」可在发新消息时自动删除前一条，保持群内整洁。</li>
+    <li><strong>自动删除：</strong>启用「删除上一条」可在发新消息时自动删除前一条，保持{{ '频道' if group.type == 'channel' else '群内' }}整洁。</li>
 </ul>
 {% endcall %}
 
@@ -578,7 +578,7 @@
                         <span class="badge bg-info">频道</span>
                         <div><small class="text-muted">{{ item.target_channel_id or '-' }}</small></div>
                         {% else %}
-                        <span class="badge bg-secondary">群组</span>
+                        <span class="badge bg-secondary">{{ '当前频道' if group.type == 'channel' else '群组' }}</span>
                         <div><small class="text-muted">默认聊天</small></div>
                         {% endif %}
                     </td>
@@ -735,7 +735,7 @@
                             <div class="col-6">
                                 <label class="form-label fw-bold">目标类型</label>
                                 <select class="form-select" id="targetType" onchange="updateTargetFields()">
-                                    <option value="group">发送到当前群组</option>
+                                    <option value="group">发送到当前{{ '频道' if group.type == 'channel' else '群组' }}</option>
                                     <option value="channel">发送到指定频道</option>
                                 </select>
                             </div>
@@ -793,10 +793,11 @@
                     </div>
                     
                     <!-- 话题ID（论坛群） -->
+                    <div {{ 'hidden' if group.type == 'channel' }}>
                     <div class="mb-3">
                         <label class="form-label fw-bold">话题ID <span class="text-muted fw-normal small">（可选，论坛话题群填写）</span></label>
                         <input type="number" class="form-control" id="messageThreadId" min="1" placeholder="留空=发到主聊天">
-                    </div>
+                    </div></div>
                 </form>
             </div>
             <div class="modal-footer border-0 pt-0 flex-wrap gap-2">
@@ -878,7 +879,7 @@
             threadInput.value = '';
             threadInput.disabled = true;
         } else {
-            threadInput.disabled = false;
+            threadInput.disabled = {{ 'true' if group.type == 'channel' else 'false' }};
         }
     }
     
@@ -1441,7 +1442,7 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null,
+            message_thread_id: {{ 'null' if group.type == 'channel' else "parseInt(document.getElementById('messageThreadId').value) || null" }},
             target_type: document.getElementById('targetType').value,
             target_channel_id: document.getElementById('targetChannelId').value.trim()
         };
@@ -1492,7 +1493,7 @@
             stop_time: document.getElementById('stopTime').value || null,
             remark: document.getElementById('remark').value.trim(),
             auto_pin: document.getElementById('autoPin').checked,
-            message_thread_id: parseInt(document.getElementById('messageThreadId').value) || null,
+            message_thread_id: {{ 'null' if group.type == 'channel' else "parseInt(document.getElementById('messageThreadId').value) || null" }},
             target_type: document.getElementById('targetType').value,
             target_channel_id: document.getElementById('targetChannelId').value.trim()
         };

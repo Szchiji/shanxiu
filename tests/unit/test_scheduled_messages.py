@@ -62,16 +62,20 @@ def sched(flask_app, monkeypatch):
     def make_msg(**kw):
         with flask_app.app_context():
             n = next(_ids)
-            group = BotGroup(chat_id=f'-100777{n:04d}', title=f'g{n}', type='supergroup', is_active=True)
-            db.session.add(group)
-            db.session.commit()
-            fields = dict(group_id=group.id, media_type='text', content='hello',
+            if 'group_id' in kw:
+                gid = kw['group_id']
+            else:
+                group = BotGroup(chat_id=f'-100777{n:04d}', title=f'g{n}', type='supergroup', is_active=True)
+                db.session.add(group)
+                db.session.commit()
+                gid = group.id
+            fields = dict(group_id=gid, media_type='text', content='hello',
                           repeat_interval=0, is_active=True, links='[]')
             fields.update(kw)
             msg = ScheduledMessage(**fields)
             db.session.add(msg)
             db.session.commit()
-            return msg.id, group.id
+            return msg.id, gid
 
     def get(msg_id):
         with flask_app.app_context():
@@ -527,3 +531,153 @@ class TestCloneSkipWarning:
         routes._warn_clone_not_running_for_scheduled(42, 2)
         out = capsys.readouterr().out
         assert out.count('克隆机器人 42 未运行') == 1
+
+
+
+class TestScheduledMessagesSearch:
+    """Admin list search, empty-state copy, and markup that must not break page JS."""
+
+    def _html_scripts_and_media_attrs(self, html):
+        from html.parser import HTMLParser
+
+        class Collector(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.scripts = []
+                self.media_urls = []
+                self.media_url = []
+                self._in_script = False
+                self._buf = []
+
+            def handle_starttag(self, tag, attrs):
+                data = dict(attrs)
+                if 'data-media-urls' in data:
+                    self.media_urls.append(data['data-media-urls'])
+                if 'data-media-url' in data:
+                    self.media_url.append(data['data-media-url'])
+                if tag == 'script':
+                    self._in_script = True
+                    self._buf = []
+
+            def handle_endtag(self, tag):
+                if tag == 'script' and self._in_script:
+                    self.scripts.append(''.join(self._buf))
+                    self._in_script = False
+
+            def handle_data(self, data):
+                if self._in_script:
+                    self._buf.append(data)
+
+        c = Collector()
+        c.feed(html)
+        return c
+
+    def test_search_matches_remark_and_content(self, sched, admin):
+        mid, gid = sched.make_msg(content='正文里有苹果派', remark='备注香蕉')
+        other, _ = sched.make_msg(group_id=gid, content='无关内容', remark='无关备注')
+        # content hit
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=苹果派')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f'data-id="{mid}"' in body
+        assert f'data-id="{other}"' not in body
+        # remark hit
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=香蕉')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f'data-id="{mid}"' in body
+        assert f'data-id="{other}"' not in body
+
+    def test_search_matches_links_username_only(self, sched, admin):
+        links = '[[{"text":"联系客服","url":"https://t.me/qiqi200109cs"}]]'
+        mid, gid = sched.make_msg(content='没有用户名', remark='也没有', links=links)
+        other, _ = sched.make_msg(group_id=gid, content='普通消息', remark='普通备注', links='[]')
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=@qiqi200109cs')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f'data-id="{mid}"' in body
+        assert f'data-id="{other}"' not in body
+
+    def test_empty_search_shows_no_match_copy(self, sched, admin):
+        _, gid = sched.make_msg(content='hello', remark='world')
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=绝对不会匹配到的词')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert '没有匹配的定时消息' in body
+        assert '暂无定时消息，点击上方按钮添加' not in body
+
+    def test_empty_list_without_search_keeps_add_hint(self, flask_app, admin):
+        from app import db
+        from app.models import BotGroup
+        with flask_app.app_context():
+            group = BotGroup(chat_id='-1008880001', title='empty-g', type='supergroup', is_active=True)
+            db.session.add(group)
+            db.session.commit()
+            gid = group.id
+        r = admin.get(f'/core/group/{gid}/scheduled_messages')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert '暂无定时消息，点击上方按钮添加' in body
+        assert '没有匹配的定时消息' not in body
+
+    def test_search_form_and_clear_are_real_get_controls(self, sched, admin):
+        mid, gid = sched.make_msg(remark='可搜索备注')
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=可搜索备注&per_page=50')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert 'id="searchForm"' in body
+        assert 'method="get"' in body
+        assert 'name="search"' in body
+        assert 'value="可搜索备注"' in body
+        assert 'type="submit"' in body
+        # Clear is a real link (not onclick-only) back to the same page without search.
+        assert f'href="/core/group/{gid}/scheduled_messages?per_page=50"' in body
+        assert 'onclick="clearSearch()"' not in body
+        assert 'onclick="searchItems()"' not in body
+        assert f'data-id="{mid}"' in body
+
+    def test_media_urls_escaped_so_page_script_still_parses(self, sched, admin):
+        """Unescaped JSON quotes in data-media-urls used to terminate the <tr>
+        attribute early and swallow the page <script>, so every onclick
+        (搜索/清除/导出/导入/新增/编辑/开关/分页) did nothing.
+        """
+        media_urls = '["https://cdn.example.com/a.jpg","https://t.me/qiqi200109cs"]'
+        media_url = 'https://cdn.example.com/a.jpg'
+        mid, gid = sched.make_msg(
+            media_type='image', media_url=media_url, media_urls=media_urls,
+            content='配图', remark='媒体行',
+        )
+        r = admin.get(f'/core/group/{gid}/scheduled_messages')
+        assert r.status_code == 200
+        html = r.data.decode()
+        # Raw source must escape the JSON quotes.
+        assert 'data-media-urls="["https://' not in html
+        assert '&quot;https://cdn.example.com/a.jpg&quot;' in html or '&#34;https://cdn.example.com/a.jpg&#34;' in html
+        parsed = self._html_scripts_and_media_attrs(html)
+        assert media_urls in parsed.media_urls, parsed.media_urls
+        assert media_url in parsed.media_url, parsed.media_url
+        joined = '\n'.join(parsed.scripts)
+        assert 'function searchItems' in joined
+        assert 'function openAddModal' in joined
+        assert 'function exportData' in joined
+        assert 'window.goToPage' in joined
+
+    def test_channel_scheduled_messages_page_ok(self, flask_app, admin):
+        from app import db
+        from app.models import BotGroup, ScheduledMessage
+        with flask_app.app_context():
+            ch = BotGroup(chat_id='-1008880002', title='ch', type='channel', is_active=True)
+            db.session.add(ch)
+            db.session.commit()
+            msg = ScheduledMessage(
+                group_id=ch.id, media_type='text', content='频道定时',
+                remark='频道备注', links='[]', is_active=True,
+            )
+            db.session.add(msg)
+            db.session.commit()
+            gid, mid = ch.id, msg.id
+        r = admin.get(f'/core/group/{gid}/scheduled_messages?search=频道备注')
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert f'data-id="{mid}"' in body
+        assert 'id="searchForm"' in body

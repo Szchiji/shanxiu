@@ -1607,13 +1607,23 @@ def page_scheduled_messages(gid):
     # Build query with optional search filter
     query = ScheduledMessage.query.filter_by(group_id=gid)
     if search_query:
-        # Search in content and remark
-        query = query.filter(
-            or_(
-                ScheduledMessage.content.contains(search_query),
-                ScheduledMessage.remark.contains(search_query)
-            )
-        )
+        # Search scope: message content, admin remark, button links
+        # (label + URL), and string form of id.
+        # Queries that start with @ also match the bare username so that
+        # "@qiqi200109cs" hits button URLs like https://t.me/qiqi200109cs.
+        # Uses SQL LIKE; PostgreSQL is case-sensitive, SQLite ASCII usually is not.
+        terms = [search_query]
+        if search_query.startswith('@') and len(search_query) > 1:
+            terms.append(search_query[1:])
+        clauses = []
+        for term in terms:
+            clauses.extend((
+                ScheduledMessage.content.contains(term),
+                ScheduledMessage.remark.contains(term),
+                ScheduledMessage.links.contains(term),
+                cast(ScheduledMessage.id, String).contains(term),
+            ))
+        query = query.filter(or_(*clauses))
     
     # Get total count and paginated results
     total_items = query.count()

@@ -187,6 +187,8 @@ def run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_user_id ON group_warnings(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_created_at ON group_warnings(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_group_warnings_group_user ON group_warnings(group_id, user_id)",
+        "ALTER TABLE forced_channel_subscription ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
+        "ALTER TABLE inactive_user_settings ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NULL",
     ]
 
     with app.app_context():
@@ -210,6 +212,15 @@ def run_migrations():
             f"✅ 数据库迁移完成 (执行: {success_count}, 跳过: {skip_count})",
             flush=True,
         )
+
+        try:
+            from app.services.expired_mute import backfill_auto_mute_expired_on
+            n = backfill_auto_mute_expired_on(db.session)
+            if n:
+                print(f"✅ 已将 {n} 个群的「过期自动禁言」迁移为默认开启", flush=True)
+        except Exception as e:
+            print(f"⚠️ 过期自动禁言默认值迁移跳过: {e}", flush=True)
+
 
         # system_config: Drop NOT NULL constraints from any legacy columns not in the current
         # ORM model so that new ORM inserts (which only supply id, key_name, value) succeed.

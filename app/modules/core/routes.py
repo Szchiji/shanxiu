@@ -12,6 +12,28 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
 from app.services import sanitize_html_for_telegram
 from app.log_redaction import redact_secrets
 from app.services.points_service import clamp_award_to_daily_cap
+from app.services.expired_mute import is_auto_mute_expired_enabled
+from app.services.entry_verification import (
+    build_entry_challenge,
+    can_start_verification,
+    clamp_verification_timeout,
+    evaluate_verification_submission,
+    parse_verification_callback_data,
+    pending_state_from_challenge,
+)
+from app.services.check_interval import (
+    CHECK_INTERVAL_TICK_SECONDS,
+    DEFAULT_FORCED_SUB_INTERVAL,
+    DEFAULT_INACTIVE_INTERVAL,
+    is_interval_due,
+)
+from app.services.forward_lookup_auth import (
+    FORWARD_LOOKUP_DENIED_TEXT,
+    is_forward_lookup_authorized,
+    list_active_group_chat_ids,
+    user_is_any_clone_admin,
+    user_is_recorded_group_admin,
+)
 from app.utils import (
     encrypt_token,
     decrypt_token,
@@ -2743,6 +2765,8 @@ def api_save_settings():
     )
     if 'auto_member_tag' in conf:
         conf['auto_member_tag'] = bool(conf.get('auto_member_tag'))
+    if 'auto_mute_expired' in conf:
+        conf['auto_mute_expired'] = bool(conf.get('auto_mute_expired'))
     d['config'] = conf
     group.config = json.dumps(conf, ensure_ascii=False)
     db.session.commit()
@@ -4449,7 +4473,7 @@ def api_save_entry_exit_settings():
             else:
                 verification_options = None
         settings.verification_options = verification_options
-        settings.verification_timeout = d.get('verification_timeout', 60)
+        settings.verification_timeout = clamp_verification_timeout(d.get('verification_timeout', 60))
         settings.welcome_enabled = d.get('welcome_enabled', False)
         settings.welcome_message = d.get('welcome_message')
         settings.welcome_media_type = d.get('welcome_media_type', 'text')
@@ -7406,6 +7430,8 @@ async def check_expired_users(context):
                         continue
                     # Get configuration in sync context
                     conf = get_group_conf(user.group)
+                    if not is_auto_mute_expired_enabled(conf):
+                        continue
                     ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
                     users_to_ban.append((user, user.group, ban_msg))
                 
@@ -7926,8 +7952,8 @@ async def handle_new_chat_member(update: Update, context):
                     is_bot=new_member.is_bot
                 )
                 
-                # Entry verification (only when both question and answer are configured)
-                if settings.entry_verification_enabled and settings.verification_question and settings.verification_answer:
+                # Entry verification (question / captcha / emoji / multiple_choice)
+                if can_start_verification(settings):
                     try:
                         # Mute the new member until they answer correctly
                         try:
@@ -7939,51 +7965,58 @@ async def handle_new_chat_member(update: Update, context):
                         except Exception as mute_err:
                             print(f"Error muting new member during verification: {mute_err}")
 
-                        # Send verification question
-                        timeout = settings.verification_timeout or 60
-                        question_text = (
-                            f"👋 欢迎 <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a>!\n\n"
-                            f"🔐 请回答验证问题:\n{settings.verification_question}\n\n"
-                            f"⏱ 请在 {timeout} 秒内回答，否则将被移出群组。"
-                        )
-                        await context.bot.send_message(
+                        challenge = build_entry_challenge(
+                            settings,
                             chat_id=chat.id,
-                            text=question_text,
-                            parse_mode='HTML'
+                            user_id=new_member.id,
+                            user_first_name=new_member.first_name,
                         )
+                        if challenge:
+                            reply_markup = None
+                            if challenge.get('buttons'):
+                                keyboard = [
+                                    [InlineKeyboardButton(label, callback_data=data) for label, data in row]
+                                    for row in challenge['buttons']
+                                ]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
 
-                        # Store pending verification state in bot_data
-                        pending_key = f"pending_verification:{chat.id}:{new_member.id}"
-                        context.application.bot_data[pending_key] = {
-                            'answer': (settings.verification_answer or '').strip().lower(),
-                            'group_id': group.id,
-                            'timeout': timeout,
-                            'started_at': time.time(),
-                        }
+                            timeout = challenge['timeout']
+                            await context.bot.send_message(
+                                chat_id=chat.id,
+                                text=challenge['text'],
+                                parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
 
-                        # Schedule timeout kick
-                        async def _kick_on_timeout(ctx):
-                            pending_key_inner = ctx.job.data
-                            state = ctx.application.bot_data.pop(pending_key_inner, None)
-                            if state is None:
-                                return  # Already verified
-                            try:
-                                await ctx.bot.ban_chat_member(chat.id, new_member.id)
-                                await ctx.bot.unban_chat_member(chat.id, new_member.id)
-                                await ctx.bot.send_message(
-                                    chat_id=chat.id,
-                                    text=f"⏰ <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a> 未在规定时间内完成验证，已被移出群组。",
-                                    parse_mode='HTML'
-                                )
-                            except Exception as kick_err:
-                                print(f"Error kicking unverified member: {kick_err}")
+                            # Store pending verification state in bot_data
+                            pending_key = f"pending_verification:{chat.id}:{new_member.id}"
+                            context.application.bot_data[pending_key] = pending_state_from_challenge(
+                                challenge, group.id, time.time()
+                            )
 
-                        context.application.job_queue.run_once(
-                            _kick_on_timeout,
-                            when=timeout,
-                            data=pending_key,
-                            name=pending_key
-                        )
+                            # Schedule timeout kick
+                            async def _kick_on_timeout(ctx):
+                                pending_key_inner = ctx.job.data
+                                state = ctx.application.bot_data.pop(pending_key_inner, None)
+                                if state is None:
+                                    return  # Already verified
+                                try:
+                                    await ctx.bot.ban_chat_member(chat.id, new_member.id)
+                                    await ctx.bot.unban_chat_member(chat.id, new_member.id)
+                                    await ctx.bot.send_message(
+                                        chat_id=chat.id,
+                                        text=f"⏰ <a href='tg://user?id={new_member.id}'>{new_member.first_name}</a> 未在规定时间内完成验证，已被移出群组。",
+                                        parse_mode='HTML'
+                                    )
+                                except Exception as kick_err:
+                                    print(f"Error kicking unverified member: {kick_err}")
+
+                            context.application.job_queue.run_once(
+                                _kick_on_timeout,
+                                when=timeout,
+                                data=pending_key,
+                                name=pending_key
+                            )
                     except Exception as e:
                         print(f"Error sending verification question: {e}")
                 
@@ -10215,7 +10248,22 @@ async def check_channel_subscriptions(context):
     try:
         def _get_subscription_settings():
             with global_flask_app.app_context():
-                return ForcedChannelSubscription.query.filter_by(enabled=True).all()
+                now = get_beijing_now()
+                due = []
+                rows = ForcedChannelSubscription.query.filter_by(enabled=True).all()
+                for settings in rows:
+                    if not is_interval_due(
+                        settings.last_checked_at,
+                        settings.check_interval,
+                        now,
+                        DEFAULT_FORCED_SUB_INTERVAL,
+                    ):
+                        continue
+                    settings.last_checked_at = now
+                    due.append(settings)
+                if due:
+                    db.session.commit()
+                return due
         
         settings_list = await asyncio.get_running_loop().run_in_executor(None, _get_subscription_settings)
         
@@ -10708,11 +10756,20 @@ async def check_inactive_users(context):
                 try:
                     # Get all groups with inactive user settings enabled
                     settings_list = InactiveUserSettings.query.filter_by(enabled=True).all()
+                    now = get_beijing_now()
                     
                     users_to_mute = []
                     
                     for settings in settings_list:
                         try:
+                            if not is_interval_due(
+                                settings.last_checked_at,
+                                settings.check_interval,
+                                now,
+                                DEFAULT_INACTIVE_INTERVAL,
+                            ):
+                                continue
+                            settings.last_checked_at = now
                             group = BotGroup.query.get(settings.group_id)
                             if not group or not group.is_active:
                                 continue
@@ -10775,10 +10832,12 @@ async def check_inactive_users(context):
                             print(f"Error processing group {settings.group_id}: {e}")
                             continue
                     
+                    db.session.commit()
                     return users_to_mute
                     
                 except Exception as e:
                     print(f"Error in _check_inactive: {e}")
+                    db.session.rollback()
                     return []
         
         # Execute sync part in executor
@@ -11132,6 +11191,8 @@ async def check_and_mute_expired_user(update: Update, context):
                     
                     # 获取配置信息用于通知消息
                     conf = get_group_conf(group)
+                    if not is_auto_mute_expired_enabled(conf):
+                        return None
                     ban_msg = conf.get('msg_expired_ban', '⛔️ <b>您的认证已过期，已被暂时禁言。请联系管理员续费。</b>')
                     
                     # Extract scalar values to avoid detached instance issues
@@ -11941,6 +12002,7 @@ async def cmd_checkin(update: Update, context):
                     ),
                     'group_user_id': db_user.id,
                     'is_banned': db_user.is_banned,
+                    'mute': is_auto_mute_expired_enabled(conf),
                 }
 
             # Check if already checked in today
@@ -11978,22 +12040,23 @@ async def cmd_checkin(update: Update, context):
         if del_time > 0:
             _sched_del(context, r, del_time)
     elif status == 'expired':
-        try:
-            await context.bot.restrict_chat_member(
-                chat_id=chat.id,
-                user_id=user.id,
-                permissions=get_muted_permissions()
-            )
+        if result.get('mute', True):
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=chat.id,
+                    user_id=user.id,
+                    permissions=get_muted_permissions()
+                )
 
-            def _mark_banned():
-                with global_flask_app.app_context():
-                    gu = GroupUser.query.get(result['group_user_id'])
-                    if gu and not gu.is_banned:
-                        gu.is_banned = True
-                        db.session.commit()
-            await asyncio.get_running_loop().run_in_executor(None, _mark_banned)
-        except Exception:
-            pass
+                def _mark_banned():
+                    with global_flask_app.app_context():
+                        gu = GroupUser.query.get(result['group_user_id'])
+                        if gu and not gu.is_banned:
+                            gu.is_banned = True
+                            db.session.commit()
+                await asyncio.get_running_loop().run_in_executor(None, _mark_banned)
+            except Exception:
+                pass
         _sched_del(context, await update.message.reply_html(msg), 30)
     elif status in ('repeat', 'success'):
         r = await update.message.reply_html(msg)
@@ -12223,6 +12286,7 @@ async def run_bot(app_instance):
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
     # Callback query handler (catch-all – runs after audit_callback_handler)
+    app.add_handler(CallbackQueryHandler(handle_entry_verification_callback, pattern=r'^ev:'))
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     
     # Command handlers
@@ -12271,11 +12335,11 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_expired_users, interval=EXPIRATION_CHECK_INTERVAL, first=10)
     app.job_queue.run_repeating(check_scheduled_messages, interval=SCHEDULED_MESSAGE_CHECK_INTERVAL, first=15)
     app.job_queue.run_repeating(check_timed_group_control, interval=60, first=20)  # 🆕 Check every minute
-    app.job_queue.run_repeating(check_channel_subscriptions, interval=3600, first=30)  # 🆕 Check every hour
+    app.job_queue.run_repeating(check_channel_subscriptions, interval=CHECK_INTERVAL_TICK_SECONDS, first=30)  # tick; per-group interval decides who runs
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
     app.job_queue.run_repeating(update_lottery_status, interval=60, first=45)  # 🆕 Update lottery status every minute
     app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
-    app.job_queue.run_repeating(check_inactive_users, interval=86400, first=60)  # 🆕 Check inactive users daily
+    app.job_queue.run_repeating(check_inactive_users, interval=CHECK_INTERVAL_TICK_SECONDS, first=60)  # tick; per-group interval decides who runs
     app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
     app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)  # 🆕 Check red packet expiration every 5 minutes
     app.job_queue.run_repeating(check_and_send_votes, interval=60, first=90)  # 🆕 Auto-send pending votes every minute
@@ -12386,6 +12450,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
     # Callback query handler
+    app.add_handler(CallbackQueryHandler(handle_entry_verification_callback, pattern=r'^ev:'))
     app.add_handler(CallbackQueryHandler(pagination_callback))
     
     # Command handlers
@@ -14439,6 +14504,85 @@ def _is_clone_admin(clone_id: int, user_id: int) -> bool:
             return False
 
 
+
+def _load_start_message_payload(clone_id, message_type):
+    """Load an active custom /start message for this bot instance, or None."""
+    group = BotGroup.query.filter_by(is_active=True, clone_id=clone_id).order_by(BotGroup.updated_at.desc()).first()
+    conf = get_group_conf(group) if group else DEFAULT_SYSTEM.copy()
+    if not conf.get('start_msg_open', False):
+        return None
+    start_msg = (
+        StartMessage.query
+        .join(BotGroup, StartMessage.group_id == BotGroup.id)
+        .filter(
+            BotGroup.clone_id == clone_id,
+            BotGroup.is_active,
+            StartMessage.message_type == message_type,
+            StartMessage.is_active
+        )
+        .order_by(StartMessage.id.desc())
+        .first()
+    )
+    if not start_msg:
+        return None
+    try:
+        links = json.loads(start_msg.links) if start_msg.links else []
+    except (json.JSONDecodeError, TypeError) as e:
+        print(f"⚠️ [/start] Failed to parse links JSON for StartMessage ID {start_msg.id} in group {start_msg.group_id}: {e}", flush=True)
+        links = []
+    return {
+        'media_type': start_msg.media_type,
+        'media_url': start_msg.media_url,
+        'content': start_msg.content or '',
+        'links': links,
+    }
+
+
+async def _send_start_message_payload(update, start_msg_data, fallback_content=None):
+    """Send a custom /start payload (text / image / video + buttons)."""
+    if not start_msg_data:
+        return False
+    media_type = start_msg_data.get('media_type')
+    content = start_msg_data.get('content') or ''
+    media_url = start_msg_data.get('media_url')
+    links = start_msg_data.get('links') or []
+    if not content:
+        content = fallback_content or DEFAULT_SYSTEM['msg_private_start']
+
+    reply_markup = None
+    if links:
+        keyboard = build_inline_keyboard_from_links(links)
+        if keyboard:
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+    try:
+        if media_type == 'image' and media_url:
+            await update.message.reply_photo(
+                photo=media_url,
+                caption=content,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+        elif media_type == 'video' and media_url:
+            await update.message.reply_video(
+                video=media_url,
+                caption=content,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_html(content, reply_markup=reply_markup)
+        return True
+    except Exception as e:
+        print(f"❌ [/start] Failed to send start message (media_type={media_type}, has_media_url={bool(media_url)}): {e}", flush=True)
+        try:
+            await update.message.reply_html(content)
+            return True
+        except Exception as fallback_error:
+            print(f"❌ [/start] Critical error: Even fallback text message failed: {fallback_error}", flush=True)
+            return False
+
+
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
@@ -14580,6 +14724,16 @@ async def cmd_start(update: Update, context):
             reply_markup=reply_markup
         )
         _sched_del(context, _welcome_msg, 300)
+
+        # If an "admin" type /start message is configured, send it as a separate
+        # message so the login verification (code / link) is never dropped.
+        def _get_admin_start_msg():
+            with global_flask_app.app_context():
+                return _load_start_message_payload(clone_id, 'admin')
+
+        admin_start_msg = await asyncio.get_running_loop().run_in_executor(None, _get_admin_start_msg)
+        if admin_start_msg:
+            await _send_start_message_payload(update, admin_start_msg)
     else:
         # Get custom private start message and check for expired memberships
         def _get_private_start_msg_and_check_expiration():
@@ -14652,6 +14806,9 @@ async def cmd_start(update: Update, context):
                 users_to_ban = []
                 for group_user in expired_memberships:
                     if group_user.group and group_user.group.is_active:
+                        group_conf = get_group_conf(group_user.group)
+                        if not is_auto_mute_expired_enabled(group_conf):
+                            continue
                         # Store group_user.id for later database update
                         users_to_ban.append({
                             'group_user_id': group_user.id,
@@ -14898,6 +15055,78 @@ async def on_non_text_message(update: Update, context):
         print(f"Error in on_non_text_message: {e}")
 
 
+
+async def _complete_entry_verification(context, chat, user, pending_key):
+    """Restore permissions after a successful entry verification and drop pending state."""
+    context.application.bot_data.pop(pending_key, None)
+    current_jobs = context.application.job_queue.get_jobs_by_name(pending_key)
+    for job in current_jobs:
+        job.schedule_removal()
+    try:
+        await context.bot.restrict_chat_member(
+            chat_id=chat.id,
+            user_id=user.id,
+            permissions=get_unrestricted_permissions()
+        )
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=f"✅ <a href='tg://user?id={user.id}'>{user.first_name}</a> 验证成功，欢迎加入！",
+            parse_mode='HTML'
+        )
+    except Exception as restore_err:
+        print(f"Error restoring verified member permissions: {restore_err}")
+
+
+async def handle_entry_verification_callback(update: Update, context):
+    """Handle emoji / multiple-choice entry verification button taps."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    parsed = parse_verification_callback_data(query.data)
+    if not parsed:
+        return
+    expected_user_id, callback_index = parsed
+    chat = query.message.chat if query.message else update.effective_chat
+    user = query.from_user
+    if not chat or not user:
+        return
+
+    pending_key = f"pending_verification:{chat.id}:{expected_user_id}"
+    state = context.application.bot_data.get(pending_key)
+    result = evaluate_verification_submission(
+        state,
+        clicker_id=user.id,
+        expected_user_id=expected_user_id,
+        callback_index=callback_index,
+    )
+    try:
+        if result == 'missing':
+            await query.answer('验证已结束或已处理。', show_alert=True)
+            return
+        if result == 'not_yours':
+            await query.answer('这不是你的验证。', show_alert=True)
+            return
+        if result == 'ignored':
+            await query.answer()
+            return
+        if result == 'wrong':
+            await query.answer('答案错误，请重试。', show_alert=True)
+            return
+        await query.answer('验证成功！')
+    except Exception as e:
+        print(f"Error answering verification callback: {e}")
+        if result != 'correct':
+            return
+
+    if result == 'correct':
+        # Use a namespace with id/first_name so the success message addresses the member.
+        target = user if user.id == expected_user_id else SimpleNamespace(
+            id=expected_user_id,
+            first_name=(user.first_name if user.id == expected_user_id else '新成员'),
+        )
+        await _complete_entry_verification(context, chat, target, pending_key)
+
+
 async def on_message(update: Update, context):
     if not global_flask_app: return
     try:
@@ -14917,33 +15146,16 @@ async def on_message(update: Update, context):
             pending_key = f"pending_verification:{chat.id}:{user.id}"
             verify_state = context.application.bot_data.get(pending_key)
             if verify_state is not None:
-                correct_answer = verify_state.get('answer', '')
-                if txt.strip().lower() == correct_answer:
-                    # Correct answer — restore permissions and remove pending state
-                    context.application.bot_data.pop(pending_key, None)
-                    # Cancel timeout kick job
-                    current_jobs = context.application.job_queue.get_jobs_by_name(pending_key)
-                    for job in current_jobs:
-                        job.schedule_removal()
-                    try:
-                        await context.bot.restrict_chat_member(
-                            chat_id=chat.id,
-                            user_id=user.id,
-                            permissions=get_unrestricted_permissions()
-                        )
-                        await context.bot.send_message(
-                            chat_id=chat.id,
-                            text=f"✅ <a href='tg://user?id={user.id}'>{user.first_name}</a> 验证成功，欢迎加入！",
-                            parse_mode='HTML'
-                        )
-                    except Exception as restore_err:
-                        print(f"Error restoring verified member permissions: {restore_err}")
-                else:
+                result = evaluate_verification_submission(verify_state, text=txt)
+                if result == 'correct':
+                    await _complete_entry_verification(context, chat, user, pending_key)
+                elif result == 'wrong':
                     # Wrong answer — delete message, do not unblock
                     try:
                         await msg.delete()
                     except Exception:
                         pass
+                # 'ignored' covers button-type challenges: typing is not an answer.
                 return
 
         # 🆕 Check spam protection first (may delete message and return early)
@@ -14987,6 +15199,44 @@ async def on_message(update: Update, context):
             try:
                 forwarded_user = getattr(msg, 'forward_from', None)
                 if forwarded_user:
+                    def _forward_auth_flags():
+                        with global_flask_app.app_context():
+                            return (
+                                user_is_any_clone_admin(user.id),
+                                user_is_recorded_group_admin(user.id),
+                            )
+
+                    is_clone_admin_flag, is_group_admin_flag = await asyncio.get_running_loop().run_in_executor(
+                        None, _forward_auth_flags
+                    )
+                    authorized = is_forward_lookup_authorized(
+                        user.id,
+                        admin_id=safe_int(os.getenv('ADMIN_ID', 0)),
+                        is_clone_admin=is_clone_admin_flag,
+                        is_registered_group_admin=is_group_admin_flag,
+                    )
+                    if not authorized:
+                        # Telegram API fallback: admin of a registered group of this bot
+                        def _list_chats():
+                            with global_flask_app.app_context():
+                                return list(list_active_group_chat_ids(context.application.bot_data.get('clone_id')))
+
+                        chat_ids = await asyncio.get_running_loop().run_in_executor(None, _list_chats)
+                        for cid in chat_ids:
+                            try:
+                                chat_id_int = int(cid)
+                            except (TypeError, ValueError):
+                                continue
+                            try:
+                                if await is_user_admin_in_group(context.bot, chat_id_int, user.id):
+                                    authorized = True
+                                    break
+                            except Exception:
+                                continue
+                    if not authorized:
+                        await msg.reply_text(FORWARD_LOOKUP_DENIED_TEXT)
+                        return
+
                     info_lines = ["🔍 转发消息详细信息\n"]
                     info_lines.append("━━━━━━━━━━━━━━━━")
                     info_lines.append(f"📛 用户名: {forwarded_user.first_name or '-'}")

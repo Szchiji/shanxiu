@@ -349,6 +349,7 @@ class ForcedChannelSubscription(db.Model):
     verification_message = db.Column(db.Text, nullable=True)
     reward_points = db.Column(db.Integer, default=0)  # 订阅成功奖励积分
     reward_given_user_ids = db.Column(db.Text, default='[]')  # JSON: 已发放奖励的用户tg_id列表
+    last_checked_at = db.Column(db.DateTime, nullable=True)  # 上次按间隔执行检查的时间
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -831,6 +832,7 @@ class InactiveUserSettings(db.Model):
     warning_enabled = db.Column(db.Boolean, default=False)  # 是否提前警告
     warning_days = db.Column(db.Integer, default=7)  # 提前警告天数
     warning_message = db.Column(db.Text, nullable=True)  # 警告消息
+    last_checked_at = db.Column(db.DateTime, nullable=True)  # 上次按间隔执行检查的时间
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -1269,6 +1271,7 @@ DEFAULT_SYSTEM = {
     "auto_like": True, "like_emoji": "❤",  # Telegram reaction form (no FE0F); ❤️ is normalized at runtime
     # Auto-apply Telegram nickname member tag (setChatMemberTag) for authenticated users
     "auto_member_tag": True,
+    "auto_mute_expired": True,  # 过期自动禁言（默认开，与历史「到期即禁言」一致）
     "default_member_tag": "认证",  # used when user has no custom member_tags; max 16 chars, no emoji
     "auto_reply_open": True,  # 自动回复开关
     "scheduled_msg_open": True,  # 定时消息开关

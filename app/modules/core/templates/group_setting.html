@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
@@ -203,6 +204,21 @@
                 <span class="cursor-pointer text-primary" onclick="insert('{onlineEmoji}')">表情</span>
                 {% for f in fields %}<span class="cursor-pointer text-primary" onclick="insert({{ ('{' ~ f.label ~ '}')|tojson|forceescape }})">{{ f.label }}</span>{% endfor %}
             </div>
+            <div class="px-3 py-2 border-bottom d-flex gap-2 flex-wrap align-items-center">
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('bold')" title="加粗"><i class="fa-solid fa-bold"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('italic')" title="斜体"><i class="fa-solid fa-italic"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('underline')" title="下划线"><i class="fa-solid fa-underline"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('strikethrough')" title="删除线"><i class="fa-solid fa-strikethrough"></i></button>
+                <div class="vr"></div>
+                <button type="button" class="btn btn-sm btn-light" onclick="link()" title="添加链接"><i class="fa-solid fa-link"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('unlink')" title="断开链接"><i class="fa-solid fa-unlink"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
+                <div class="vr"></div>
+                <button type="button" class="btn btn-sm btn-light" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                <button type="button" class="btn btn-sm btn-light" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
+            </div>
             <div id="richEditor" class="p-3" contenteditable="true" style="min-height:200px;outline:none"></div>
         </div>
         <div class="modal-footer py-2"><button class="btn btn-primary" onclick="saveEd()">确定</button></div>
@@ -221,9 +237,11 @@
 <script>
     let cur='', modal=null;
     document.addEventListener('DOMContentLoaded', ()=> modal = new bootstrap.Modal(document.getElementById('editorModal')));
-    function openEditor(k,t){ cur=k; document.querySelector('.modal-title').innerText=t; document.getElementById('richEditor').innerHTML=document.getElementById('v_'+k).value; modal.show(); }
-    function saveEd(){ document.getElementById('v_'+cur).value=document.getElementById('richEditor').innerHTML; modal.hide(); }
+    function openEditor(k,t){ cur=k; document.querySelector('.modal-title').innerText=t; document.getElementById('richEditor').innerHTML=templateToHtml(document.getElementById('v_'+k).value); modal.show(); }
+    function saveEd(){ document.getElementById('v_'+cur).value=htmlToTemplate(document.getElementById('richEditor').innerHTML); modal.hide(); }
+    function cmd(c,v=null){ document.getElementById('richEditor').focus(); document.execCommand(c,false,v); }
     function insert(t){ document.getElementById('richEditor').focus(); document.execCommand('insertText',false,t); }
+    function link(){ let u=prompt('链接:'); if(u) cmd('createLink',u); }
     
     function saveGroup(){
         // 获取所有字段，如果为空字符串则传 null (后端不做合并) 或保留为空字符串

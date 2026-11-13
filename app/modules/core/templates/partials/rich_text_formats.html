@@ -1,0 +1,50 @@
+<style>
+    [contenteditable] code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+        background: #eef1f5;
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        font-size: 0.92em;
+    }
+    [contenteditable] pre {
+        display: block;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+        background: #eef1f5;
+        padding: 0.6em 0.8em;
+        border-radius: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0.4em 0;
+        font-size: 0.92em;
+    }
+    [contenteditable] pre code {
+        background: transparent;
+        padding: 0;
+    }
+    [contenteditable] tg-spoiler,
+    [contenteditable] span.tg-spoiler {
+        display: inline;
+        background: repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.10) 0 5px, rgba(0, 0, 0, 0.03) 5px 10px);
+        border-radius: 3px;
+        padding: 0 0.2em;
+        filter: blur(3px);
+    }
+    [contenteditable] tg-spoiler:focus-within,
+    [contenteditable] span.tg-spoiler:focus-within,
+    [contenteditable] tg-spoiler:hover,
+    [contenteditable] span.tg-spoiler:hover {
+        filter: none;
+    }
+    [contenteditable] blockquote {
+        display: block;
+        margin: 0.4em 0;
+        padding: 0.25em 0.85em;
+        border-left: 3px solid #7a93a7;
+        background: #f4f7fa;
+        color: #334;
+        white-space: pre-wrap;
+    }
+</style>
+<script>
+{% include 'partials/rich_text_formats.js' %}
+</script>

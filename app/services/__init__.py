@@ -6,7 +6,7 @@ import bleach
 # Telegram-supported HTML tags
 _TELEGRAM_ALLOWED_TAGS = [
     'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del',
-    'a', 'code', 'pre', 'tg-spoiler', 'tg-emoji', 'span'
+    'a', 'code', 'pre', 'tg-spoiler', 'tg-emoji', 'span', 'blockquote'
 ]
 
 
@@ -53,6 +53,26 @@ def _strip_bare_spans(text):
     return ''.join(result)
 
 
+
+def _flatten_blocks_inside_pre_and_blockquote(text):
+    """Turn leftover editor <div>/<p>/<br> inside pre/blockquote into newlines."""
+    def _flatten(match):
+        tag, attrs, inner = match.group(1), match.group(2), match.group(3)
+        inner = re.sub(r'<div><br\s*/?></div>', '\n', inner, flags=re.I)
+        inner = re.sub(r'<p><br\s*/?></p>', '\n', inner, flags=re.I)
+        inner = re.sub(r'<br\s*/?>', '\n', inner, flags=re.I)
+        inner = re.sub(r'</(?:div|p)>', '', inner, flags=re.I)
+        inner = re.sub(r'<(?:div|p)\b[^>]*>', '\n', inner, flags=re.I)
+        return f'<{tag}{attrs}>{inner}</{tag}>'
+
+    return re.sub(
+        r'<(pre|blockquote)(\b[^>]*)>([\s\S]*?)</\1>',
+        _flatten,
+        text,
+        flags=re.I,
+    )
+
+
 def sanitize_html_for_telegram(text):
     """
     Sanitize HTML to only include Telegram-supported tags.
@@ -67,8 +87,11 @@ def sanitize_html_for_telegram(text):
     - <a href=""> - link
     - <tg-spoiler> or <span class="tg-spoiler"> - spoiler
     - <tg-emoji> - custom emoji
+    - <blockquote> - quoted block
 
     All other tags are stripped while their inner text content is preserved.
+    <div>, <p> and <br> nested inside <pre> or <blockquote> are converted to
+    newlines first so Telegram HTML is not broken by leftover editor markup.
     """
     if not text:
         return text
@@ -77,6 +100,11 @@ def sanitize_html_for_telegram(text):
     # &nbsp; in particular appears as literal "&nbsp;" in Telegram messages if
     # not decoded first.
     text = text.replace('&nbsp;', ' ')
+
+    # Contenteditable editors may leave <div>/<p>/<br> inside <pre> or
+    # <blockquote>. Telegram's HTML mode does not accept those tags, and
+    # stripping them would glue lines together, so turn them into newlines.
+    text = _flatten_blocks_inside_pre_and_blockquote(text)
 
     cleaned = bleach.clean(
         text,

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import feature_description %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 <style>
     .table-container {
         background: var(--bg-card);
@@ -383,6 +384,12 @@
                                 <button type="button" class="btn-toolbar-action" onclick="link()" title="添加链接"><i class="fa-solid fa-link"></i></button>
                                 <button type="button" class="btn-toolbar-action" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
                             </div>
+                            <div class="btn-group rounded shadow-sm">
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
+                            </div>
                         </div>
                         <div id="editor" class="form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 150px; padding: 1rem; font-family: 'Courier New', Consolas, monospace;"></div>
                     </div>
@@ -708,7 +715,7 @@
         
         document.getElementById('modalTitle').textContent = '编辑 /start 消息';
         document.getElementById('item_id').value = item.id;
-        document.getElementById('editor').innerHTML = item.content || '';
+        document.getElementById('editor').innerHTML = templateToHtml(item.content || '');
         document.getElementById('media_url').value = item.media_url || '';
         
         // Set message type
@@ -749,7 +756,7 @@
             message_type: document.getElementById('message_type').value,
             media_type: document.getElementById('media_type').value,
             media_url: document.getElementById('media_url').value,
-            content: document.getElementById('editor').innerHTML,
+            content: htmlToTemplate(document.getElementById('editor').innerHTML),
             links: JSON.stringify(currentLinks.filter(l => l.text && l.url))
         };
         

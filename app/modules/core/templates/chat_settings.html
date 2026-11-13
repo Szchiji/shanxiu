@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
@@ -60,7 +61,13 @@
                         <button class="btn btn-sm btn-light text-dark" onclick="cmd('strikeThrough')" title="删除线"><i class="fa-solid fa-strikethrough"></i></button>
                         <button class="btn btn-sm btn-light text-dark" onclick="promptLink()" title="链接"><i class="fa-solid fa-link"></i></button>
                     </div>
-                    
+                    <div class="btn-group bg-white border rounded">
+                        <button class="btn btn-sm btn-light text-dark" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                        <button class="btn btn-sm btn-light text-dark" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                        <button class="btn btn-sm btn-light text-dark" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                        <button class="btn btn-sm btn-light text-dark" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
+                    </div>
+
                     <div class="vr mx-1"></div>
                     
                     <!-- 变量标签 -->
@@ -105,12 +112,12 @@
 
     function loadEditorContent() {
         const key = document.getElementById('msgSelector').value;
-        document.getElementById('editor').innerHTML = msgData[key] || '';
+        document.getElementById('editor').innerHTML = templateToHtml(msgData[key] || '');
     }
 
     function saveCurrentMsg() {
         const key = document.getElementById('msgSelector').value;
-        msgData[key] = document.getElementById('editor').innerHTML;
+        msgData[key] = htmlToTemplate(document.getElementById('editor').innerHTML);
         // 添加一个小动画提示
         const btn = document.querySelector('.btn-success');
         const orgText = btn.innerHTML;

@@ -11,6 +11,11 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord)
 from app.services import sanitize_html_for_telegram
+from app.services.chat_migration import (
+    call_with_chat_migration_retry,
+    handle_chat_migrated,
+    MigrationRetryFailed,
+)
 from app.log_redaction import redact_secrets
 from app.services.points_service import clamp_award_to_daily_cap
 from app.services.expired_mute import is_auto_mute_expired_enabled
@@ -1958,6 +1963,7 @@ def page_group_bottom_button(gid):
         'button_order': b.button_order,
         'row_position': b.row_position,
         'trigger_keyword': b.trigger_keyword,
+        'input_field_placeholder': b.input_field_placeholder,
         'is_active': b.is_active
     } for b in buttons], ensure_ascii=False)
     
@@ -3710,8 +3716,10 @@ def api_send_scheduled_message_now(message_id):
         }
 
         collected_ids = []
+        flask_app = global_flask_app
 
-        async def _send_now():
+        async def _send_now(target_chat_id):
+            collected_ids.clear()
             message_thread_id = msg_snapshot.get('message_thread_id')
             # 如需删除上一条消息（支持媒体组多条消息整体删除）
             if msg_snapshot['delete_previous'] and (msg_snapshot['last_message_id'] or msg_snapshot.get('last_message_ids')):
@@ -3725,7 +3733,7 @@ def api_send_scheduled_message_now(message_id):
                     ids_to_delete = [msg_snapshot['last_message_id']]
                 for mid in ids_to_delete:
                     try:
-                        await ptb_app.bot.delete_message(chat_id=chat_id, message_id=mid)
+                        await ptb_app.bot.delete_message(chat_id=target_chat_id, message_id=mid)
                     except Exception:
                         pass
 
@@ -3746,7 +3754,7 @@ def api_send_scheduled_message_now(message_id):
 
             if media_type in ('image', 'video', 'media') and media_urls:
                 sent_message = await send_multi_media(
-                    ptb_app.bot, chat_id, media_type, media_urls,
+                    ptb_app.bot, target_chat_id, media_type, media_urls,
                     content=content, reply_markup=reply_markup,
                     message_thread_id=message_thread_id,
                     media_url_types=msg_snapshot.get('media_url_types'),
@@ -3754,7 +3762,7 @@ def api_send_scheduled_message_now(message_id):
                 )
             elif content:
                 sent_message = await ptb_app.bot.send_message(
-                    chat_id=chat_id,
+                    chat_id=target_chat_id,
                     text=content,
                     parse_mode='HTML',
                     reply_markup=reply_markup,
@@ -3767,19 +3775,28 @@ def api_send_scheduled_message_now(message_id):
             if sent_message and msg_snapshot.get('auto_pin'):
                 try:
                     await ptb_app.bot.pin_chat_message(
-                        chat_id=chat_id,
+                        chat_id=target_chat_id,
                         message_id=sent_message.message_id,
                         disable_notification=True
                     )
                 except Exception as pin_err:
-                    print(f"⚠️ 置顶消息失败 (send_now, chat_id={chat_id}): {pin_err}", flush=True)
+                    print(f"⚠️ 置顶消息失败 (send_now, chat_id={target_chat_id}): {pin_err}", flush=True)
             return sent_message
 
-        future = asyncio.run_coroutine_threadsafe(_send_now(), global_bot_loop)
+        async def _send_now_with_retry():
+            sent, _used_id, _migrated = await call_with_chat_migration_retry(
+                _send_now, chat_id, clone_id=group_clone_id, group=group, flask_app=flask_app
+            )
+            return sent
+
+        future = asyncio.run_coroutine_threadsafe(_send_now_with_retry(), global_bot_loop)
         try:
             sent_message = future.result(timeout=30)
         except TimeoutError:
             return jsonify({'status':'error','msg':'消息发送超时，请稍后重试'})
+        except MigrationRetryFailed as send_err:
+            print(f"Error sending scheduled message now (migrated to {send_err.new_chat_id}): {send_err.original}", flush=True)
+            return jsonify({'status':'error','msg':f'消息发送失败：群已升级为超级群（新群 ID: {send_err.new_chat_id}），已更新记录但仍发送失败：{send_err.original}'})
         except Exception as send_err:
             print(f"Error sending scheduled message now: {send_err}", flush=True)
             return jsonify({'status':'error','msg':f'消息发送失败：{send_err}'})
@@ -5582,10 +5599,13 @@ def api_save_group_bottom_button():
         button.row_position = d.get('row_position', 0)
         button.is_active = d.get('is_active', True)
         
-        # Keep these fields for backward compatibility but don't expose in UI
-        button.button_url = d.get('button_url')
-        button.button_callback = d.get('button_callback')
-        button.trigger_keyword = d.get('trigger_keyword', '').strip() or None
+        # 后台页面已不再提交这三项；仅在请求里带了对应字段时才更新，避免把库里的旧值清空
+        if 'button_url' in d:
+            button.button_url = d.get('button_url')
+        if 'button_callback' in d:
+            button.button_callback = d.get('button_callback')
+        if 'trigger_keyword' in d:
+            button.trigger_keyword = (d.get('trigger_keyword') or '').strip() or None
         
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -5663,6 +5683,8 @@ def api_push_group_bottom_buttons():
     try:
         group = BotGroup.query.get(d['group_id'])
         if not group: return jsonify({'status':'error','msg':'Group not found'})
+        err = _api_check_group_access(group)
+        if err: return err
         
         # Get active buttons ordered by row_position, then button_order
         buttons = GroupBottomButton.query.filter_by(
@@ -5724,43 +5746,64 @@ def api_push_group_bottom_buttons():
             input_field_placeholder=input_placeholder
         ) if keyboard else None
         
+        flask_app = global_flask_app
+        clone_id = group.clone_id
+        original_chat_id = group.chat_id
+
         # Send message with menu keyboard to the group
         async def _send_menu_command():
-            try:
-                # Send a message with the menu keyboard attached
-                msg = await ptb_app.bot.send_message(
-                    chat_id=group.chat_id,
+            async def _do_send(cid):
+                return await ptb_app.bot.send_message(
+                    chat_id=cid,
                     text="📋 群组菜单已更新！\n\n👇 请使用下方按钮菜单：",
                     reply_markup=reply_markup
                 )
-                print(f"✅ 菜单键盘推送成功，消息ID: {msg.message_id}", flush=True)
-                return True
+            try:
+                msg, used_id, migrated = await call_with_chat_migration_retry(
+                    _do_send,
+                    original_chat_id,
+                    clone_id=clone_id,
+                    flask_app=flask_app,
+                )
+                print(f"✅ 菜单键盘推送成功，消息ID: {msg.message_id}，chat_id={used_id}", flush=True)
+                return {'ok': True, 'migrated': migrated, 'chat_id': used_id, 'message_id': msg.message_id}
+            except MigrationRetryFailed as e:
+                print(f"❌ 群已升级，重试推送到新 ID {e.new_chat_id} 仍失败: {e.original}", flush=True)
+                print(''.join(traceback.format_exception(type(e.original), e.original, e.original.__traceback__)), flush=True)
+                return {'ok': False, 'migrated': True, 'chat_id': e.new_chat_id, 'error': str(e.original)}
             except Exception as e:
-                import traceback
                 print(f"❌ 推送菜单键盘时发生错误: {e}", flush=True)
                 print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
-                return False
+                return {'ok': False, 'migrated': False, 'error': str(e)}
         
         # Run async function in bot's event loop
         try:
             future = asyncio.run_coroutine_threadsafe(_send_menu_command(), global_bot_loop)
-            success = future.result(timeout=10)
+            result = future.result(timeout=10)
             
-            if success:
+            if result and result.get('ok'):
+                if result.get('migrated'):
+                    return jsonify({
+                        'status': 'ok',
+                        'msg': f"菜单已成功推送到群组（群已升级为超级群，已自动更新群 ID 为 {result.get('chat_id')}），群成员现在可以看到底部按钮菜单"
+                    })
                 return jsonify({'status':'ok','msg':'菜单已成功推送到群组，群成员现在可以看到底部按钮菜单'})
-            else:
-                return jsonify({'status':'error','msg':'推送失败，请检查bot权限和群组ID是否正确'})
+            err_msg = (result or {}).get('error') or ''
+            if (result or {}).get('migrated'):
+                return jsonify({
+                    'status': 'error',
+                    'msg': f"推送失败：群已升级为超级群（新群 ID: {result.get('chat_id')}），已更新记录但仍发送失败：{err_msg}。请检查 bot 权限。"
+                })
+            return jsonify({'status':'error','msg':'推送失败，请检查bot权限和群组ID是否正确'})
         except asyncio.TimeoutError:
             print("❌ 推送菜单超时", flush=True)
             return jsonify({'status':'error','msg':'推送超时，请稍后再试'})
         except Exception as e:
-            import traceback
             print(f"❌ 异步调用失败: {e}", flush=True)
             print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
             return jsonify({'status':'error','msg':f'推送失败: {str(e)}'})
             
     except Exception as e:
-        import traceback
         print(f"❌ API调用失败: {e}", flush=True)
         print(''.join(traceback.format_exception(type(e), e, e.__traceback__)), flush=True)
         return jsonify({'status':'error','msg':str(e)})
@@ -7790,23 +7833,7 @@ async def check_scheduled_messages(context):
                 print(f"⏭️ 跳过消息 {msg_data['id']}：已被其他调度器实例处理或已停用", flush=True)
                 continue
             
-            # 如果需要删除上一条消息（支持媒体组多条消息整体删除）
-            if msg_data['delete_previous'] and (msg_data['last_message_id'] or msg_data.get('last_message_ids')):
-                ids_to_delete = []
-                if msg_data.get('last_message_ids'):
-                    try:
-                        ids_to_delete = json.loads(msg_data['last_message_ids'])
-                    except Exception:
-                        pass
-                if not ids_to_delete and msg_data['last_message_id']:
-                    ids_to_delete = [msg_data['last_message_id']]
-                for mid in ids_to_delete:
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=mid)
-                    except Exception as e:
-                        print(f"Failed to delete previous message {mid}: {e}")
-            
-            # 构建按钮
+            # 构建按钮（与目标 chat_id 无关，升级重试时不必重算）
             buttons = []
             try:
                 links = json.loads(msg_data['links'] or '[]')
@@ -7815,33 +7842,53 @@ async def check_scheduled_messages(context):
                 pass
             
             reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-            
-            # 发送消息
-            sent_message = None
-            all_sent_ids = []
             content = sanitize_html_for_telegram(msg_data['content'] or '')
             media_urls = msg_data.get('media_urls', [])
             media_type = msg_data['media_type']
 
-            if media_type in ('image', 'video', 'media') and media_urls:
-                sent_message = await send_multi_media(
-                    bot, chat_id, media_type, media_urls,
-                    content=content, reply_markup=reply_markup,
-                    message_thread_id=message_thread_id,
-                    media_url_types=msg_data.get('media_url_types'),
-                    collected_ids=all_sent_ids
-                )
-            elif content:
-                sent_message = await bot.send_message(
-                    chat_id=chat_id,
-                    text=content,
-                    parse_mode='HTML',
-                    reply_markup=reply_markup,
-                    link_preview_options=LinkPreviewOptions(is_disabled=True),
-                    **({'message_thread_id': message_thread_id} if message_thread_id else {})
-                )
-                if sent_message:
-                    all_sent_ids.append(sent_message.message_id)
+            async def _deliver(target_chat_id):
+                # 如果需要删除上一条消息（支持媒体组多条消息整体删除）
+                if msg_data['delete_previous'] and (msg_data['last_message_id'] or msg_data.get('last_message_ids')):
+                    ids_to_delete = []
+                    if msg_data.get('last_message_ids'):
+                        try:
+                            ids_to_delete = json.loads(msg_data['last_message_ids'])
+                        except Exception:
+                            pass
+                    if not ids_to_delete and msg_data['last_message_id']:
+                        ids_to_delete = [msg_data['last_message_id']]
+                    for mid in ids_to_delete:
+                        try:
+                            await bot.delete_message(chat_id=target_chat_id, message_id=mid)
+                        except Exception as e:
+                            print(f"Failed to delete previous message {mid}: {e}")
+
+                sent = None
+                sent_ids = []
+                if media_type in ('image', 'video', 'media') and media_urls:
+                    sent = await send_multi_media(
+                        bot, target_chat_id, media_type, media_urls,
+                        content=content, reply_markup=reply_markup,
+                        message_thread_id=message_thread_id,
+                        media_url_types=msg_data.get('media_url_types'),
+                        collected_ids=sent_ids
+                    )
+                elif content:
+                    sent = await bot.send_message(
+                        chat_id=target_chat_id,
+                        text=content,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        **({'message_thread_id': message_thread_id} if message_thread_id else {})
+                    )
+                    if sent:
+                        sent_ids.append(sent.message_id)
+                return sent, sent_ids
+
+            (sent_message, all_sent_ids), chat_id, _migrated = await call_with_chat_migration_retry(
+                _deliver, chat_id, clone_id=msg_data.get('clone_id'), flask_app=global_flask_app
+            )
             
             if not sent_message:
                 # 没有发出任何消息（无内容/无媒体等）：按失败处理，计入失败次数
@@ -12412,6 +12459,8 @@ async def run_bot(app_instance):
     # 🆕 New member/leave handlers (must come before general message handler)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
+    # 群升级为超级群时提前记下新 chat_id，避免后续发送仍打到旧 ID
+    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, handle_chat_migrated))
     
     # 🆕 Auto-delete system messages (must come early to delete before processing)
     # Exclude CHANNEL_POSTS: StatusUpdate.PINNED_MESSAGE also matches in-channel pin notices.
@@ -12584,6 +12633,8 @@ def setup_clone_handlers(app, flask_app, clone_id):
     # Add member join/leave handlers
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_left_chat_member))
+    # 群升级为超级群时提前记下新 chat_id，避免后续发送仍打到旧 ID
+    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, handle_chat_migrated))
     
     # Add auto-delete system messages
     # Exclude CHANNEL_POSTS: StatusUpdate.PINNED_MESSAGE also matches in-channel pin notices.

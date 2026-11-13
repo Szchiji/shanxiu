@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import toast_notification, loading_spinner %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
@@ -236,7 +237,12 @@
                     <button class="btn btn-sm btn-light" onclick="cmd('underline')"><i class="fa-solid fa-underline"></i></button>
                     <div class="vr"></div>
                     <button class="btn btn-sm btn-light" onclick="link()"><i class="fa-solid fa-link"></i></button>
-                    <button class="btn btn-sm btn-light" onclick="cmd('removeFormat')"><i class="fa-solid fa-eraser"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
+                    <div class="vr"></div>
+                    <button class="btn btn-sm btn-light" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                    <button class="btn btn-sm btn-light" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
                 </div>
                 <!-- 编辑区 -->
                 <div id="richEditor" class="p-3" contenteditable="true" style="min-height: 200px; outline: none; font-size: 15px; line-height: 1.6;"></div>
@@ -264,11 +270,11 @@
     function openEditor(k,t){ 
         cur=k; 
         document.querySelector('.modal-title').innerText=t; 
-        document.getElementById('richEditor').innerHTML=document.getElementById('v_'+k).value; 
+        document.getElementById('richEditor').innerHTML=templateToHtml(document.getElementById('v_'+k).value); 
         modal.show(); 
     }
     
-    function saveEd(){ document.getElementById('v_'+cur).value=document.getElementById('richEditor').innerHTML; modal.hide(); }
+    function saveEd(){ document.getElementById('v_'+cur).value=htmlToTemplate(document.getElementById('richEditor').innerHTML); modal.hide(); }
     function cmd(c,v=null){ document.getElementById('richEditor').focus(); document.execCommand(c,false,v); }
     function insert(t){ cmd('insertText', t); } // 直接插入变量名
     function link(){ let u=prompt('链接:'); if(u) cmd('createLink',u); }

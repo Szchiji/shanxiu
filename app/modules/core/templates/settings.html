@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import toast_notification, loading_spinner, feature_description %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 {{ toast_notification() }}
 {{ loading_spinner() }}
 
@@ -517,6 +518,12 @@
                          <button class="btn-toolbar-action" onclick="cmd('unlink')" title="断开链接"><i class="fa-solid fa-unlink"></i></button>
                          <button class="btn-toolbar-action" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
                     </div>
+                    <div class="btn-group rounded shadow-sm">
+                        <button class="btn-toolbar-action" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                        <button class="btn-toolbar-action" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                        <button class="btn-toolbar-action" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                        <button class="btn-toolbar-action" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
+                    </div>
                     <div class="vr mx-1"></div>
                     <span class="badge-variable badge bg-light text-dark border" onmousedown="insert('{onlineEmoji}', event)">🟢表情</span>
                     <span class="badge-variable badge bg-info text-white border" onmousedown="insert('{序号}', event)">#️⃣序号</span>
@@ -912,33 +919,6 @@
         });
         
         renderBtns();
-    }
-
-    // Convert stored template (with \n) to contenteditable HTML format
-    function templateToHtml(text) {
-        if (!text) return '';
-        // Split by newlines and wrap each line in a div
-        // First line is rendered as-is, subsequent lines are in divs
-        const lines = text.split('\n');
-        if (lines.length === 1) return text;
-        return lines[0] + lines.slice(1).map(line => '<div>' + (line || '<br>') + '</div>').join('');
-    }
-    
-    // Convert contenteditable HTML to template format (with \n)
-    function htmlToTemplate(html) {
-        if (!html) return '';
-        // Replace <div> and <p> tags with newlines
-        let text = html.replace(/<div><br><\/div>/gi, '\n');
-        text = text.replace(/<p><br><\/p>/gi, '\n');
-        text = text.replace(/<div>/gi, '\n');
-        text = text.replace(/<\/div>/gi, '');
-        text = text.replace(/<p>/gi, '\n');
-        text = text.replace(/<\/p>/gi, '');
-        // Replace <br> tags with newlines
-        text = text.replace(/<br\s*\/?>/gi, '\n');
-        // Clean up multiple consecutive newlines (but keep at most two)
-        text = text.replace(/\n\n+/g, '\n\n');
-        return text.trim();
     }
 
     function loadMsg() { 

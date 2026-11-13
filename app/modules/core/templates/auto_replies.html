@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "components.html" import feature_description %}
 {% block content %}
+{% include 'partials/rich_text_formats.html' %}
 {% set is_channel = group.type == 'channel' %}
 <style>
 .search-box {
@@ -614,6 +615,12 @@ async function saveChannelReplySwitch(el) {
                                 <button type="button" class="btn-toolbar-action" onclick="cmd('unlink')" title="断开链接"><i class="fa-solid fa-unlink"></i></button>
                                 <button type="button" class="btn-toolbar-action" onclick="cmd('removeFormat')" title="清除格式"><i class="fa-solid fa-eraser"></i></button>
                             </div>
+                            <div class="btn-group rounded shadow-sm">
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('code')" title="点击复制"><i class="fa-solid fa-copy"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('pre')" title="代码块"><i class="fa-solid fa-code"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('tg-spoiler')" title="剧透"><i class="fa-solid fa-eye-slash"></i></button>
+                                <button type="button" class="btn-toolbar-action" onclick="wrapTelegramFormat('blockquote')" title="引用"><i class="fa-solid fa-quote-left"></i></button>
+                            </div>
                         </div>
                         <div id="editor" class="form-control" contenteditable="true" style="border-radius: 0 0 10px 10px;"></div>
                     </div>
@@ -1059,28 +1066,6 @@ async function saveChannelReplySwitch(el) {
                 </div>
             `;
         }).join('');
-    }
-    
-    // Convert HTML to template format
-    function htmlToTemplate(html) {
-        if (!html) return '';
-        let text = html.replace(/<div><br><\/div>/gi, '\n');
-        text = text.replace(/<p><br><\/p>/gi, '\n');
-        text = text.replace(/<div>/gi, '\n');
-        text = text.replace(/<\/div>/gi, '');
-        text = text.replace(/<p>/gi, '\n');
-        text = text.replace(/<\/p>/gi, '');
-        text = text.replace(/<br\s*\/?>/gi, '\n');
-        text = text.replace(/\n\n+/g, '\n\n');
-        return text.trim();
-    }
-    
-    // Convert template to HTML format
-    function templateToHtml(text) {
-        if (!text) return '';
-        const lines = text.split('\n');
-        if (lines.length === 1) return text;
-        return lines[0] + lines.slice(1).map(line => '<div>' + (line || '<br>') + '</div>').join('');
     }
     
     // Modal operations

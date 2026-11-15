@@ -1297,16 +1297,30 @@ class UserReport(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.BigInteger, nullable=False)
     submitter_id = db.Column(db.BigInteger, nullable=True)
-    fault_time = db.Column(db.String(100))
+    # Legacy first-answer field; TEXT so long custom answers are not limited to 100 chars.
+    fault_time = db.Column(db.Text)
     fault_desc = db.Column(db.Text)
     process_result = db.Column(db.Text)
     photo_file_id = db.Column(db.String(255))
     channel_msg_id = db.Column(db.Integer, nullable=True)
+    # Actual channel the approved message was published to (id or @username).
+    channel_chat_id = db.Column(db.String(64), nullable=True)
     channel_msg_deleted = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
     status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     # Stores all dynamic question answers as JSON: [{"question": "...", "answer": "..."}, ...]
     answers = db.Column(db.Text, nullable=True)
+    # None = main bot when owner_known is true; ignored when owner_known is false.
+    clone_id = db.Column(db.Integer, nullable=True, index=True)
+    # False for historical rows that were never attributed. Never backfilled on migrate.
+    owner_known = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
+    # Idempotency flag so approval-point rewards are not granted twice.
+    points_awarded = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
+    # Original audit message in the admin group (set when this bot notifies admins).
+    admin_chat_id = db.Column(db.String(64), nullable=True)
+    admin_message_id = db.Column(db.Integer, nullable=True)
+    # Short-lived approve lease so concurrent workers cannot both publish.
+    approve_claimed_at = db.Column(db.DateTime, nullable=True)
 
 
 DEFAULT_FIELDS = [

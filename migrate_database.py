@@ -147,6 +147,15 @@ def run_migrations():
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
         # user_reports: Track whether the channel message has been deleted
         "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_msg_deleted BOOLEAN DEFAULT FALSE",
+        # user_reports: Actual channel the approved message was published to
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_chat_id VARCHAR(64) NULL",
+        # user_reports: Owning bot (NULL = main bot when owner_known); not backfilled
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS owner_known BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS points_awarded BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS admin_chat_id VARCHAR(64) NULL",
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS admin_message_id INTEGER NULL",
+        "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS approve_claimed_at TIMESTAMP NULL",
         # pending_referrals: Track users who arrive via /mylink deep-links before they join the group
         "CREATE TABLE IF NOT EXISTS pending_referrals (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT NOT NULL, inviter_id BIGINT NOT NULL, group_id INTEGER REFERENCES bot_groups(id), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_pending_referrals_user_id ON pending_referrals(user_id)",
@@ -253,6 +262,9 @@ def run_migrations():
                                 pass
             except Exception:
                 pass
+
+        from app.modules.report.service import ensure_user_report_schema
+        ensure_user_report_schema(db)
 
 
 if __name__ == '__main__':

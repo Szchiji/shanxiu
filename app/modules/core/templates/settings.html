@@ -534,8 +534,8 @@
                     <span class="badge-variable badge bg-warning text-dark border" onmousedown="insert('{tg_id}', event)">TG_ID</span>
                     <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{积分}', event)" title="本次签到获得积分">+积分</span>
                     <span class="badge-variable badge bg-success text-white border" onmousedown="insert('{余额}', event)" title="签到后总余额">余额</span>
-                    <span class="badge-variable badge bg-danger text-white border" onmousedown="insert('{写报告链接}', event)" title="填写报告的 Bot 深链接">✏️写报告</span>
-                    <span class="badge-variable badge bg-secondary text-white border" onmousedown="insert('{查报告链接}', event)" title="查看历史报告的 Bot 深链接">📋查报告</span>
+                    <span class="badge-variable badge bg-danger text-white border report-link-placeholder d-none" onmousedown="insert('{写报告链接}', event)" title="填写报告的 Bot 深链接">✏️写报告</span>
+                    <span class="badge-variable badge bg-secondary text-white border report-link-placeholder d-none" onmousedown="insert('{查报告链接}', event)" title="查看历史报告的 Bot 深链接">📋查报告</span>
                 </div>
                 
                 <div id="editor" class="editor-content form-control" contenteditable="true" style="border-radius: 0 0 10px 10px; min-height: 300px; padding: 1.5rem; background: var(--bg-card); font-family: 'Courier New', Consolas, monospace; line-height: 1.8; font-size: 14px; tab-size: 2;"></div>
@@ -921,10 +921,19 @@
         renderBtns();
     }
 
+    function syncReportLinkPlaceholders() {
+        const selector = document.getElementById('msgSelector');
+        const show = selector && selector.value === 'push_template';
+        document.querySelectorAll('.report-link-placeholder').forEach(el => {
+            el.classList.toggle('d-none', !show);
+        });
+    }
+
     function loadMsg() { 
         if(!msgs.msg_filter_header) msgs.msg_filter_header = "🔍 <b>筛选结果：</b>\n";
         const content = msgs[document.getElementById('msgSelector').value] || '';
         document.getElementById('editor').innerHTML = templateToHtml(content); 
+        syncReportLinkPlaceholders();
     }
     
     function saveTmp() { 

@@ -34,6 +34,8 @@ def init_database(app):
         # Extra safety: create report-module tables in case db.create_all() missed them
         # (e.g. due to a PostgreSQL orphaned-sequence conflict on the primary key column).
         _ensure_report_tables(db)
+        from app.modules.report.service import ensure_user_report_schema
+        ensure_user_report_schema(db)
 
 
 def _ensure_report_tables(db):
@@ -255,6 +257,17 @@ def fix_database_schema(app):
             "ALTER TABLE system_config ALTER COLUMN key DROP NOT NULL",
             # user_reports: Store dynamic question answers as JSON
             "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS answers TEXT NULL",
+            # user_reports: Track whether the channel message has been deleted
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_msg_deleted BOOLEAN DEFAULT FALSE",
+            # user_reports: Actual channel the approved message was published to
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS channel_chat_id VARCHAR(64) NULL",
+            # user_reports: Owning bot (NULL = main bot when owner_known); not backfilled
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS clone_id INTEGER NULL",
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS owner_known BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS points_awarded BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS admin_chat_id VARCHAR(64) NULL",
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS admin_message_id INTEGER NULL",
+            "ALTER TABLE user_reports ADD COLUMN IF NOT EXISTS approve_claimed_at TIMESTAMP NULL",
             # sync_message_logs.via: "userbot" for messages relayed by the userbot listener
             "ALTER TABLE sync_message_logs ADD COLUMN IF NOT EXISTS via VARCHAR(20) NULL",
             # Per-group check interval tracking for forced subscription / inactive users
@@ -284,6 +297,11 @@ def fix_database_schema(app):
         # table creation.  Using Table.create(checkfirst=True) lets SQLAlchemy generate the correct
         # dialect-specific DDL and avoids the sequence name conflict.
         _ensure_report_tables(db)
+
+        # Idempotent column/type repair for user_reports (channel_msg_deleted,
+        # ownership fields, TEXT fault_time).  Does not backfill owner_known.
+        from app.modules.report.service import ensure_user_report_schema
+        ensure_user_report_schema(db)
 
         print("✅ 数据库结构检查完成", flush=True)
 

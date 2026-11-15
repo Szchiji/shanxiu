@@ -5,7 +5,7 @@ Conversation flow (triggered by /start report_<user_id>):
   Questions are loaded dynamically from SystemConfig key ``report_questions``
   (JSON array of ``{"text": str, "required": bool}``).
   After all questions the bot optionally asks for a photo depending on
-  the ``report_push_media`` config flag.
+  the ``report_require_photo`` config flag.
 
   States:
     STEP_QUESTION – collecting text answers one by one
@@ -13,11 +13,15 @@ Conversation flow (triggered by /start report_<user_id>):
     STEP_CONFIRM  – showing a summary and waiting for confirm/cancel
 
 View flow (triggered by /start view_<user_id>):
-  Lists all approved reports for the target user and links to channel messages.
+  Lists approved reports that belong to this bot (main or the current clone)
+  for the target user, and links to the channel message recorded at publish time.
 
 Audit callbacks (inline keyboard in admin group):
+  Require the click to come from the configured admin group, the clicker to be
+  an administrator of that group, and the report to belong to this bot.
   audit_approve_<id>  → publish to channel, notify submitter
   audit_reject_<id>   → update status, notify submitter
+  audit_delete_channel_<id> → delete the published channel message
 """
 
 import json
@@ -25,6 +29,8 @@ import logging
 import asyncio
 import re as _re
 import warnings
+
+from app.modules.report import service as report_service
 
 from telegram import (
     Update,
@@ -78,9 +84,7 @@ def _get_clone_id(context: ContextTypes.DEFAULT_TYPE):
 
 def _scoped_key(key: str, clone_id) -> str:
     """Return a clone-scoped config key, or the bare key for the main bot."""
-    if clone_id:
-        return f'clone_{clone_id}_{key}'
-    return key
+    return report_service.scoped_key(key, clone_id)
 
 
 def _db_get_config(flask_app, key: str, default: str = '', clone_id=None) -> str:
@@ -90,35 +94,8 @@ def _db_get_config(flask_app, key: str, default: str = '', clone_id=None) -> str
 
 
 def _group_user_to_namespace(gu):
-    """Convert a GroupUser ORM row to a SimpleNamespace compatible with GroupMember.
-
-    The result exposes ``user_id``, ``username``, ``first_name``, and
-    ``last_name`` attributes, sourced from ``gu.tg_id`` and the JSON stored in
-    ``gu.profile_data``.
-
-    ``username`` is resolved by priority:
-      1. ``tg_username`` key (set by activity-tracking code)
-      2. ``username`` key
-      3. Any string field whose value starts with ``@`` (admin-entered @handle)
-    """
-    from types import SimpleNamespace
-    try:
-        pd = json.loads(gu.profile_data or '{}')
-    except (ValueError, TypeError):
-        pd = {}
-    # Resolve username: check dedicated keys first, then any @-prefixed value.
-    username = pd.get('tg_username') or pd.get('username') or ''
-    if not username:
-        for v in pd.values():
-            if isinstance(v, str) and v.startswith('@') and len(v) > 1:
-                username = v[1:]  # strip leading '@' for consistency
-                break
-    return SimpleNamespace(
-        user_id=gu.tg_id,
-        username=username,
-        first_name=pd.get('first_name') or pd.get('name') or '',
-        last_name=pd.get('last_name') or '',
-    )
+    """Convert a GroupUser ORM row to a SimpleNamespace compatible with GroupMember."""
+    return report_service.group_user_to_namespace(gu)
 
 
 def _load_questions(flask_app, clone_id=None) -> list:
@@ -145,21 +122,14 @@ def _require_photo_enabled(flask_app, clone_id=None) -> bool:
 
 def _build_answers_block(answers: list) -> str:
     """Format a list of {question, answer} dicts as a readable text block."""
-    lines = []
-    for item in answers:
-        q = item.get('question', '')
-        a = item.get('answer', '')
-        lines.append(f'❓ {q}\n💬 {a}')
-    return '\n\n'.join(lines)
+    return report_service.build_answers_block(answers)
 
 
-def _build_push_caption(flask_app, report_id: int, answers: list, clone_id=None) -> str:
+def _build_push_caption(flask_app, report_id, answers: list, clone_id=None) -> str:
     """Build the channel-push caption from the configured template.
 
-    Supported placeholders:
-      {report_id} – numeric report ID
-      {answers}   – all Q&A pairs formatted as a block
-      {q1}, {q2}, … {qN} – individual answer for question N (1-indexed)
+    The template itself may contain trusted Telegram HTML.  User answers and
+    {qN} values are escaped so they cannot break or inject markup.
     """
     template = _db_get_config(
         flask_app,
@@ -167,14 +137,7 @@ def _build_push_caption(flask_app, report_id: int, answers: list, clone_id=None)
         '📋 <b>认证用户报告 #{report_id}</b>\n\n{answers}',
         clone_id=clone_id,
     )
-    answers_block = _build_answers_block(answers)
-    result = template.replace('{report_id}', str(report_id)).replace('{answers}', answers_block)
-    # Replace individual answer placeholders {q1}, {q2}, …
-    # Answers are always appended in question order; skipped optional questions
-    # append '' so the list index always maps 1-to-1 with the question number.
-    for i, item in enumerate(answers, 1):
-        result = result.replace(f'{{q{i}}}', item.get('answer', ''))
-    return result
+    return report_service.build_push_caption(template, report_id, answers)
 
 
 def _prompt_for_question(questions: list, idx: int, total: int) -> str:
@@ -193,31 +156,8 @@ def _get_photo_prompt(flask_app, clone_id=None) -> str:
 
 
 def _format_user_identity(user_id, member=None, from_user=None) -> str:
-    """Return a rich identity string: 昵称 @username ｜ ID: xxx
-
-    Args:
-        user_id: Telegram numeric user ID (always included).
-        member: GroupMember ORM row (used if from_user is None).
-        from_user: Live Telegram User object (takes priority over member).
-    """
-    parts = []
-    first_name = last_name = username = None
-    if from_user is not None:
-        first_name = from_user.first_name or ''
-        last_name = from_user.last_name or ''
-        username = from_user.username
-    elif member is not None:
-        first_name = member.first_name or ''
-        last_name = member.last_name or ''
-        username = member.username
-    if first_name:
-        name = ' '.join(filter(None, [first_name, last_name]))
-        if name:
-            parts.append(name)
-    if username:
-        parts.append(f'@{username}')
-    parts.append(f'ID: <code>{user_id}</code>')
-    return ' ｜ '.join(parts)
+    """Return a rich identity string: 昵称 @username ｜ ID: xxx (names escaped)."""
+    return report_service.format_user_identity(user_id, member=member, from_user=from_user)
 
 
 async def _try_delete_message(bot, chat_id: int, message_id: int) -> None:
@@ -248,24 +188,8 @@ async def _edit_or_reply(context, message, chat_id: int, text: str, **kwargs):
 
 
 def _build_channel_link(channel: str, msg_id: int) -> str:
-    """Build a t.me link for a channel message.
-
-    For public channels (e.g., @channelname or channelname), returns
-    ``https://t.me/channelname/msg_id``.
-    For private channels whose ID starts with ``-100``, returns
-    ``https://t.me/c/{numeric_id}/msg_id`` which works for private channels.
-    """
-    chan = channel.strip()
-    stripped = chan.lstrip('-')
-    if stripped.isdigit():
-        # Numeric ID – private or supergroup channel
-        numeric_id = stripped
-        if numeric_id.startswith('100'):
-            numeric_id = numeric_id[3:]
-        return f'https://t.me/c/{numeric_id}/{msg_id}'
-    # Public username
-    chan = chan.removeprefix('@')
-    return f'https://t.me/{chan}/{msg_id}'
+    """Build a t.me link for a channel message."""
+    return report_service.build_channel_link(channel, msg_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -273,15 +197,12 @@ def _build_channel_link(channel: str, msg_id: int) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point: /start report_<user_id>"""
-    import re as _re
+    """Entry point: /start report_<user_id> (also /start@BotName)."""
     text = update.message.text or ''
-    m = _re.search(r'/start report_(\d+)', text)
-    if not m:
+    target_user_id = report_service.parse_start_target_user_id(text, 'report')
+    if not target_user_id:
         await update.message.reply_text('❌ 链接无效，请重新点击报告链接。')
         return ConversationHandler.END
-
-    target_user_id = int(m.group(1))
     context.user_data[_TARGET_KEY] = target_user_id
 
     flask_app = _get_flask_app(context)
@@ -542,38 +463,47 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
 
     def _save():
         with flask_app.app_context():
-            from app.models import UserReport, GroupMember, GroupUser
+            from app.models import UserReport, GroupMember, GroupUser, BotGroup
             from app import db
-            r = UserReport(
+            r = UserReport(**report_service.new_report_values(
                 user_id=target_user_id,
                 submitter_id=submitter_id,
-                fault_time=raw_answers[0] if len(raw_answers) > 0 else '',
-                fault_desc=raw_answers[1] if len(raw_answers) > 1 else '',
-                process_result=raw_answers[2] if len(raw_answers) > 2 else '',
+                raw_answers=raw_answers,
+                answers=answers,
                 photo_file_id=photo_file_id,
-                answers=json.dumps(answers, ensure_ascii=False),
-                status='pending',
-            )
+                bot_clone_id=clone_id,
+            ))
             db.session.add(r)
             db.session.commit()
-            # Load member info for the target user to enrich the admin notification.
-            # Check GroupMember first (Telegram-synced), then fall back to GroupUser
-            # (admin-added certified users who may not be in GroupMember).
-            target_member = GroupMember.query.filter_by(user_id=target_user_id).first()
-            if target_member is None:
-                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
-                if gu:
-                    target_member = _group_user_to_namespace(gu)
+            target_member = report_service.find_member_for_bot(
+                GroupMember=GroupMember,
+                GroupUser=GroupUser,
+                BotGroup=BotGroup,
+                bot_clone_id=clone_id,
+                user_id=target_user_id,
+            )
             return r.id, target_member
 
     loop = asyncio.get_running_loop()
-    report_id, target_member = await loop.run_in_executor(None, _save)
+    try:
+        report_id, target_member = await loop.run_in_executor(None, _save)
+    except Exception as e:
+        logger.error('Failed to save report: %s', e)
+        try:
+            await query.edit_message_text('❌ 报告保存失败，尚未提交，请稍后再试。')
+        except Exception:
+            pass
+        return ConversationHandler.END
 
     # Notify admin group
+    admin_notify_failed = False
     admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '', clone_id=clone_id)
     if admin_group_id_str:
         try:
-            admin_group_id = int(admin_group_id_str)
+            try:
+                admin_group_id = int(str(admin_group_id_str).strip())
+            except (TypeError, ValueError):
+                admin_group_id = admin_group_id_str.strip()
             template_text = _build_push_caption(flask_app, report_id, answers, clone_id=clone_id)
             target_identity = _format_user_identity(target_user_id, member=target_member)
             submitter_identity = _format_user_identity(submitter_id, from_user=query.from_user)
@@ -590,7 +520,7 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
                 ]
             ])
             if photo_file_id:
-                await query.get_bot().send_photo(
+                sent_admin = await query.get_bot().send_photo(
                     chat_id=admin_group_id,
                     photo=photo_file_id,
                     caption=caption,
@@ -598,16 +528,34 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
                     reply_markup=keyboard,
                 )
             else:
-                await query.get_bot().send_message(
+                sent_admin = await query.get_bot().send_message(
                     chat_id=admin_group_id,
                     text=caption,
                     parse_mode='HTML',
                     reply_markup=keyboard,
                 )
-        except Exception as e:
-            logger.error(f'Failed to notify admin group: {e}')
 
-    await query.edit_message_text('🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。')
+            def _store_admin_msg():
+                with flask_app.app_context():
+                    from app.models import UserReport
+                    from app import db
+                    report_service.store_admin_review_message(
+                        db, UserReport, report_id,
+                        admin_chat_id=admin_group_id,
+                        admin_message_id=sent_admin.message_id,
+                    )
+
+            await asyncio.get_running_loop().run_in_executor(None, _store_admin_msg)
+        except Exception as e:
+            logger.error('Failed to notify admin group: %s', e)
+            admin_notify_failed = True
+
+    if admin_notify_failed:
+        await query.edit_message_text(
+            '🎉 报告已提交，但通知审核群失败。请联系管理员查看，勿重复提交。'
+        )
+    else:
+        await query.edit_message_text('🎉 报告已提交！\n\n管理员审核通过后，将发布到报告频道，并通知您。')
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -616,17 +564,21 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Always clear report state first, regardless of what happens next.
     context.user_data.clear()
     text = update.message.text or ''
+    intent = report_service.start_command_intent(text)
     # When /start report_NNN is sent mid-conversation (e.g. user clicked the
     # deep-link again), restart the report flow instead of just canceling so the
     # user doesn't have to click twice.
-    import re as _re
-    if _re.match(r'^/start report_\d+', text):
+    if intent == 'report':
         return await report_start(update, context)
-    # When a plain /start (without report_ param) is sent mid-conversation,
+    # Mid-report "查看报告" deep links should open the list, not the welcome
+    # /start message (and not require a second click after cancel).
+    if intent == 'view':
+        return await view_reports(update, context)
+    # When a plain /start (without report_/view_ param) is sent mid-conversation,
     # forward directly to cmd_start so the user reaches admin welcome in one step
     # instead of having to send /start twice.  cmd_start does not use user_data,
     # so clearing it above is safe before forwarding.
-    if text.startswith('/start') and 'report_' not in text:
+    if intent == 'start':
         cmd_start_fn = context.application.bot_data.get('cmd_start')
         if cmd_start_fn:
             return await cmd_start_fn(update, context)
@@ -640,15 +592,12 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point: /start view_<user_id>"""
-    import re as _re
+    """Entry point: /start view_<user_id> (also /start@BotName)."""
     text = update.message.text or ''
-    m = _re.search(r'/start view_(\d+)', text)
-    if not m:
+    target_user_id = report_service.parse_start_target_user_id(text, 'view')
+    if not target_user_id:
         await update.message.reply_text('❌ 链接无效，请重新点击查看链接。')
         return
-
-    target_user_id = int(m.group(1))
     flask_app = _get_flask_app(context)
     if flask_app is None:
         await update.message.reply_text('❌ 服务暂时不可用，请稍后再试。')
@@ -658,46 +607,38 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def _get_reports():
         with flask_app.app_context():
-            from app.models import UserReport, SystemConfig, GroupMember, GroupUser
-            reports = UserReport.query.filter_by(
-                user_id=target_user_id, status='approved'
-            ).order_by(UserReport.created_at.desc()).all()
-            channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
-            member = GroupMember.query.filter_by(user_id=target_user_id).first()
-            if member is None:
-                # Fall back to GroupUser for certified users not present in GroupMember
-                gu = GroupUser.query.filter_by(tg_id=target_user_id).first()
-                if gu:
-                    member = _group_user_to_namespace(gu)
-            return reports, channel, member
+            from app.models import UserReport, SystemConfig, GroupMember, GroupUser, BotGroup
+            reports = report_service.visible_reports_query(
+                UserReport, target_user_id, clone_id
+            ).all()
+            fallback_channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
+            member = report_service.find_member_for_bot(
+                GroupMember=GroupMember,
+                GroupUser=GroupUser,
+                BotGroup=BotGroup,
+                bot_clone_id=clone_id,
+                user_id=target_user_id,
+            )
+            return reports, fallback_channel, member
 
     loop = asyncio.get_running_loop()
-    reports, channel, member = await loop.run_in_executor(None, _get_reports)
+    reports, fallback_channel, member = await loop.run_in_executor(None, _get_reports)
 
-    # Build a human-readable identity string
-    def _user_identity(member) -> str:
-        parts = []
-        if member:
-            name = ' '.join(filter(None, [member.first_name, member.last_name]))
-            if name:
-                parts.append(name)
-            if member.username:
-                parts.append(f'@{member.username}')
-        parts.append(f'ID: {target_user_id}')
-        return ' ｜ '.join(parts)
-
-    identity = _user_identity(member)
+    identity = report_service.format_user_identity(target_user_id, member=member)
 
     if not reports:
         await update.message.reply_text(
-            f'📭 该认证用户（{identity}）目前还没有任何历史报告。'
+            f'📭 该认证用户（{identity}）目前还没有任何历史报告。',
+            parse_mode='HTML',
         )
         return
 
     lines = [f'📋 <b>{identity} 的历史报告（共 {len(reports)} 份）：</b>\n']
     for i, r in enumerate(reports, 1):
         date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
-        line = f'🔹 {i}. {date_str} ｜ {r.fault_time or ""}'
+        summary = report_service.escape_user_html(r.fault_time or '')
+        line = f'🔹 {i}. {date_str} ｜ {summary}'
+        channel = report_service.channel_identity_for_view(r, fallback_channel)
         if r.channel_msg_id and channel and not r.channel_msg_deleted:
             link = _build_channel_link(channel, r.channel_msg_id)
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
@@ -712,15 +653,10 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-
     data = query.data or ''
     flask_app = _get_flask_app(context)
     clone_id = _get_clone_id(context)
 
-    # Helper: send a new reply in the admin group with the audit result while
-    # keeping the original submission message intact.  Only the inline keyboard
-    # on the original message is updated (buttons removed / replaced).
     async def _post_audit_result(text: str, update_keyboard=None):
         """Send a new reply to the original admin message with the audit result.
 
@@ -756,95 +692,149 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report_id = int(data.split('audit_delete_channel_')[1])
         action = 'delete_channel'
     else:
+        await query.answer()
         return
 
     loop = asyncio.get_running_loop()
+    admin_group_id_str = _db_get_config(flask_app, 'admin_group_id', '', clone_id=clone_id)
+    callback_chat_id = query.message.chat_id if query.message else None
+    clicker_id = query.from_user.id if query.from_user else None
 
-    # Handle channel-message deletion separately (no full report data needed)
-    if action == 'delete_channel':
-        def _get_channel_info():
-            with flask_app.app_context():
-                from app.models import UserReport
-                r = UserReport.query.get(report_id)
-                if r:
-                    return r.channel_msg_id, r.channel_msg_deleted
-                return None, None
-
-        msg_id, already_deleted = await loop.run_in_executor(None, _get_channel_info)
-
-        if already_deleted:
-            await query.answer(f'ℹ️ 报告 #{report_id} 的频道消息已被删除。', show_alert=True)
-            return
-
-        channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
-        if channel and msg_id:
-            try:
-                await query.get_bot().delete_message(chat_id=channel, message_id=msg_id)
-            except Exception as e:
-                logger.warning(f'Failed to delete channel message for report #{report_id}: {e}')
-
-        def _mark_deleted():
-            with flask_app.app_context():
-                from app.models import UserReport
-                from app import db
-                r = UserReport.query.get(report_id)
-                if r:
-                    r.channel_msg_deleted = True
-                    db.session.commit()
-
-        await loop.run_in_executor(None, _mark_deleted)
-        await _post_audit_result(f'🗑️ 报告 #{report_id} 的频道消息已删除。')
-        return
-
-    def _get_report():
+    def _load_report():
         with flask_app.app_context():
-            from app.models import UserReport, GroupMember
+            from app.models import UserReport, GroupMember, GroupUser, BotGroup
             r = UserReport.query.get(report_id)
             if r is None:
                 return None
-            answers = []
-            if r.answers:
-                try:
-                    answers = json.loads(r.answers)
-                except (ValueError, TypeError):
-                    pass
-            # Fall back to legacy columns when answers JSON is absent
-            if not answers:
-                if r.fault_time:
-                    answers.append({"question": "故障时间", "answer": r.fault_time})
-                if r.fault_desc:
-                    answers.append({"question": "故障现象", "answer": r.fault_desc})
-                if r.process_result:
-                    answers.append({"question": "处理结果", "answer": r.process_result})
-            # Load member info for both users in a single query to enrich audit/channel messages
-            user_ids = list(filter(None, {r.user_id, r.submitter_id}))
-            members = {m.user_id: m for m in GroupMember.query.filter(GroupMember.user_id.in_(user_ids)).all()}
-            target_identity = _format_user_identity(r.user_id, member=members.get(r.user_id))
-            submitter_identity = _format_user_identity(r.submitter_id, member=members.get(r.submitter_id)) if r.submitter_id else None
+            target_member = report_service.find_member_for_bot(
+                GroupMember=GroupMember, GroupUser=GroupUser, BotGroup=BotGroup,
+                bot_clone_id=clone_id, user_id=r.user_id,
+            )
+            submitter_member = None
+            if r.submitter_id:
+                submitter_member = report_service.find_member_for_bot(
+                    GroupMember=GroupMember, GroupUser=GroupUser, BotGroup=BotGroup,
+                    bot_clone_id=clone_id, user_id=r.submitter_id,
+                )
             return {
                 'id': r.id,
                 'user_id': r.user_id,
                 'submitter_id': r.submitter_id,
                 'photo_file_id': r.photo_file_id,
                 'status': r.status,
-                'answers': answers,
-                'target_identity': target_identity,
-                'submitter_identity': submitter_identity,
+                'answers': report_service.parse_answers(r),
+                'owner_known': r.owner_known,
+                'clone_id': r.clone_id,
+                'channel_msg_id': r.channel_msg_id,
+                'channel_chat_id': r.channel_chat_id,
+                'channel_msg_deleted': r.channel_msg_deleted,
+                'admin_chat_id': r.admin_chat_id,
+                'admin_message_id': r.admin_message_id,
+                'target_identity': report_service.format_user_identity(
+                    r.user_id, member=target_member),
+                'submitter_identity': (
+                    report_service.format_user_identity(
+                        r.submitter_id, member=submitter_member)
+                    if r.submitter_id else None
+                ),
             }
 
-    report = await loop.run_in_executor(None, _get_report)
+    report = await loop.run_in_executor(None, _load_report)
 
-    if report is None:
-        await query.answer('❌ 报告不存在。', show_alert=True)
+    # Lightweight stand-in so evaluate_audit_access can read ownership fields
+    # even when the row is missing (None) or we only have a snapshot dict.
+    class _Snap:
+        def __init__(self, d):
+            if not d:
+                return
+            for k, v in d.items():
+                setattr(self, k, v)
+
+    snap = _Snap(report) if report else None
+
+    clicker_is_admin = False
+    if clicker_id is not None and report_service.clicker_counts_as_admin(clicker_id):
+        clicker_is_admin = True
+    elif clicker_id is not None and admin_group_id_str:
+        try:
+            try:
+                admin_chat = int(str(admin_group_id_str).strip())
+            except (TypeError, ValueError):
+                admin_chat = str(admin_group_id_str).strip()
+            member = await query.get_bot().get_chat_member(admin_chat, clicker_id)
+            clicker_is_admin = report_service.clicker_counts_as_admin(
+                clicker_id, getattr(member, 'status', None)
+            )
+        except Exception as e:
+            logger.warning('audit admin check failed: %s', e)
+            clicker_is_admin = False
+
+    bot_id = getattr(getattr(context, 'bot', None), 'id', None) or getattr(query.get_bot(), 'id', None)
+    access = report_service.evaluate_audit_access(
+        report=snap,
+        bot_clone_id=clone_id,
+        callback_chat_id=callback_chat_id,
+        configured_admin_group_id=admin_group_id_str,
+        clicker_is_admin=clicker_is_admin,
+        callback_sent_by_this_bot=report_service.callback_message_sent_by_bot(
+            query.message, bot_id
+        ),
+        callback_message_id=getattr(query.message, 'message_id', None) if query.message else None,
+    )
+    if not access.allowed:
+        await query.answer(access.message or '无权操作。', show_alert=True)
         return
 
-    if report['status'] != 'pending':
-        await query.answer(
-            f'ℹ️ 该报告已被处理（当前状态：{report["status"]}）。', show_alert=True
+    await query.answer()
+    reviewer_name = report_service.escape_user_html(
+        (query.from_user.full_name if query.from_user else None) or str(clicker_id or '')
+    )
+
+    if action == 'delete_channel':
+        if report and report.get('channel_msg_deleted'):
+            await _post_audit_result(f'ℹ️ 报告 #{report_id} 的频道消息已被删除。')
+            return
+        channel = (report or {}).get('channel_chat_id') or _db_get_config(
+            flask_app, 'report_channel', '', clone_id=clone_id
         )
-        return
+        msg_id = (report or {}).get('channel_msg_id')
+        delete_ok = False
+        already_gone = False
+        if channel and msg_id:
+            try:
+                await query.get_bot().delete_message(chat_id=channel, message_id=msg_id)
+                delete_ok = True
+            except Exception as e:
+                if report_service.telegram_message_already_gone(e):
+                    already_gone = True
+                else:
+                    logger.warning(
+                        'Failed to delete channel message for report #%s: %s', report_id, e
+                    )
+        elif not msg_id:
+            await _post_audit_result(f'❌ 报告 #{report_id} 没有可删除的频道消息。')
+            return
 
-    reviewer_name = query.from_user.full_name or str(query.from_user.id)
+        def _mark_deleted():
+            with flask_app.app_context():
+                from app.models import UserReport
+                from app import db
+                r = UserReport.query.get(report_id)
+                if r is None:
+                    return report_service.ActionResult('refused', '报告不存在。')
+                return report_service.finalize_delete_channel(
+                    db, r, success=delete_ok, already_gone=already_gone
+                )
+
+        result = await loop.run_in_executor(None, _mark_deleted)
+        if result.status == 'failed':
+            await _post_audit_result(result.message)
+            return
+        if result.status == 'already_deleted':
+            await _post_audit_result(result.message)
+            return
+        await _post_audit_result(result.message)
+        return
 
     if action == 'reject':
         def _reject():
@@ -852,40 +842,65 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 from app.models import UserReport
                 from app import db
                 r = UserReport.query.get(report_id)
-                if r:
-                    r.status = 'rejected'
-                    db.session.commit()
+                if r is None:
+                    return report_service.ActionResult('refused', '报告不存在。')
+                return report_service.finalize_reject(db, r, clone_id)
 
-        await loop.run_in_executor(None, _reject)
-        await _post_audit_result(f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。')
-        submitter_id = report.get('submitter_id')
-        if submitter_id:
+        result = await loop.run_in_executor(None, _reject)
+        await _post_audit_result(
+            result.message if result.status != 'ok'
+            else f'❌ 报告 #{report_id} 已被 {reviewer_name} 驳回。'
+        )
+        if result.status == 'ok' and result.notify_submitter and report and report.get('submitter_id'):
             try:
                 await query.get_bot().send_message(
-                    chat_id=submitter_id,
+                    chat_id=report['submitter_id'],
                     text=(
                         f'❌ 抱歉，您提交的报告 #{report_id} 未通过审核。\n\n'
                         '请确保描述清晰并包含清晰的现场图片，欢迎重新提交。'
                     ),
                 )
             except Exception as e:
-                logger.warning(f'Failed to notify submitter {submitter_id} of rejection: {e}')
+                logger.warning(
+                    'Failed to notify submitter %s of rejection: %s',
+                    report['submitter_id'], e,
+                )
         return
 
-    # approve – build caption from template
-    channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
-    channel_msg_id = None
-    push_media = _push_media_enabled(flask_app, clone_id=clone_id)
-    template_caption = _build_push_caption(flask_app, report_id, report['answers'], clone_id=clone_id)
-    # Prepend target/submitter identity to the channel push so readers see who is involved
-    identity_header = f"👤 被提交人：{report['target_identity']}"
-    if report.get('submitter_identity'):
-        identity_header += f"\n📤 提交人：{report['submitter_identity']}"
-    caption = f"{identity_header}\n\n{template_caption}"
+    # approve
+    def _claim():
+        with flask_app.app_context():
+            from app.models import UserReport
+            from app import db
+            return report_service.claim_for_approve(db, UserReport, report_id)
 
-    if channel:
+    claim = await loop.run_in_executor(None, _claim)
+    if claim.status == 'already_done':
+        await _post_audit_result(claim.message)
+        return
+    if claim.status == 'in_progress':
+        await _post_audit_result(claim.message)
+        return
+    if claim.status != 'claimed':
+        await _post_audit_result(claim.message or '无法开始审核。')
+        return
+
+    channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
+    channel_msg_id = claim.channel_msg_id if report_service.should_skip_publish(claim) else None
+    channel_chat_used = claim.channel_chat_id if channel_msg_id else None
+    published_this_attempt = None
+
+    if channel and not channel_msg_id:
+        push_media = _push_media_enabled(flask_app, clone_id=clone_id)
+        template_caption = _build_push_caption(
+            flask_app, report_id, (report or {}).get('answers') or [], clone_id=clone_id
+        )
+        identity_header = f"👤 被提交人：{(report or {}).get('target_identity') or report_service.format_user_identity((report or {}).get('user_id'))}"
+        if report and report.get('submitter_identity'):
+            identity_header += f"\n📤 提交人：{report['submitter_identity']}"
+        caption = f"{identity_header}\n\n{template_caption}"
         try:
-            if push_media and report['photo_file_id']:
+            if push_media and report and report.get('photo_file_id'):
                 sent = await query.get_bot().send_photo(
                     chat_id=channel,
                     photo=report['photo_file_id'],
@@ -898,90 +913,155 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=caption,
                     parse_mode='HTML',
                 )
+            published_this_attempt = sent.message_id
             channel_msg_id = sent.message_id
+            channel_chat_used = channel
         except Exception as e:
-            logger.error(f'Failed to publish report to channel: {e}')
+            logger.error('Failed to publish report to channel: %s', e)
 
-    def _approve(msg_id):
+            def _release():
+                with flask_app.app_context():
+                    from app.models import UserReport
+                    from app import db
+                    report_service.release_approve_claim(db, UserReport, report_id)
+
+            await loop.run_in_executor(None, _release)
+            await _post_audit_result(
+                f'❌ 报告 #{report_id} 发布到频道失败，仍为待审核且未记入频道消息，可再次点击通过重试。'
+            )
+            return
+
+        def _record():
+            with flask_app.app_context():
+                from app.models import UserReport
+                from app import db
+                try:
+                    return report_service.record_published_channel(
+                        db, UserReport, report_id, channel_msg_id, channel_chat_used,
+                    )
+                except Exception as exc:
+                    logger.error('Failed to record channel message for report #%s: %s', report_id, exc)
+                    return report_service.ActionResult(
+                        'record_failed',
+                        f'❌ 报告 #{report_id} 已发到频道（消息 ID：{channel_msg_id}），但未能写入数据库。'
+                        '请勿再次点击通过（否则可能重复发帖）。请联系技术根据该消息 ID 补记后再完成审核。',
+                        channel_msg_id=channel_msg_id,
+                        channel_chat_id=channel_chat_used,
+                    )
+
+        recorded = await loop.run_in_executor(None, _record)
+        if recorded.status == 'lost_race':
+            # Exceptional: lease expired during publish and another worker won.
+            if recorded.duplicate_msg_id and channel:
+                try:
+                    await query.get_bot().delete_message(
+                        chat_id=channel, message_id=recorded.duplicate_msg_id
+                    )
+                except Exception as e:
+                    logger.warning('Failed to drop lost-race channel post: %s', e)
+            channel_msg_id = recorded.channel_msg_id
+            channel_chat_used = recorded.channel_chat_id
+            published_this_attempt = None
+        elif recorded.status != 'ok':
+            await _post_audit_result(recorded.message)
+            return
+        else:
+            channel_msg_id = recorded.channel_msg_id
+            channel_chat_used = recorded.channel_chat_id
+
+    def _approve():
         with flask_app.app_context():
             from app.models import UserReport, SystemConfig, UserPoints, PointsLog, BotGroup
             from app import db
-
             r = UserReport.query.get(report_id)
-            if r:
-                r.status = 'approved'
-                if msg_id:
-                    r.channel_msg_id = msg_id
-                db.session.commit()
-
-            # Award points to the submitter if configured
-            reward_pts = 0
+            if r is None:
+                return report_service.ActionResult('refused', '报告不存在。')
             try:
                 reward_pts = int(SystemConfig.get_value(
                     _scoped_key('report_approval_points', clone_id), '0') or '0')
             except (ValueError, TypeError):
                 reward_pts = 0
+            points_group_chat_id = SystemConfig.get_value(
+                _scoped_key('report_points_group_id', clone_id), ''
+            ).strip()
+            try:
+                return report_service.finalize_approve(
+                    db, r, clone_id,
+                    channel_msg_id=channel_msg_id,
+                    channel_chat_id=channel_chat_used or (channel if channel_msg_id else ''),
+                    UserPoints=UserPoints,
+                    PointsLog=PointsLog,
+                    BotGroup=BotGroup,
+                    reward_pts=reward_pts,
+                    points_group_chat_id=points_group_chat_id,
+                )
+            except Exception as exc:
+                logger.error('finalize_approve failed for report #%s: %s', report_id, exc)
+                db.session.rollback()
+                # Channel identity (if any) was already committed; release the
+                # lease so a retry can finalize immediately.  CAS on status
+                # prevents a double reward.  Do not tell the user to republish
+                # if a channel message is already recorded.
+                report_service.release_approve_claim(db, UserReport, report_id)
+                if channel_msg_id:
+                    return report_service.ActionResult(
+                        'finalize_failed',
+                        f'❌ 报告 #{report_id} 的频道消息已登记，但审核完成或积分发放未完成。'
+                        '可再次点击通过以完成审核（不会重复发帖）。',
+                        channel_msg_id=channel_msg_id,
+                        channel_chat_id=channel_chat_used,
+                        report_status='pending',
+                    )
+                return report_service.ActionResult(
+                    'failed',
+                    f'❌ 报告 #{report_id} 审核完成失败，仍为待审核，可再次点击通过重试。',
+                    report_status='pending',
+                )
 
-            awarded = 0
-            if reward_pts > 0 and report.get('submitter_id'):
-                group_chat_id = SystemConfig.get_value(
-                    _scoped_key('report_points_group_id', clone_id), '').strip()
-                target_group = None
-                if group_chat_id:
-                    target_group = BotGroup.query.filter_by(chat_id=group_chat_id).first()
+    result = await loop.run_in_executor(None, _approve)
 
-                if target_group:
-                    pts = UserPoints.query.filter_by(
-                        group_id=target_group.id,
-                        user_id=report['submitter_id'],
-                    ).first()
-                    if pts is None:
-                        pts = UserPoints(
-                            group_id=target_group.id,
-                            user_id=report['submitter_id'],
-                            points_balance=0,
-                        )
-                        db.session.add(pts)
-                    pts.points_balance += reward_pts
-                    db.session.add(PointsLog(
-                        group_id=target_group.id,
-                        user_id=report['submitter_id'],
-                        points_change=reward_pts,
-                        reason=f'报告审核通过 #{report_id}',
-                        balance_after=pts.points_balance,
-                    ))
-                    db.session.commit()
-                    awarded = reward_pts
+    if result.status in ('finalize_failed', 'failed', 'refused'):
+        await _post_audit_result(result.message)
+        return
 
-            return awarded
-
-    awarded_pts = await loop.run_in_executor(None, _approve, channel_msg_id)
     delete_keyboard = None
-    if channel_msg_id:
+    if result.status == 'ok' and result.published:
         delete_keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton('🗑️ 从频道删除', callback_data=f'audit_delete_channel_{report_id}'),
         ]])
-    await _post_audit_result(
-        f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。',
-        update_keyboard=delete_keyboard,
-    )
-    submitter_id = report.get('submitter_id')
-    if submitter_id:
+    ok_msg = result.message
+    if result.status == 'ok' and result.published:
+        ok_msg = f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过并发布到频道。'
+        if result.awarded_points:
+            ok_msg += f'\n🎁 奖励积分：+{result.awarded_points}'
+    elif result.status == 'ok':
+        ok_msg = f'✅ 报告 #{report_id} 已由 {reviewer_name} 审核通过' + (
+            '（未配置报告频道，未发布）。' if not result.published else '。'
+        )
+        if result.awarded_points:
+            ok_msg += f'\n🎁 奖励积分：+{result.awarded_points}'
+    await _post_audit_result(ok_msg, update_keyboard=delete_keyboard)
+
+    if result.status == 'ok' and result.notify_submitter and report and report.get('submitter_id'):
         try:
-            channel = _db_get_config(flask_app, 'report_channel', '', clone_id=clone_id)
+            stored_channel = result.channel_chat_id or channel
             msg = f'🎉 您提交的报告 #{report_id} 已审核通过'
-            if channel_msg_id and channel:
-                link = _build_channel_link(channel, channel_msg_id)
+            if result.published and result.channel_msg_id and stored_channel:
+                link = _build_channel_link(stored_channel, result.channel_msg_id)
                 msg += f'！\n\n👉 <a href="{link}">点击查看已发布报告</a>'
-            if awarded_pts:
-                msg += f'\n\n🎁 奖励积分：+{awarded_pts}'
+            if result.awarded_points:
+                msg += f'\n\n🎁 奖励积分：+{result.awarded_points}'
             await query.get_bot().send_message(
-                chat_id=submitter_id,
+                chat_id=report['submitter_id'],
                 text=msg,
                 parse_mode='HTML',
             )
         except Exception as e:
-            logger.warning(f'Failed to notify submitter {submitter_id} of approval: {e}')
+            logger.warning(
+                'Failed to notify submitter %s of approval: %s',
+                report['submitter_id'], e,
+            )
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1051,53 +1131,19 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return STEP_TARGET
 
+    clone_id = _get_clone_id(context)
+
     def _find_member():
-        import json as _json
-        from app.models import GroupMember, GroupUser
-        from sqlalchemy import func
+        from app.models import GroupMember, GroupUser, BotGroup
         with flask_app.app_context():
-            if lookup_user_id is not None:
-                m = GroupMember.query.filter_by(user_id=lookup_user_id).first()
-            else:
-                # Username lookup – case-insensitive
-                m = GroupMember.query.filter(
-                    func.lower(GroupMember.username) == lookup_username.lower()
-                ).first()
-            if m is not None:
-                return m
-            # Fallback: search GroupUser (admin-added verified users) which may not
-            # be present in the GroupMember (Telegram-sync) table.
-            if lookup_user_id is not None:
-                gu = GroupUser.query.filter_by(tg_id=lookup_user_id).first()
-            else:
-                # GroupUser stores name/username inside profile_data JSON.
-                # Escape SQL wildcard characters in the username before using ILIKE,
-                # then confirm the exact match by parsing the JSON.
-                # Note: admin may store the username with a leading '@' in any field
-                # (not just 'username'/'tg_username'), so we strip '@' from each
-                # string value before comparing.
-                escaped = lookup_username.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-                candidates = GroupUser.query.filter(
-                    GroupUser.profile_data.ilike(f'%{escaped}%', escape='\\')
-                ).all()
-                gu = None
-                for c in candidates:
-                    try:
-                        pd = _json.loads(c.profile_data or '{}')
-                    except (ValueError, TypeError):
-                        pd = {}
-                    # Check all string values in profile_data; strip exactly one
-                    # leading '@' so both "@zhangsan" and "zhangsan" match.
-                    for v in pd.values():
-                        normalized = v[1:] if isinstance(v, str) and v.startswith('@') else v
-                        if isinstance(v, str) and normalized.lower() == lookup_username.lower():
-                            gu = c
-                            break
-                    if gu is not None:
-                        break
-            if gu is None:
-                return None
-            return _group_user_to_namespace(gu)
+            return report_service.find_member_for_bot(
+                GroupMember=GroupMember,
+                GroupUser=GroupUser,
+                BotGroup=BotGroup,
+                bot_clone_id=clone_id,
+                user_id=lookup_user_id,
+                username=lookup_username,
+            )
 
     loop = asyncio.get_running_loop()
     member = await loop.run_in_executor(None, _find_member)
@@ -1113,18 +1159,30 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
             tg_user_id = tg_chat.id
             # Re-try DB lookup by user_id in case the record exists under a different username
             def _find_by_tg_id():
-                from app.models import GroupMember, GroupUser
+                from app.models import GroupMember, GroupUser, BotGroup
                 from app import db
                 with flask_app.app_context():
-                    m = GroupMember.query.filter_by(user_id=tg_user_id).first()
-                    if m is not None:
-                        return m
-                    gu = GroupUser.query.filter_by(tg_id=tg_user_id).first()
-                    if gu is None:
+                    m = report_service.find_member_for_bot(
+                        GroupMember=GroupMember,
+                        GroupUser=GroupUser,
+                        BotGroup=BotGroup,
+                        bot_clone_id=clone_id,
+                        user_id=tg_user_id,
+                    )
+                    if m is None:
                         return None
-                    # Cache tg_username in profile_data so future lookups work
-                    # without requiring a Telegram API call.
-                    if tg_chat and tg_chat.username:
+                    # Cache tg_username on the matching GroupUser so future lookups
+                    # work without requiring a Telegram API call.
+                    group_ids = report_service.group_ids_for_clone(BotGroup, clone_id) or [-1]
+                    gu = (
+                        GroupUser.query
+                        .filter(
+                            GroupUser.group_id.in_(group_ids),
+                            GroupUser.tg_id == tg_user_id,
+                        )
+                        .first()
+                    )
+                    if gu is not None and tg_chat and tg_chat.username:
                         try:
                             pd = json.loads(gu.profile_data or '{}')
                             if not pd.get('tg_username'):
@@ -1136,7 +1194,8 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
                                 'Failed to cache tg_username for GroupUser tg_id=%s',
                                 tg_user_id, exc_info=True,
                             )
-                    return _group_user_to_namespace(gu)
+                    return m
+
             member = await loop.run_in_executor(None, _find_by_tg_id)
             if member is None:
                 # Synthesise a lightweight object from Telegram data so the rest of the

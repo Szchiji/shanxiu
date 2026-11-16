@@ -503,7 +503,9 @@ def test_http_session_upload_submit_review_binding_and_view(web_app, monkeypatch
         db.session.commit()
         view = client.get('/report/api/bootstrap', headers=view_headers).get_json()
         item = next(item for item in view['reports'] if item['id'] == report.id)
-        assert item['channel_link'] == 'https://t.me/reports_test/42'
+        assert 'answers' not in item and 'channel_link' not in item
+        detail = client.get(f'/report/api/reports/{report.id}', headers=view_headers).get_json()
+        assert detail['report']['channel_link'] == 'https://t.me/reports_test/42'
         assert 'Asia/Shanghai' in item['date']
         assert 'submitter' not in item and 'photo_file_id' not in item
     finally:
@@ -759,3 +761,54 @@ def test_web_schema_upgrades_previous_uploads_without_data_loss():
     with engine.connect() as conn:
         assert conn.execute(text('SELECT data, report_id FROM report_web_uploads WHERE id=1')).one() == (b'\x01\x02\x03', None)
     engine.dispose()
+
+
+@pytest.mark.parametrize('denial', ['pending', 'rejected', 'legacy', 'target', 'clone', 'write', 'anonymous'])
+def test_single_report_detail_scope(web_app, monkeypatch, denial):
+    from app import limiter
+    from app.models import UserReport
+    app, db = web_app
+    monkeypatch.setattr(limiter, 'enabled', False)
+    report = UserReport(**report_service.new_report_values(
+        user_id=66421, submitter_id=1234, raw_answers=['summary'],
+        answers=[{'question': 'q', 'answer': 'private-full-answer'}],
+        photo_file_id='must-not-leak', bot_clone_id=None))
+    report.status = 'approved'
+    if denial in ('pending', 'rejected'): report.status = denial
+    if denial == 'legacy': report.owner_known = False
+    if denial == 'target': report.user_id = 66422
+    if denial == 'clone': report.clone_id = 999
+    db.session.add(report)
+    db.session.commit()
+    session = _session_row(db, target_user_id=66421, mode='write' if denial == 'write' else 'view')
+    headers = {} if denial == 'anonymous' else {'Authorization': 'Bearer ' + session['token']}
+    response = app.test_client().get(f'/report/api/reports/{report.id}', headers=headers)
+    assert response.status_code in (403, 404)
+    assert b'private-full-answer' not in response.data and b'must-not-leak' not in response.data
+
+
+def test_detail_list_separation_and_return_page_contract(web_app, monkeypatch):
+    from app import limiter
+    from app.models import UserReport
+    app, db = web_app
+    monkeypatch.setattr(limiter, 'enabled', False)
+    report = UserReport(**report_service.new_report_values(
+        user_id=77123, submitter_id=1234, raw_answers=['short summary'],
+        answers=[{'question': 'q', 'answer': 'full-detail-not-in-list'}],
+        photo_file_id='hidden-photo', bot_clone_id=None))
+    report.status = 'approved'
+    db.session.add(report)
+    db.session.commit()
+    session = _session_row(db, target_user_id=77123, mode='view')
+    headers = {'Authorization': 'Bearer ' + session['token']}
+    client = app.test_client()
+    listing = client.get('/report/api/bootstrap?page=1&per_page=1', headers=headers).get_json()
+    assert listing['page'] == 1 and listing['reports'][0]['id'] == report.id
+    assert set(listing['reports'][0]) == {'id', 'date', 'summary'}
+    detail = client.get(f'/report/api/reports/{report.id}', headers=headers).get_json()['report']
+    assert detail['answers'][0]['answer'] == 'full-detail-not-in-list'
+    assert set(detail) == {'id', 'date', 'answers', 'channel_link'}
+    assert client.get('/report/api/bootstrap?page=1&per_page=1', headers=headers).get_json() == listing
+    html = client.get('/report/app').get_data(as_text=True)
+    assert "document.getElementById('backToReports').onclick = renderView" in html
+    assert 'boot.page' in html and 'data-report-id' in html

@@ -561,14 +561,10 @@ async def _save_and_notify_from_callback(query, context: ContextTypes.DEFAULT_TY
             except (TypeError, ValueError):
                 admin_group_id = admin_group_id_str.strip()
             template_text = _build_push_caption(flask_app, report_id, answers, clone_id=clone_id)
-            target_identity = _format_user_identity(target_user_id, member=target_member)
-            submitter_identity = _format_user_identity(submitter_id, from_user=query.from_user)
-            caption = (
-                f"📋 <b>新报告待审核 #{report_id}</b>\n\n"
-                f"👤 被提交人：{target_identity}\n"
-                f"📤 提交人：{submitter_identity}\n\n"
-                f"{template_text}"
-            )
+            target_identity = report_service.compact_contact_identity(target_user_id, member=target_member)
+            submitter_identity = report_service.compact_contact_identity(submitter_id, from_user=query.from_user)
+            caption = report_service.build_contact_caption(
+                template_text, target_identity, submitter_identity, review_report_id=report_id)
             keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton('✅ 通过', callback_data=f'audit_approve_{report_id}'),
@@ -830,10 +826,10 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'channel_msg_deleted': r.channel_msg_deleted,
                 'admin_chat_id': r.admin_chat_id,
                 'admin_message_id': r.admin_message_id,
-                'target_identity': report_service.format_user_identity(
+                'target_identity': report_service.compact_contact_identity(
                     r.user_id, member=target_member),
                 'submitter_identity': (
-                    report_service.format_user_identity(
+                    report_service.compact_contact_identity(
                         r.submitter_id, member=submitter_member)
                     if r.submitter_id else None
                 ),
@@ -995,10 +991,10 @@ async def audit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         template_caption = _build_push_caption(
             flask_app, report_id, (report or {}).get('answers') or [], clone_id=clone_id
         )
-        identity_header = f"👤 被提交人：{(report or {}).get('target_identity') or report_service.format_user_identity((report or {}).get('user_id'))}"
-        if report and report.get('submitter_identity'):
-            identity_header += f"\n📤 提交人：{report['submitter_identity']}"
-        caption = f"{identity_header}\n\n{template_caption}"
+        caption = report_service.build_contact_caption(
+            template_caption,
+            (report or {}).get('target_identity') or report_service.compact_contact_identity((report or {}).get('user_id')),
+            (report or {}).get('submitter_identity'))
         try:
             if push_media and report and report.get('photo_file_id'):
                 sent = await query.get_bot().send_photo(

@@ -343,7 +343,8 @@ def test_shanghai_day_bounds():
     start, end = web_service.shanghai_day_range_to_utc('2026-11-16', '2026-11-16')
     assert start == datetime(2026, 11, 15, 16)
     assert end == datetime(2026, 11, 16, 15, 59, 59, 999999)
-    assert web_service.format_shanghai(start) == '2026-11-16 00:00（Asia/Shanghai）'
+    assert web_service.format_shanghai(start) == '2026-11-16 00:00（北京时间）'
+    assert web_service.format_shanghai(start, style='short', with_label=False) == '11-16 00:00'
 
 
 def test_real_concurrent_sessions_one_report(tmp_path):
@@ -506,7 +507,11 @@ def test_http_session_upload_submit_review_binding_and_view(web_app, monkeypatch
         assert 'answers' not in item and 'channel_link' not in item
         detail = client.get(f'/report/api/reports/{report.id}', headers=view_headers).get_json()
         assert detail['report']['channel_link'] == 'https://t.me/reports_test/42'
-        assert 'Asia/Shanghai' in item['date']
+        assert item['date'] == web_service.format_shanghai(
+            report.created_at, style='short', with_label=False)
+        assert view['timezone'] == '北京时间'
+        assert view['sort'] == 'newest'
+        assert 'submitter' not in view and '投稿者' not in item.get('title', '')
         assert 'submitter' not in item and 'photo_file_id' not in item
     finally:
         loop.call_soon_threadsafe(loop.stop)
@@ -804,11 +809,216 @@ def test_detail_list_separation_and_return_page_contract(web_app, monkeypatch):
     client = app.test_client()
     listing = client.get('/report/api/bootstrap?page=1&per_page=1', headers=headers).get_json()
     assert listing['page'] == 1 and listing['reports'][0]['id'] == report.id
-    assert set(listing['reports'][0]) == {'id', 'date', 'summary'}
+    assert set(listing['reports'][0]) == {'id', 'date', 'title', 'summary'}
+    assert listing['sort'] == 'newest' and listing['timezone'] == '北京时间'
+    assert listing['target_contact']['user_id'] == 77123
+    assert 'submitter' not in listing and 'contributor' not in listing
     detail = client.get(f'/report/api/reports/{report.id}', headers=headers).get_json()['report']
     assert detail['answers'][0]['answer'] == 'full-detail-not-in-list'
-    assert set(detail) == {'id', 'date', 'answers', 'channel_link'}
+    assert set(detail) == {'id', 'date', 'title', 'answers', 'channel_link'}
     assert client.get('/report/api/bootstrap?page=1&per_page=1', headers=headers).get_json() == listing
     html = client.get('/report/app').get_data(as_text=True)
-    assert "document.getElementById('backToReports').onclick = renderView" in html
-    assert 'boot.page' in html and 'data-report-id' in html
+    assert 'backToReports' in html
+    assert 'ReportWebAppView.renderView' in html and 'viewState.sort' in html
+    assert 'textContent' in html and 'dataset.reportId' in html
+
+
+@pytest.mark.parametrize('name,username,expected,link', [
+    ('真实昵称', 'valid_user', '真实昵称', 'https://t.me/valid_user'),
+    ('', 'valid_user', 'valid_user', 'https://t.me/valid_user'),
+    ('', '', '用户987654321', 'tg://user?id=987654321'),
+    ('<script>&"', '', '&lt;script&gt;&amp;&quot;', 'tg://user?id=987654321'),
+    ('长' * 40, '', '长' * 23 + '…', 'tg://user?id=987654321'),
+    ('名字\n另一行', 'bad"<username', '名字 另一行', 'tg://user?id=987654321'),
+])
+def test_compact_contact_identity(name, username, expected, link):
+    from types import SimpleNamespace
+    identity = report_service.compact_contact_identity(
+        987654321, member=SimpleNamespace(first_name=name, last_name='', username=username))
+    assert identity == f'<a href="{link}">{expected}</a> · <code>987654321</code>'
+    assert '\n' not in identity and '<script>' not in identity
+
+
+def test_contact_caption_preserves_template_and_puts_identities_last():
+    body = '<b>管理员自定义正文</b>\n原有内容\n'
+    contact = report_service.compact_contact_identity(1)
+    contributor = report_service.compact_contact_identity(2)
+    published = report_service.build_contact_caption(body, contact, contributor)
+    review = report_service.build_contact_caption(body, contact, contributor, review_report_id=33)
+    assert published == body + '\n\n联系人：' + contact + '\n投稿者：' + contributor
+    assert published.count('联系人：') == 1 and published.count('投稿者：') == 1
+    assert '被提交人' not in published and '提交人' not in published
+    assert review.endswith(published)
+    assert len(review.encode('utf-16-le')) >= len(published.encode('utf-16-le'))
+
+
+def test_web_review_footer_is_scoped_and_matches_channel_builder(web_app):
+    from app.models import BotGroup, GroupMember, UserReport
+    from app.modules.report.web_routes import review_caption
+    app, db = web_app
+    groups, members = [], []
+    try:
+        for clone_id, prefix in ((None, 'Main'), (881, 'Clone')):
+            group = BotGroup(chat_id='-19887227', clone_id=clone_id, title=prefix)
+            db.session.add(group)
+            db.session.flush()
+            groups.append(group)
+            for uid, suffix in ((71881, 'Contact'), (71882, 'Contributor')):
+                member = GroupMember(group_id=group.id, user_id=uid, first_name=prefix + suffix,
+                                     username=prefix.lower() + '_' + suffix.lower())
+                db.session.add(member)
+                members.append(member)
+        db.session.commit()
+        for clone_id, prefix, excluded in ((None, 'Main', 'Clone'), (881, 'Clone', 'Main')):
+            report = UserReport(id=33, user_id=71881, submitter_id=71882, clone_id=clone_id,
+                                answers='[{"question":"Q","answer":"A"}]')
+            caption = review_caption(report)
+            assert prefix + 'Contact' in caption and prefix + 'Contributor' in caption
+            assert excluded + 'Contact' not in caption
+            assert caption.index('💬 A') < caption.index('联系人：') < caption.index('投稿者：')
+            assert '<code>71881</code>' in caption and '<code>71882</code>' in caption
+            assert caption.count('联系人：') == 1
+    finally:
+        for member in members: db.session.delete(member)
+        for group in groups: db.session.delete(group)
+        db.session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('clone_id', [None, 882])
+async def test_chat_submission_uses_same_contact_footer(web_app, clone_id):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.models import SystemConfig, UserReport
+    from app.modules.report import bot
+    app, db = web_app
+    db.session.rollback()
+    key = report_service.scoped_key('admin_group_id', clone_id)
+    previous = SystemConfig.get_value(key, '')
+    SystemConfig.set_value(key, '-100123456')
+    db.session.commit()
+    sent = AsyncMock(return_value=SimpleNamespace(message_id=77))
+    telegram = SimpleNamespace(send_message=sent, send_photo=AsyncMock())
+    target_id, submitter_id = 91891 + (clone_id or 0), 91892 + (clone_id or 0)
+    query = SimpleNamespace(from_user=SimpleNamespace(id=submitter_id, first_name='投稿名', last_name='', username='author_name'),
+                            get_bot=lambda: telegram, edit_message_text=AsyncMock())
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={'flask_app': app, 'clone_id': clone_id}),
+                              user_data={bot._TARGET_KEY: target_id, 'questions': [{'text': 'Q'}], 'answers': ['A']})
+    try:
+        await bot._save_and_notify_from_callback(query, context, None)
+        if sent.await_count != 1:
+            edited = query.edit_message_text.await_count and query.edit_message_text.call_args
+            raise AssertionError('send_message not called; edit=' + repr(edited) + ' admin=' + repr(SystemConfig.get_value(key, '')))
+        caption = sent.call_args.kwargs['text']
+        assert caption.index('💬 A') < caption.index('联系人：') < caption.index('投稿者：')
+        assert f'<a href="https://t.me/author_name">投稿名</a> · <code>{submitter_id}</code>' in caption
+        assert '被提交人：' not in caption and '提交人：' not in caption
+    finally:
+        UserReport.query.filter(UserReport.user_id == target_id).delete(synchronize_session=False)
+        db.session.commit()
+        SystemConfig.set_value(key, previous)
+        db.session.commit()
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('【老师艺名】：', '老师艺名'),
+    ('【所在地区】', '所在地区'),
+    ('故障现象：', '故障现象'),
+    ('处理结果', '处理结果'),
+    ('【必填】老师艺名：', '【必填】老师艺名'),
+])
+def test_display_question_text_strips_outer_markup_only(raw, expected):
+    assert web_service.display_question_text(raw) == expected
+
+
+def test_list_title_uses_name_field_not_first_region():
+    answers = [
+        {'question': '【所在地区】：', 'answer': '上海'},
+        {'question': '【老师艺名】：', 'answer': '小猫老师'},
+        {'question': '今日情况：', 'answer': '顺利完成'},
+        {'question': '备注', 'answer': ''},
+    ]
+    title, summary = web_service.list_title_and_summary(answers, 17)
+    assert title == '小猫老师'
+    assert summary == '上海\n顺利完成'
+    fallback_title, fallback_summary = web_service.list_title_and_summary(
+        [{'question': '【所在地区】：', 'answer': '测'},
+         {'question': '情况说明', 'answer': '<b>第二行</b>'}],
+        17,
+    )
+    assert fallback_title == '报告 #17'
+    assert fallback_summary == '测\n<b>第二行</b>'
+    assert web_service.list_title_and_summary([], 9) == ('报告 #9', '')
+
+
+def test_view_sort_is_stable_and_toggle_keeps_return_state(web_app, monkeypatch):
+    from datetime import datetime
+    from app import limiter
+    from app.models import UserReport
+    app, db = web_app
+    monkeypatch.setattr(limiter, 'enabled', False)
+    stamp = datetime(2026, 11, 16, 6, 48)
+    rows = []
+    for answer in ('甲', '乙', '丙', '丁', '戊'):
+        report = UserReport(**report_service.new_report_values(
+            user_id=64517, submitter_id=11, raw_answers=[answer],
+            answers=[{'question': '【所在地区】：', 'answer': '杭州'},
+                     {'question': '老师艺名', 'answer': answer}],
+            photo_file_id=None, bot_clone_id=None))
+        report.status = 'approved'
+        report.created_at = stamp
+        db.session.add(report)
+        rows.append(report)
+    db.session.commit()
+    ids = [row.id for row in rows]
+    session = _session_row(db, target_user_id=64517, mode='view')
+    headers = {'Authorization': 'Bearer ' + session['token']}
+    client = app.test_client()
+    newest = client.get('/report/api/bootstrap?page=1&per_page=2&sort=newest', headers=headers).get_json()
+    newest_p2 = client.get('/report/api/bootstrap?page=2&per_page=2&sort=newest', headers=headers).get_json()
+    assert [item['id'] for item in newest['reports']] == ids[-1:-3:-1]
+    assert [item['id'] for item in newest_p2['reports']] == ids[-3:-5:-1]
+    assert newest['reports'][0]['title'] == '戊'
+    assert newest['reports'][0]['summary'] == '杭州'
+    assert newest['reports'][0]['date'] == '11-16 14:48'
+    assert 'submitter' not in newest and newest['target_contact']['user_id'] == 64517
+    oldest = client.get('/report/api/bootstrap?page=2&per_page=2&sort=oldest', headers=headers).get_json()
+    assert oldest['sort'] == 'oldest' and oldest['page'] == 2
+    assert [item['id'] for item in oldest['reports']] == ids[2:4]
+    same = client.get('/report/api/bootstrap?page=2&per_page=2&sort=oldest', headers=headers).get_json()
+    assert same == oldest
+    ignored = client.get('/report/api/bootstrap?page=1&per_page=2&sort=unknown', headers=headers).get_json()
+    assert ignored['sort'] == 'newest'
+    assert [item['id'] for item in ignored['reports']] == ids[-1:-3:-1]
+
+
+def test_detail_normalizes_questions_and_keeps_raw_answers(web_app, monkeypatch):
+    from app import limiter
+    from app.models import UserReport
+    app, db = web_app
+    monkeypatch.setattr(limiter, 'enabled', False)
+    payload = '<img src=x onerror=alert(1)>\n第二行'
+    report = UserReport(**report_service.new_report_values(
+        user_id=64518, submitter_id=11, raw_answers=['测', payload],
+        answers=[{'question': '【所在地区】：', 'answer': '测'},
+                 {'question': '【情况说明】：', 'answer': payload}],
+        photo_file_id=None, bot_clone_id=None))
+    report.status = 'approved'
+    db.session.add(report)
+    db.session.commit()
+    session = _session_row(db, target_user_id=64518, mode='view')
+    headers = {'Authorization': 'Bearer ' + session['token']}
+    detail = app.test_client().get(f'/report/api/reports/{report.id}', headers=headers).get_json()['report']
+    assert [item['question'] for item in detail['answers']] == ['所在地区', '情况说明']
+    assert detail['answers'][1]['answer'] == payload
+    assert detail['title'] == '报告 #{}'.format(report.id)
+    stored = db.session.get(UserReport, report.id)
+    assert '【所在地区】：' in stored.answers
+
+
+def test_report_view_js_helpers():
+    import subprocess
+    from pathlib import Path
+    script = Path(__file__).with_name('test_report_webapp_view.js')
+    result = subprocess.run(['node', str(script)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr

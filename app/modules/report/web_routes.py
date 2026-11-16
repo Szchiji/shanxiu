@@ -198,10 +198,11 @@ def review_caption(report):
     submitter = report_service.find_member_for_bot(
         GroupMember=GroupMember, GroupUser=GroupUser, BotGroup=BotGroup,
         bot_clone_id=report.clone_id, user_id=report.submitter_id)
-    return (f'📋 <b>新报告待审核 #{report.id}</b>\n\n'
-            f'👤 被提交人：{report_service.format_user_identity(report.user_id, member=target)}\n'
-            f'📤 提交人：{report_service.format_user_identity(report.submitter_id, member=submitter)}\n\n'
-            f'{body}')
+    return report_service.build_contact_caption(
+        body, report_service.compact_contact_identity(report.user_id, member=target),
+        report_service.compact_contact_identity(report.submitter_id, member=submitter) if report.submitter_id else None,
+        review_report_id=report.id)
+
 
 
 def retry_report_notification(report):
@@ -275,6 +276,7 @@ def api_bootstrap():
             data = web_service.view_payload_for_session(
                 UserReport, SystemConfig, GroupMember, GroupUser, BotGroup, session_row,
                 page=request.args.get('page', 1), per_page=request.args.get('per_page', 20),
+                sort=request.args.get('sort', 'newest'),
             )
         else:
             data = web_service.write_bootstrap(

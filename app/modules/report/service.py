@@ -120,6 +120,42 @@ def build_push_caption(template: str, report_id, answers: list) -> str:
     return result
 
 
+def resolve_contact_display(user_id, member=None, from_user=None):
+    """Plain compact identity for Mini App JSON; caller must supply bot-scoped data."""
+    user_id = int(user_id)
+    source = from_user if from_user is not None else member
+    first = ' '.join(str(getattr(source, 'first_name', '') or '').split())
+    last = ' '.join(str(getattr(source, 'last_name', '') or '').split())
+    username = str(getattr(source, 'username', '') or '').strip().lstrip('@')
+    valid_username = username if re.fullmatch(r'[A-Za-z0-9_]{5,32}', username) else ''
+    name = ' '.join(filter(None, (first, last))) or valid_username or f'用户{user_id}'
+    # Do not shorten the fallback ID or the separate full numeric ID.
+    if (first or last or valid_username) and len(name) > 24:
+        name = name[:23] + '…'
+    url = f'https://t.me/{valid_username}' if valid_username else f'tg://user?id={user_id}'
+    return {'name': name, 'user_id': user_id, 'url': url}
+
+
+def compact_contact_identity(user_id, member=None, from_user=None):
+    """Compact escaped display link; caller must supply bot-scoped identity."""
+    info = resolve_contact_display(user_id, member=member, from_user=from_user)
+    return (
+        f'<a href="{info["url"]}">{escape_user_html(info["name"])}</a>'
+        f' · <code>{info["user_id"]}</code>'
+    )
+
+
+def build_contact_caption(body, contact, contributor=None, *, review_report_id=None):
+    """Keep configured body untouched and append exactly one system footer."""
+    footer = f'联系人：{contact}'
+    if contributor:
+        footer += f'\n投稿者：{contributor}'
+    caption = f'{body}\n\n{footer}'
+    if review_report_id is not None:
+        caption = f'📋 <b>新报告待审核 #{review_report_id}</b>\n\n{caption}'
+    return caption
+
+
 def format_user_identity(user_id, member=None, from_user=None) -> str:
     """Return an HTML identity string with escaped names/@usernames."""
     parts = []
@@ -220,7 +256,13 @@ def is_visible_to_bot(report, bot_clone_id) -> bool:
     return report_ownership(report, bot_clone_id) == OWNED
 
 
-def visible_reports_query(UserReport, user_id, bot_clone_id):
+def normalize_view_sort(sort) -> str:
+    """Accept only newest/oldest; unknown or empty values default to newest."""
+    value = str(sort or 'newest').strip().lower()
+    return value if value in ('newest', 'oldest') else 'newest'
+
+
+def visible_reports_query(UserReport, user_id, bot_clone_id, sort='newest'):
     """SQLAlchemy query for approved, owned reports of *user_id* for this bot."""
     q = UserReport.query.filter_by(
         user_id=user_id,
@@ -231,7 +273,14 @@ def visible_reports_query(UserReport, user_id, bot_clone_id):
         q = q.filter(UserReport.clone_id.is_(None))
     else:
         q = q.filter_by(clone_id=bot_clone_id)
-    return q.order_by(UserReport.created_at.desc())
+    return apply_visible_report_sort(q, UserReport, sort)
+
+
+def apply_visible_report_sort(query, UserReport, sort='newest'):
+    """Stable pagination: created_at then id, both in the same direction."""
+    if normalize_view_sort(sort) == 'oldest':
+        return query.order_by(UserReport.created_at.asc(), UserReport.id.asc())
+    return query.order_by(UserReport.created_at.desc(), UserReport.id.desc())
 
 
 def attribute_report_to_bot(report, bot_clone_id) -> None:

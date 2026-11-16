@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac as hmac_mod
+import re
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -28,8 +29,21 @@ logger = logging.getLogger(__name__)
 
 SHANGHAI_TZ_NAME = 'Asia/Shanghai'
 SHANGHAI_TZ = ZoneInfo(SHANGHAI_TZ_NAME)
+TIMEZONE_LABEL = '北京时间'
 VIEW_PAGE_DEFAULT = 20
 VIEW_PAGE_MAX = 50
+
+# Title may come from a short answer whose question looks like a name field.
+_NAME_QUESTION_HINTS = ('艺名', '老师姓名', '老师名字', '老师名', '教师姓名', '姓名', '名字', '昵称', '真名', '艺人')
+_NAME_QUESTION_EXACT = {'老师', '教师', '导师', '联系人'}
+# Do not treat these as a person's name, even when they are the first question.
+_TITLE_EXCLUDE_HINTS = (
+    '地区', '区域', '城市', '省份', '地址', '地点', '时间', '日期',
+    '电话', '手机', '微信', '备注', '说明', '描述', '现象', '结果',
+    '故障', '内容', '详情', '评价', '评分',
+)
+_TITLE_MAX = 24
+_SUMMARY_LINE_MAX = 80
 
 
 def plain_user_identity(user_id, member=None) -> str:
@@ -58,14 +72,74 @@ def as_utc(dt):
     return dt.astimezone(timezone.utc)
 
 
-def format_shanghai(dt, *, with_time=True) -> str:
-    """Format a stored timestamp in Asia/Shanghai and label the zone."""
+def format_shanghai(dt, *, with_time=True, style='full', with_label=True) -> str:
+    """Format a stored timestamp in Asia/Shanghai and label it 北京时间."""
     if dt is None:
         return ''
     local = as_utc(dt).astimezone(SHANGHAI_TZ)
-    if with_time:
-        return local.strftime('%Y-%m-%d %H:%M') + f'（{SHANGHAI_TZ_NAME}）'
-    return local.strftime('%Y-%m-%d') + f'（{SHANGHAI_TZ_NAME}）'
+    if style == 'short':
+        text = local.strftime('%m-%d %H:%M')
+    elif with_time:
+        text = local.strftime('%Y-%m-%d %H:%M')
+    else:
+        text = local.strftime('%Y-%m-%d')
+    if with_label:
+        return f'{text}（{TIMEZONE_LABEL}）'
+    return text
+
+
+def display_question_text(text: str) -> str:
+    """Strip an outer 【】 wrapper and a trailing colon for display only."""
+    t = (text or '').strip()
+    match = re.fullmatch(r'【([^】]*)】\s*[：:]*', t)
+    if match:
+        t = match.group(1).strip()
+    return t.rstrip('：:').strip()
+
+
+def _clip_display(text: str, limit: int) -> str:
+    text = (text or '').strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)] + '…'
+
+
+def list_title_and_summary(answers, report_id):
+    """Pick a short recognizable name title; summarize other non-empty answers.
+
+    Never uses a region/time-like first question as a person's name.  Falls
+    back to the report number when no name-like field is present.
+    """
+    items = []
+    for raw in answers or []:
+        if not isinstance(raw, dict):
+            continue
+        question = display_question_text(raw.get('question') or '')
+        answer = re.sub(r'\s+', ' ', str(raw.get('answer') or '')).strip()
+        items.append((question, answer))
+
+    title = None
+    title_index = None
+    for index, (question, answer) in enumerate(items):
+        if not answer or len(answer) > 40:
+            continue
+        if any(hint in question for hint in _TITLE_EXCLUDE_HINTS):
+            continue
+        if question in _NAME_QUESTION_EXACT or any(hint in question for hint in _NAME_QUESTION_HINTS):
+            title = _clip_display(answer, _TITLE_MAX)
+            title_index = index
+            break
+    if not title:
+        title = f'报告 #{report_id}'
+
+    lines = []
+    for index, (_question, answer) in enumerate(items):
+        if not answer or index == title_index:
+            continue
+        lines.append(_clip_display(answer, _SUMMARY_LINE_MAX))
+        if len(lines) >= 2:
+            break
+    return title, '\n'.join(lines)
 
 
 def shanghai_day_range_to_utc(date_from_s, date_to_s):
@@ -351,7 +425,7 @@ def delete_session_uploads(db, ReportWebUpload, session_id: int):
 
 
 def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, BotGroup,
-                             session_row, *, page=1, per_page=VIEW_PAGE_DEFAULT):
+                             session_row, *, page=1, per_page=VIEW_PAGE_DEFAULT, sort='newest'):
     require_view_session(session_row)
     try:
         page = int(page)
@@ -361,8 +435,9 @@ def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, B
     if page < 1 or page > 100000:
         raise SecurityError('bad_page', '页码无效。')
     per_page = min(max(per_page, 1), VIEW_PAGE_MAX)
+    sort = report_service.normalize_view_sort(sort)
     query = report_service.visible_reports_query(
-        UserReport, session_row.target_user_id, session_row.clone_id
+        UserReport, session_row.target_user_id, session_row.clone_id, sort=sort,
     )
     total = query.count()
     reports = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -370,20 +445,29 @@ def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, B
         GroupMember=GroupMember, GroupUser=GroupUser, BotGroup=BotGroup,
         bot_clone_id=session_row.clone_id, user_id=session_row.target_user_id,
     )
-    identity = plain_user_identity(session_row.target_user_id, member=member)
+    contact = report_service.resolve_contact_display(
+        session_row.target_user_id, member=member,
+    )
     items = []
     for r in reports:
-        items.append({'id': r.id, 'date': format_shanghai(r.created_at),
-                      'summary': (r.fault_time or '')[:100]})
+        title, summary = list_title_and_summary(report_service.parse_answers(r), r.id)
+        items.append({
+            'id': r.id,
+            'title': title,
+            'summary': summary,
+            'date': format_shanghai(r.created_at, style='short', with_label=False),
+        })
     return {
-        'target_identity': identity,
+        'target_identity': f"{contact['name']} · {contact['user_id']}",
+        'target_contact': contact,
         'target_user_id': session_row.target_user_id,
         'reports': items,
         'page': page,
         'per_page': per_page,
         'total': total,
         'has_more': (page * per_page) < total,
-        'timezone': SHANGHAI_TZ_NAME,
+        'sort': sort,
+        'timezone': TIMEZONE_LABEL,
     }
 
 
@@ -399,10 +483,21 @@ def view_report_detail(UserReport, SystemConfig, session_row, report_id):
     link = ''
     if report.channel_msg_id and channel and not report.channel_msg_deleted:
         link = report_service.build_channel_link(channel, report.channel_msg_id)
-    return {'id': report.id, 'date': format_shanghai(report.created_at),
-            'answers': [{'question': a.get('question', ''), 'answer': a.get('answer', '')}
-                        for a in report_service.parse_answers(report)],
-            'channel_link': link}
+    answers = report_service.parse_answers(report)
+    title, _summary = list_title_and_summary(answers, report.id)
+    return {
+        'id': report.id,
+        'title': title,
+        'date': format_shanghai(report.created_at),
+        'answers': [
+            {
+                'question': display_question_text(a.get('question', '')),
+                'answer': a.get('answer', ''),
+            }
+            for a in answers
+        ],
+        'channel_link': link,
+    }
 
 
 def write_bootstrap(SystemConfig, GroupMember, GroupUser, BotGroup, session_row):
@@ -423,7 +518,7 @@ def write_bootstrap(SystemConfig, GroupMember, GroupUser, BotGroup, session_row)
         'submitted_report_id': session_row.submitted_report_id,
         'max_answer_chars': MAX_ANSWER_CHARS,
         'max_upload_bytes': 10 * 1024 * 1024,
-        'timezone': SHANGHAI_TZ_NAME,
+        'timezone': TIMEZONE_LABEL,
     }
 
 

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-list me-2"></i>报告列表</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">仅显示当前机器人范围内的报告，只读查看，不在网页审核。</p>
+        </div>
+        <a href="{{ url_for('report_admin.report_settings') }}" class="btn btn-outline-secondary btn-sm">报告配置</a>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">被提交人</label>
+                <input type="text" class="form-control" name="target" value="{{ filters.target }}" placeholder="用户 ID 或 @用户名">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">状态</label>
+                <select class="form-select" name="status">
+                    <option value="" {% if not filters.status %}selected{% endif %}>全部</option>
+                    <option value="pending" {% if filters.status == 'pending' %}selected{% endif %}>待审核</option>
+                    <option value="approved" {% if filters.status == 'approved' %}selected{% endif %}>已通过</option>
+                    <option value="rejected" {% if filters.status == 'rejected' %}selected{% endif %}>已驳回</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">开始日期</label>
+                <input type="date" class="form-control" name="date_from" value="{{ filters.date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">结束日期</label>
+                <input type="date" class="form-control" name="date_to" value="{{ filters.date_to }}">
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary">筛选</button>
+                <a href="{{ url_for('report_admin.report_list') }}" class="btn btn-outline-secondary">清除</a>
+            </div>
+        </form>
+        {% if filters.notice %}
+        <div class="text-muted small mt-2">{{ filters.notice }}</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+            <thead>
+            <tr>
+                <th>编号</th>
+                <th>被提交人</th>
+                <th>状态</th>
+                <th>日期</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>#{{ row.report.id }}</td>
+                <td>{{ row.target | safe }}</td>
+                <td>
+                    {% if row.report.status == 'pending' %}待审核
+                    {% elif row.report.status == 'approved' %}已通过
+                    {% elif row.report.status == 'rejected' %}已驳回
+                    {% else %}{{ row.report.status }}{% endif %}
+                </td>
+                <td>{{ row.created }}</td>
+                <td><a href="{{ url_for('report_admin.report_detail', report_id=row.report.id) }}">详情</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">没有符合条件的报告。未确认归属的历史记录不会出现在此列表。</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if pagination and pagination.pages > 1 %}
+    <div class="card-footer d-flex justify-content-between">
+        <span class="small text-muted">共 {{ pagination.total }} 条</span>
+        <div>
+            {% if pagination.has_prev %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('report_admin.report_list', page=pagination.prev_num, target=filters.target, status=filters.status, date_from=filters.date_from, date_to=filters.date_to) }}">上一页</a>
+            {% endif %}
+            <span class="small mx-2">{{ pagination.page }} / {{ pagination.pages }}</span>
+            {% if pagination.has_next %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('report_admin.report_list', page=pagination.next_num, target=filters.target, status=filters.status, date_from=filters.date_from, date_to=filters.date_to) }}">下一页</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

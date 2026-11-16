@@ -1321,6 +1321,41 @@ class UserReport(db.Model):
     admin_message_id = db.Column(db.Integer, nullable=True)
     # Short-lived approve lease so concurrent workers cannot both publish.
     approve_claimed_at = db.Column(db.DateTime, nullable=True)
+    # Web-submit admin notification: pending/notified/failed/unknown; empty for chat-native.
+    notify_status = db.Column(db.String(20), nullable=True)
+    notify_attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    notify_claimed_at = db.Column(db.DateTime, nullable=True)
+    notify_error = db.Column(db.String(200), nullable=True)
+
+
+class ReportWebSession(db.Model):
+    """Server-side Mini App session.  Token is stored hashed only."""
+    __tablename__ = 'report_web_sessions'
+    id = db.Column(db.Integer, primary_key=True)
+    token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    telegram_user_id = db.Column(db.BigInteger, nullable=False, index=True)
+    clone_id = db.Column(db.Integer, nullable=True, index=True)
+    target_user_id = db.Column(db.BigInteger, nullable=False)
+    mode = db.Column(db.String(16), nullable=False)
+    csrf_hash = db.Column(db.String(64), nullable=False)
+    submit_key_hash = db.Column(db.String(64), unique=True, nullable=True)
+    submitted_report_id = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+
+
+class ReportWebUpload(db.Model):
+    """One pending photo for a write session.  Bytes are never exposed as a path."""
+    __tablename__ = 'report_web_uploads'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('report_web_sessions.id'), nullable=False, index=True)
+    upload_token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    data = db.Column(db.LargeBinary, nullable=False)
+    content_type = db.Column(db.String(64), nullable=False)
+    size = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    # Bound to a saved report until the admin-group photo is delivered as a file_id.
+    report_id = db.Column(db.Integer, nullable=True, index=True)
 
 
 DEFAULT_FIELDS = [

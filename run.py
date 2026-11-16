@@ -35,7 +35,9 @@ def init_database(app):
         # (e.g. due to a PostgreSQL orphaned-sequence conflict on the primary key column).
         _ensure_report_tables(db)
         from app.modules.report.service import ensure_user_report_schema
+        from app.modules.report.web_service import ensure_report_web_schema
         ensure_user_report_schema(db)
+        ensure_report_web_schema(db)
 
 
 def _ensure_report_tables(db):
@@ -301,7 +303,9 @@ def fix_database_schema(app):
         # Idempotent column/type repair for user_reports (channel_msg_deleted,
         # ownership fields, TEXT fault_time).  Does not backfill owner_known.
         from app.modules.report.service import ensure_user_report_schema
+        from app.modules.report.web_service import ensure_report_web_schema
         ensure_user_report_schema(db)
+        ensure_report_web_schema(db)
 
         print("✅ 数据库结构检查完成", flush=True)
 

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "components.html" import toast_notification, loading_spinner %}
+{% block content %}
+{{ toast_notification() }}
+{{ loading_spinner() }}
+
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1"><i class="fa-solid fa-flag me-2"></i>报告 #{{ report.id }}</h4>
+            <p class="mb-0 opacity-75" style="font-size: 0.85rem;">只读详情，请在 Telegram 审核群中通过或驳回。</p>
+        </div>
+        <a href="{{ url_for('report_admin.report_list') }}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="mb-2">状态：
+            <strong>
+                {% if report.status == 'pending' %}待审核
+                {% elif report.status == 'approved' %}已通过
+                {% elif report.status == 'rejected' %}已驳回
+                {% else %}{{ report.status }}{% endif %}
+            </strong>
+        </div>
+        {% if report.notify_status %}
+        <div class="mb-2">审核通知：{{ report.notify_status }}（尝试 {{ report.notify_attempts }} 次）</div>
+        {% if report.notify_status in ['sending', 'unknown'] %}
+        <div class="alert alert-warning">投递结果未知，原附件仍保留。禁止直接重发，请先核对审核群及消息绑定，避免重复审核通知。</div>
+        {% elif report.status == 'pending' and report.notify_status in ['pending', 'failed'] %}
+        <form method="POST" action="{{ url_for('report_admin.report_retry_notify', report_id=report.id) }}">
+          <input type="hidden" name="csrf" value="{{ notify_csrf }}">
+          <button class="btn btn-outline-primary mb-2" type="submit">重试通知审核群（不是审核）</button>
+        </form>
+        {% endif %}
+        {% endif %}
+        <div class="mb-2">日期：{{ created or '未知' }}</div>
+        <div class="mb-2">被提交人：{{ target | safe }}</div>
+        {% if submitter %}<div class="mb-2">提交人：{{ submitter | safe }}</div>{% endif %}
+        {% if channel_link %}
+        <div class="mb-2">频道原文：<a href="{{ channel_link }}" target="_blank" rel="noopener">打开链接</a></div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">问答内容</div>
+    <div class="card-body">
+        {% for item in answers %}
+        <div class="mb-3">
+            <div class="fw-semibold">{{ item.question }}</div>
+            <div>{{ item.answer }}</div>
+        </div>
+        {% else %}
+        <div class="text-muted">没有问答内容。</div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if has_photo %}
+<div class="card mb-4">
+    <div class="card-header">附件照片</div>
+    <div class="card-body">
+        <img src="{{ url_for('report_admin.report_photo', report_id=report.id) }}" alt="报告照片" class="img-fluid rounded">
+    </div>
+</div>
+{% endif %}
+{% endblock %}

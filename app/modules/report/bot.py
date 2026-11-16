@@ -36,6 +36,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    WebAppInfo,
 )
 from telegram.ext import (
     ConversationHandler,
@@ -192,6 +193,49 @@ def _build_channel_link(channel: str, msg_id: int) -> str:
     return report_service.build_channel_link(channel, msg_id)
 
 
+def _webapp_button(clone_id, mode: str, target_user_id, label: str, flask_app=None):
+    """Return a WebAppInfo button when an https origin can be verified; else None."""
+    try:
+        from app.modules.report.web_routes import resolve_https_origin
+        from app.modules.report.web_security import build_webapp_url, mint_start_token
+        from contextlib import nullcontext
+        # PTB runs outside Flask's request thread. Clone origin lookup touches
+        # the DB, so create its context explicitly instead of silently losing
+        # every clone's WebApp button in production.
+        with flask_app.app_context() if flask_app is not None else nullcontext():
+            origin = resolve_https_origin(clone_id)
+            if not origin:
+                return None
+            token = mint_start_token(mode=mode, target_user_id=int(target_user_id), clone_id=clone_id)
+        url = build_webapp_url(origin, token)
+        if not url:
+            return None
+        return InlineKeyboardButton(label, web_app=WebAppInfo(url=url))
+    except Exception as exc:
+        logger.warning('webapp button unavailable: %s', exc)
+        return None
+
+
+def _write_entry_markup(clone_id, target_user_id, flask_app=None):
+    rows = []
+    web = _webapp_button(clone_id, 'write', target_user_id, '在网页填写', flask_app)
+    if web:
+        rows.append([web])
+        rows.append([InlineKeyboardButton(
+            '在对话中填写（备用）',
+            callback_data=f'report_chat_fallback_{int(target_user_id)}',
+        )])
+        return InlineKeyboardMarkup(rows), True
+    return None, False
+
+
+def _view_entry_markup(clone_id, target_user_id, flask_app=None):
+    web = _webapp_button(clone_id, 'view', target_user_id, '在网页查看', flask_app)
+    if web:
+        return InlineKeyboardMarkup([[web]])
+    return None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ConversationHandler – write a report
 # ──────────────────────────────────────────────────────────────────────────────
@@ -219,6 +263,18 @@ async def report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = len(questions)
     # Delete the /start command message to keep the chat clean.
     await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
+    markup, has_web = _write_entry_markup(clone_id, target_user_id, flask_app)
+    if has_web:
+        msg = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                '📝 请选择填写方式。\n\n'
+                '可在 Telegram 内打开网页表单，或继续在对话中逐题填写（备用入口）。'
+            ),
+            reply_markup=markup,
+        )
+        context.user_data['q_msg_id'] = msg.message_id
+        return ConversationHandler.END
     msg = await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f'📝 开始填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total),
@@ -573,7 +629,8 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mid-report "查看报告" deep links should open the list, not the welcome
     # /start message (and not require a second click after cancel).
     if intent == 'view':
-        return await view_reports(update, context)
+        await view_reports(update, context)
+        return ConversationHandler.END
     # When a plain /start (without report_/view_ param) is sent mid-conversation,
     # forward directly to cmd_start so the user reaches admin welcome in one step
     # instead of having to send /start twice.  cmd_start does not use user_data,
@@ -581,7 +638,8 @@ async def report_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if intent == 'start':
         cmd_start_fn = context.application.bot_data.get('cmd_start')
         if cmd_start_fn:
-            return await cmd_start_fn(update, context)
+            await cmd_start_fn(update, context)
+            return ConversationHandler.END
         logger.warning('report_cancel: cmd_start not found in bot_data; falling back to cancel message')
     await update.message.reply_text('❌ 已取消报告填写。')
     return ConversationHandler.END
@@ -605,12 +663,19 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     clone_id = _get_clone_id(context)
 
+    # Prefer the authenticated, paginated Mini App over building an unbounded
+    # chat message. Keep the original scoped DB list only as a fallback.
+    markup = _view_entry_markup(clone_id, target_user_id, flask_app)
+    if markup:
+        await update.message.reply_text('📋 点击下方按钮查看该人的已通过报告。', reply_markup=markup)
+        return
+
     def _get_reports():
         with flask_app.app_context():
             from app.models import UserReport, SystemConfig, GroupMember, GroupUser, BotGroup
             reports = report_service.visible_reports_query(
                 UserReport, target_user_id, clone_id
-            ).all()
+            ).limit(20).all()
             fallback_channel = SystemConfig.get_value(_scoped_key('report_channel', clone_id), '')
             member = report_service.find_member_for_bot(
                 GroupMember=GroupMember,
@@ -630,13 +695,15 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f'📭 该认证用户（{identity}）目前还没有任何历史报告。',
             parse_mode='HTML',
+            reply_markup=_view_entry_markup(clone_id, target_user_id, flask_app),
         )
         return
 
-    lines = [f'📋 <b>{identity} 的历史报告（共 {len(reports)} 份）：</b>\n']
+    lines = [f'📋 <b>{identity} 的最近报告（最多20份，当前 {len(reports)} 份）：</b>\n']
     for i, r in enumerate(reports, 1):
-        date_str = r.created_at.strftime('%Y-%m-%d') if r.created_at else '未知日期'
-        summary = report_service.escape_user_html(r.fault_time or '')
+        from .web_service import format_shanghai
+        date_str = format_shanghai(r.created_at, with_time=False) if r.created_at else '未知日期'
+        summary = report_service.escape_user_html((r.fault_time or '')[:100])
         line = f'🔹 {i}. {date_str} ｜ {summary}'
         channel = report_service.channel_identity_for_view(r, fallback_channel)
         if r.channel_msg_id and channel and not r.channel_msg_deleted:
@@ -644,7 +711,11 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
             line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
         lines.append(line)
 
-    await update.message.reply_text('\n'.join(lines), parse_mode='HTML', disable_web_page_preview=True)
+    view_markup = _view_entry_markup(clone_id, target_user_id, flask_app)
+    await update.message.reply_text(
+        '\n'.join(lines), parse_mode='HTML', disable_web_page_preview=True,
+        reply_markup=view_markup,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1237,13 +1308,53 @@ async def report_receive_target(update: Update, context: ContextTypes.DEFAULT_TY
     await _try_delete_message(context.bot, update.effective_chat.id, update.message.message_id)
     identity = _format_user_identity(target_user_id, member=member)
     total = len(questions)
+    markup, has_web = _write_entry_markup(clone_id, target_user_id, flask_app)
+    intro = f'✅ 已找到被提交人：{identity}\n\n'
+    if has_web:
+        intro += '可在网页填写，或直接在对话中回答下面的问题（备用入口）。\n\n'
     await _edit_or_reply(
         context, update.message, update.effective_chat.id,
-        f'✅ 已找到被提交人：{identity}\n\n'
-        f'📝 开始填写报告（共{total}步）\n\n'
+        intro + f'📝 开始填写报告（共{total}步）\n\n'
         + _prompt_for_question(questions, 0, total),
         parse_mode='HTML',
+        reply_markup=markup if has_web else None,
     )
+    return STEP_QUESTION
+
+
+async def report_chat_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the private-chat question flow from the「在对话中填写」button."""
+    query = update.callback_query
+    data = (query.data or '') if query else ''
+    try:
+        target_user_id = int(data.rsplit('_', 1)[-1])
+    except (TypeError, ValueError):
+        if query:
+            await query.answer('链接无效。', show_alert=True)
+        return ConversationHandler.END
+    if query:
+        await query.answer()
+
+    flask_app = _get_flask_app(context)
+    if flask_app is None:
+        if query:
+            await query.edit_message_text('❌ 服务暂时不可用，请稍后再试。')
+        return ConversationHandler.END
+
+    context.user_data[_TARGET_KEY] = target_user_id
+    clone_id = _get_clone_id(context)
+    questions = _load_questions(flask_app, clone_id=clone_id)
+    context.user_data['questions'] = questions
+    context.user_data['answers'] = []
+    context.user_data['current_q_idx'] = 0
+    total = len(questions)
+    text = f'📝 开始填写报告（共{total}步）\n\n' + _prompt_for_question(questions, 0, total)
+    try:
+        await query.edit_message_text(text)
+        context.user_data['q_msg_id'] = query.message.message_id if query.message else None
+    except Exception:
+        sent = await context.bot.send_message(chat_id=query.message.chat_id, text=text)
+        context.user_data['q_msg_id'] = sent.message_id
     return STEP_QUESTION
 
 
@@ -1268,12 +1379,16 @@ def make_report_handlers():
         conv = ConversationHandler(
         entry_points=[
             MessageHandler(
-                filters.Regex(r'^/start report_\d+') & filters.ChatType.PRIVATE,
+                filters.Regex(r'(?i)^/start(?:@[A-Za-z0-9_]+)?\s+report_\d+') & filters.ChatType.PRIVATE,
                 report_start,
             ),
             MessageHandler(
                 filters.Regex(r'^写报告$') & filters.ChatType.PRIVATE,
                 report_start_by_text,
+            ),
+            CallbackQueryHandler(
+                report_chat_fallback,
+                pattern=r'^report_chat_fallback_\d+$',
             ),
         ],
         states={
@@ -1299,7 +1414,7 @@ def make_report_handlers():
         persistent=False,
     )
     view_handler = MessageHandler(
-        filters.Regex(r'^/start view_\d+') & filters.ChatType.PRIVATE,
+        filters.Regex(r'(?i)^/start(?:@[A-Za-z0-9_]+)?\s+view_\d+') & filters.ChatType.PRIVATE,
         view_reports,
     )
     audit_handler = CallbackQueryHandler(

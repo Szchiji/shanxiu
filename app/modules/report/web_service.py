@@ -366,9 +366,6 @@ def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, B
     )
     total = query.count()
     reports = query.offset((page - 1) * per_page).limit(per_page).all()
-    fallback_channel = SystemConfig.get_value(
-        report_service.scoped_key('report_channel', session_row.clone_id), ''
-    )
     member = report_service.find_member_for_bot(
         GroupMember=GroupMember, GroupUser=GroupUser, BotGroup=BotGroup,
         bot_clone_id=session_row.clone_id, user_id=session_row.target_user_id,
@@ -376,20 +373,8 @@ def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, B
     identity = plain_user_identity(session_row.target_user_id, member=member)
     items = []
     for r in reports:
-        channel = report_service.channel_identity_for_view(r, fallback_channel)
-        link = ''
-        if r.channel_msg_id and channel and not r.channel_msg_deleted:
-            link = report_service.build_channel_link(channel, r.channel_msg_id)
-        items.append({
-            'id': r.id,
-            'date': format_shanghai(r.created_at),
-            'summary': (r.fault_time or '')[:200],
-            'answers': [
-                {'question': a.get('question', ''), 'answer': a.get('answer', '')}
-                for a in report_service.parse_answers(r)
-            ],
-            'channel_link': link,
-        })
+        items.append({'id': r.id, 'date': format_shanghai(r.created_at),
+                      'summary': (r.fault_time or '')[:100]})
     return {
         'target_identity': identity,
         'target_user_id': session_row.target_user_id,
@@ -400,6 +385,24 @@ def view_payload_for_session(UserReport, SystemConfig, GroupMember, GroupUser, B
         'has_more': (page * per_page) < total,
         'timezone': SHANGHAI_TZ_NAME,
     }
+
+
+def view_report_detail(UserReport, SystemConfig, session_row, report_id):
+    require_view_session(session_row)
+    report = report_service.visible_reports_query(
+        UserReport, session_row.target_user_id, session_row.clone_id
+    ).filter(UserReport.id == report_id).first()
+    if report is None:
+        raise SecurityError('not_found', '报告不存在或当前入口不可查看。')
+    fallback = SystemConfig.get_value(report_service.scoped_key('report_channel', session_row.clone_id), '')
+    channel = report_service.channel_identity_for_view(report, fallback)
+    link = ''
+    if report.channel_msg_id and channel and not report.channel_msg_deleted:
+        link = report_service.build_channel_link(channel, report.channel_msg_id)
+    return {'id': report.id, 'date': format_shanghai(report.created_at),
+            'answers': [{'question': a.get('question', ''), 'answer': a.get('answer', '')}
+                        for a in report_service.parse_answers(report)],
+            'channel_link': link}
 
 
 def write_bootstrap(SystemConfig, GroupMember, GroupUser, BotGroup, session_row):

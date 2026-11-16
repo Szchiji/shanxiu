@@ -285,6 +285,19 @@ def api_bootstrap():
     return jsonify({'ok': True, 'mode': session_row.mode, **data})
 
 
+@report_web_bp.route('/api/reports/<int:report_id>')
+@limiter.limit('120 per hour')
+def api_report_detail(report_id):
+    session_row = _load_session_or_error()
+    if isinstance(session_row, SecurityError):
+        return _json_error(session_row)
+    try:
+        report = web_service.view_report_detail(UserReport, SystemConfig, session_row, report_id)
+    except SecurityError as err:
+        return _json_error(err, status=404 if err.code == 'not_found' else 403)
+    return jsonify({'ok': True, 'report': report})
+
+
 @report_web_bp.route('/api/upload', methods=['POST'])
 @limiter.limit('20 per hour')
 def api_upload():

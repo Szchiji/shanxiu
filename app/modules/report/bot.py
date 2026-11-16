@@ -699,23 +699,52 @@ async def view_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = [f'📋 <b>{identity} 的最近报告（最多20份，当前 {len(reports)} 份）：</b>\n']
-    for i, r in enumerate(reports, 1):
-        from .web_service import format_shanghai
-        date_str = format_shanghai(r.created_at, with_time=False) if r.created_at else '未知日期'
-        summary = report_service.escape_user_html((r.fault_time or '')[:100])
-        line = f'🔹 {i}. {date_str} ｜ {summary}'
-        channel = report_service.channel_identity_for_view(r, fallback_channel)
-        if r.channel_msg_id and channel and not r.channel_msg_deleted:
-            link = _build_channel_link(channel, r.channel_msg_id)
-            line += f'\n   👉 <a href="{link}">点击查看报告详情</a>'
-        lines.append(line)
-
-    view_markup = _view_entry_markup(clone_id, target_user_id, flask_app)
+    rows = []
+    from .web_service import format_shanghai
+    for r in reports:
+        label = f'报告 #{r.id} · {format_shanghai(r.created_at, with_time=False)}'
+        rows.append([InlineKeyboardButton(label, callback_data=f'report_view_{target_user_id}_{r.id}')])
     await update.message.reply_text(
-        '\n'.join(lines), parse_mode='HTML', disable_web_page_preview=True,
-        reply_markup=view_markup,
-    )
+        f'📋 {identity} 的最近报告（最多20份），请选择一篇查看：',
+        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def report_view_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    try:
+        _, _, target_id, report_id = query.data.split('_')
+        target_id, report_id = int(target_id), int(report_id)
+    except (ValueError, AttributeError):
+        return
+    flask_app = _get_flask_app(context)
+    if flask_app is None:
+        await query.message.reply_text('服务暂不可用，请重新打开查报告入口。')
+        return
+    from types import SimpleNamespace
+    from .web_service import view_report_detail
+    from .web_security import SecurityError
+    with flask_app.app_context():
+        from app.models import UserReport, SystemConfig
+        try:
+            report = view_report_detail(UserReport, SystemConfig,
+                SimpleNamespace(mode='view', target_user_id=target_id, clone_id=_get_clone_id(context)), report_id)
+        except SecurityError:
+            await query.message.reply_text('报告不存在或不可查看，请重新打开查报告入口。')
+            return
+    text = f'报告 #{report["id"]} · {report["date"]}\n\n'
+    text += '\n\n'.join(f'{a["question"]}\n{a["answer"]}' for a in report['answers'])
+    if report['channel_link']:
+        text += '\n\n频道原文：' + report['channel_link']
+    # No HTML/entities to split; do not truncate a long legacy report.
+    for offset in range(0, len(text), 1800):
+        await query.message.reply_text(text[offset:offset + 1800])
+
+
+async def report_audit_or_view_callback(update, context):
+    if (update.callback_query.data or '').startswith('report_view_'):
+        return await report_view_callback(update, context)
+    return await audit_callback(update, context)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1418,8 +1447,8 @@ def make_report_handlers():
         view_reports,
     )
     audit_handler = CallbackQueryHandler(
-        audit_callback,
-        pattern=r'^audit_(approve|reject|delete_channel)_\d+$',
+        report_audit_or_view_callback,
+        pattern=r'^(?:audit_(?:approve|reject|delete_channel)_\d+|report_view_\d+_\d+)$',
     )
     return conv, view_handler, audit_handler
 

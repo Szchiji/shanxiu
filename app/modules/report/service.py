@@ -1022,6 +1022,10 @@ _USER_REPORT_COLUMNS = (
     ('admin_chat_id', 'VARCHAR(64) NULL'),
     ('admin_message_id', 'INTEGER NULL'),
     ('approve_claimed_at', 'TIMESTAMP NULL'),
+    ('notify_status', 'VARCHAR(20) NULL'),
+    ('notify_attempts', 'INTEGER NOT NULL DEFAULT 0'),
+    ('notify_claimed_at', 'TIMESTAMP NULL'),
+    ('notify_error', 'VARCHAR(200) NULL'),
 )
 
 

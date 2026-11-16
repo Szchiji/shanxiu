@@ -8,3 +8,6 @@ report_admin_bp = Blueprint(
 )
 
 from . import routes  # noqa: E402, F401
+from .web_routes import report_web_bp  # noqa: E402
+
+__all__ = ['report_admin_bp', 'report_web_bp']

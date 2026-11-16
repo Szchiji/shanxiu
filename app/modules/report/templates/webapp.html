@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>报告</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: var(--tg-theme-bg-color, #f5f7f9);
+            --bg-card: var(--tg-theme-secondary-bg-color, #ffffff);
+            --text-primary: var(--tg-theme-text-color, #1e293b);
+            --text-secondary: var(--tg-theme-hint-color, #475569);
+            --accent: var(--tg-theme-button-color, #3b82f6);
+            --accent-text: var(--tg-theme-button-text-color, #ffffff);
+            --border-color: #e2e8f0;
+        }
+        body {
+            margin: 0;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Noto Sans SC", sans-serif;
+        }
+        .wrap { max-width: 560px; margin: 0 auto; padding: 16px 16px 40px; }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.06);
+        }
+        .btn-accent {
+            background: var(--accent);
+            color: var(--accent-text);
+            border: none;
+            width: 100%;
+            border-radius: 10px;
+            padding: .75rem 1rem;
+            font-weight: 600;
+        }
+        .btn-accent:disabled { opacity: .6; }
+        .muted { color: var(--text-secondary); font-size: .9rem; }
+        .q-label { font-weight: 600; margin-bottom: .35rem; }
+        .preview-img { max-width: 100%; border-radius: 8px; }
+        .report-item { border-bottom: 1px solid var(--border-color); padding: .85rem 0; }
+        .report-item:last-child { border-bottom: none; }
+        .gate { text-align: center; padding: 3rem 1rem; }
+        #toast {
+            display: none; position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+            background: #1e293b; color: #fff; padding: .6rem 1rem; border-radius: 8px; z-index: 20; max-width: 90%;
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div id="gate" class="gate d-none">
+        <h5 class="mb-3">请从机器人打开</h5>
+        <p class="muted mb-0">此页面只能在 Telegram 里通过本机器人的按钮打开，不能在普通浏览器中查看或提交报告。</p>
+    </div>
+    <div id="loading" class="text-center py-5 muted">正在验证身份…</div>
+    <div id="app" class="d-none"></div>
+</div>
+<div id="toast"></div>
+<script>
+(function () {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+    const startToken = new URLSearchParams(location.search).get('s') || '';
+    const gate = document.getElementById('gate');
+    const loading = document.getElementById('loading');
+    const app = document.getElementById('app');
+    const toastEl = document.getElementById('toast');
+    let session = null;
+    let boot = null;
+    let uploadToken = '';
+    let submitting = false;
+    let previewFileUrl = '';
+
+    function toast(msg) {
+        toastEl.textContent = msg;
+        toastEl.style.display = 'block';
+        setTimeout(() => { toastEl.style.display = 'none'; }, 2800);
+    }
+    function showGate() {
+        loading.classList.add('d-none');
+        app.classList.add('d-none');
+        gate.classList.remove('d-none');
+    }
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+    function headers(extra) {
+        const h = Object.assign({ 'Authorization': 'Bearer ' + session.token }, extra || {});
+        if (session.csrf) h['X-CSRF-Token'] = session.csrf;
+        return h;
+    }
+
+    async function init() {
+        const initData = (tg && tg.initData) ? tg.initData : '';
+        if (!initData || !startToken) { showGate(); return; }
+        try {
+            const res = await fetch('/report/api/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ initData: initData, startToken: startToken })
+            });
+            const data = await res.json();
+            if (!data.ok) { toast(data.error || '校验失败'); showGate(); return; }
+            session = data;
+            const bootRes = await fetch('/report/api/bootstrap', { headers: headers() });
+            boot = await bootRes.json();
+            if (!boot.ok) { toast(boot.error || '加载失败'); showGate(); return; }
+            loading.classList.add('d-none');
+            app.classList.remove('d-none');
+            if (session.mode === 'view') renderView(); else renderWrite();
+        } catch (e) {
+            toast('网络错误，请从机器人重新打开。');
+            showGate();
+        }
+    }
+
+    function renderView() {
+        const items = boot.reports || [];
+        let html = '<h5 class="mb-1">查看报告</h5>';
+        html += '<p class="muted">被提交人：' + esc(boot.target_identity) + '</p>';
+        if (!items.length) {
+            html += '<div class="card p-3 muted">该认证用户目前还没有任何已通过的历史报告。</div>';
+        } else {
+            html += '<div class="card p-3"><p class="mb-2">共 ' + boot.total + ' 份已通过报告</p>';
+            items.forEach((r, i) => {
+                html += '<div class="report-item">';
+                html += '<div class="fw-semibold">' + (i + 1) + '. ' + esc(r.date || '未知日期') + '</div>';
+                if (r.summary) html += '<div class="muted mt-1">' + esc(r.summary) + '</div>';
+                (r.answers || []).forEach(a => {
+                    html += '<div class="mt-2"><div class="q-label">' + esc(a.question) + '</div>';
+                    html += '<div>' + esc(a.answer) + '</div></div>';
+                });
+                if (r.channel_link) {
+                    html += '<div class="mt-2"><a href="' + esc(r.channel_link) + '" target="_blank" rel="noopener">查看频道原文</a></div>';
+                }
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+        html += '<div class="d-flex gap-2 mt-3">';
+        if (boot.page > 1) html += '<button id="prevPage" class="btn btn-outline-secondary">上一页</button>';
+        if (boot.has_more) html += '<button id="nextPage" class="btn btn-outline-secondary">下一页</button>';
+        html += '</div>';
+        app.innerHTML = html;
+        const prev = document.getElementById('prevPage');
+        const next = document.getElementById('nextPage');
+        if (prev) prev.onclick = () => loadViewPage(boot.page - 1);
+        if (next) next.onclick = () => loadViewPage(boot.page + 1);
+    }
+
+    async function loadViewPage(page) {
+        try {
+            const res = await fetch('/report/api/bootstrap?page=' + page, {headers: headers()});
+            const data = await res.json();
+            if (!data.ok) { toast(data.error || '加载失败'); return; }
+            boot = data;
+            renderView();
+        } catch (e) { toast('网络错误，请重试'); }
+    }
+
+    function renderWrite(preview) {
+        if (boot.already_submitted) {
+            app.innerHTML = '<div class="card p-4 text-center"><h5>报告已提交</h5><p class="muted mb-0">编号 #' + esc(boot.submitted_report_id) + '，请勿重复提交。</p></div>';
+            return;
+        }
+        const qs = boot.questions || [];
+        let html = '<h5 class="mb-1">写报告</h5><p class="muted">单题最多4000字。含照片时完整审核稿（问题、答案、身份和后台模板）合计不得超过1024字，无照片4096字；超长会在保存前明确拒绝，不截断。动图仅使用第一帧。</p>';
+        html += '<p class="muted">被提交人：' + esc(boot.target_identity) + '</p>';
+        if (!preview) {
+            html += '<div class="card p-3 mb-3">';
+            qs.forEach((q, i) => {
+                html += '<div class="mb-3"><div class="q-label">' + esc(q.text) + (q.required ? ' <span class="text-danger">*</span>' : '') + '</div>';
+                if (q.hint) html += '<div class="muted mb-1">' + esc(q.hint) + '</div>';
+                html += '<textarea class="form-control" id="ans_' + i + '" rows="3" maxlength="4000"></textarea></div>';
+            });
+            html += '<div class="mb-2"><div class="q-label">照片' + (boot.require_photo ? ' <span class="text-danger">*</span>' : '（选填）') + '</div>';
+            html += '<div class="muted mb-1">' + esc(boot.photo_prompt || '') + '</div>';
+            html += '<input type="file" id="photo" class="form-control" accept="image/*"></div>';
+            html += '<div id="photoPreview" class="mt-2"></div>';
+            html += '</div>';
+            html += '<button class="btn-accent" id="toPreview">预览并确认</button>';
+        } else {
+            html += '<div class="card p-3 mb-3">';
+            preview.answers.forEach(a => {
+                html += '<div class="mb-3"><div class="q-label">' + esc(a.question) + '</div><div>' + esc(a.answer) + '</div></div>';
+            });
+            if (previewFileUrl) html += '<img class="preview-img mb-2" alt="预览" src="' + previewFileUrl + '">';
+            html += '</div>';
+            html += '<button class="btn-accent mb-2" id="doSubmit">确认提交</button>';
+            html += '<button type="button" class="btn btn-outline-secondary w-100" id="backEdit">返回修改</button>';
+        }
+        app.innerHTML = html;
+        if (!preview) {
+            const fileInput = document.getElementById('photo');
+            fileInput.addEventListener('change', onPickPhoto);
+            document.getElementById('toPreview').addEventListener('click', goPreview);
+        } else {
+            document.getElementById('doSubmit').addEventListener('click', doSubmit);
+            document.getElementById('backEdit').addEventListener('click', () => renderWrite(false));
+        }
+    }
+
+    async function onPickPhoto(ev) {
+        const file = ev.target.files && ev.target.files[0];
+        uploadToken = '';
+        const box = document.getElementById('photoPreview');
+        if (!file) { box.innerHTML = ''; return; }
+        if (file.size > 10 * 1024 * 1024) { toast('图片不能超过 10 MB'); ev.target.value = ''; return; }
+        const fd = new FormData();
+        fd.append('photo', file);
+        box.innerHTML = '<div class="muted">正在上传…</div>';
+        try {
+            const res = await fetch('/report/api/upload', { method: 'POST', headers: headers(), body: fd });
+            const data = await res.json();
+            if (!data.ok) { toast(data.error || '上传失败'); box.innerHTML = ''; ev.target.value = ''; return; }
+            uploadToken = data.upload_token;
+            if (previewFileUrl) URL.revokeObjectURL(previewFileUrl);
+            previewFileUrl = URL.createObjectURL(file);
+            box.innerHTML = '<img class="preview-img" alt="预览" src="' + previewFileUrl + '"><div class="muted mt-1">已上传，提交时才会发给审核群。</div>';
+        } catch (e) {
+            toast('上传失败，请重试');
+            box.innerHTML = '';
+        }
+    }
+
+    function collectAnswers() {
+        return (boot.questions || []).map((_, i) => {
+            const el = document.getElementById('ans_' + i);
+            return el ? el.value : '';
+        });
+    }
+
+    function goPreview() {
+        const raw = collectAnswers();
+        const answers = (boot.questions || []).map((q, i) => ({ question: q.text, answer: (raw[i] || '').trim() }));
+        for (let i = 0; i < boot.questions.length; i++) {
+            if (boot.questions[i].required && !answers[i].answer) {
+                toast('请填写：' + boot.questions[i].text);
+                return;
+            }
+        }
+        if (boot.require_photo && !uploadToken) { toast('请先上传照片'); return; }
+        window.__pendingAnswers = answers;
+        renderWrite({ answers: answers });
+    }
+
+    async function doSubmit() {
+        if (submitting) return;
+        submitting = true;
+        const btn = document.getElementById('doSubmit');
+        if (btn) { btn.disabled = true; btn.textContent = '正在提交…'; }
+        try {
+            const res = await fetch('/report/api/submit', {
+                method: 'POST',
+                headers: headers({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({
+                    answers: (window.__pendingAnswers || []).map(a => a.answer),
+                    upload_token: uploadToken,
+                    submit_key: session.submit_key
+                })
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                toast(data.error || '提交失败');
+                submitting = false;
+                if (btn) { btn.disabled = false; btn.textContent = '确认提交'; }
+                return;
+            }
+            boot.already_submitted = true;
+            boot.submitted_report_id = data.report_id;
+            app.innerHTML = '<div class="card p-4 text-center"><h5>报告已保存</h5><p class="muted mb-0">' + esc(data.message) + '</p></div>';
+            // Keep delivery status visible; do not auto-close on an undelivered report.
+        } catch (e) {
+            toast('网络错误，若已提示成功请勿重复提交');
+            submitting = false;
+            if (btn) { btn.disabled = false; btn.textContent = '确认提交'; }
+        }
+    }
+
+    init();
+})();
+</script>
+</body>
+</html>

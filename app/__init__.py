@@ -92,7 +92,8 @@ def create_app():
     from app.modules.core.routes import core_bp
     app.register_blueprint(core_bp)
 
-    from app.modules.report import report_admin_bp
+    from app.modules.report import report_admin_bp, report_web_bp
     app.register_blueprint(report_admin_bp)
+    app.register_blueprint(report_web_bp)
     
     return app

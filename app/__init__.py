@@ -6,7 +6,16 @@ import os
 import json
 from datetime import timedelta
 
-db = SQLAlchemy()
+from app.db_session import ReleasingSession
+
+db = SQLAlchemy(
+    session_options={
+        'class_': ReleasingSession,
+    },
+    engine_options={
+        'pool_pre_ping': True,
+    },
+)
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[],
@@ -67,6 +76,18 @@ def create_app():
     
     db.init_app(app)
     limiter.init_app(app)
+
+    @app.teardown_appcontext
+    def _cleanup_db_session(exc):
+        # Flask-SQLAlchemy also removes the session on context teardown; this
+        # additionally rolls back if the request/task failed so a leftover
+        # transaction cannot occupy a pool slot until the process exits.
+        if exc is not None:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+        db.session.remove()
     
     # 注册过滤器
     @app.template_filter('from_json')

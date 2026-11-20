@@ -14031,10 +14031,20 @@ async def handle_lottery_join(update: Update, context):
     if not global_flask_app or not query.message:
         await query.answer('请在所属群组或公告频道报名', show_alert=True)
         return
+    from app.services.lottery_format import profile_from_tg_user
     from app.services.lottery_workflow import join_points_lottery
-    text = await join_points_lottery(global_flask_app, context.bot, lottery_id,
-        context.application.bot_data.get('clone_id'), query.message.chat.id, query.from_user.id, expected_cost)
-    await query.answer(text, show_alert=True)
+    result = await join_points_lottery(global_flask_app, context.bot, lottery_id,
+        context.application.bot_data.get('clone_id'), query.message.chat.id, query.from_user.id, expected_cost,
+        profile=profile_from_tg_user(query.from_user))
+    await query.answer(str(result), show_alert=True)
+    if getattr(result, 'notice', None):
+        try:
+            from telegram import LinkPreviewOptions
+            await context.bot.send_message(
+                chat_id=query.message.chat.id, text=result.notice, parse_mode='HTML',
+                link_preview_options=LinkPreviewOptions(is_disabled=True))
+        except Exception:
+            logging.exception('lottery join notice failed after a successful debit')
 
 
 async def cmd_lottery_draw(update: Update, context):

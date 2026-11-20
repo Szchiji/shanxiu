@@ -10,7 +10,10 @@ import pytest
 from app.services.lottery_service import (
     pick_winners_random,
     pick_winner_weighted,
+    pick_winners_weighted,
     pick_winners_top_n,
+    assign_prizes,
+    unfilled_prizes,
     validate_lottery_draw,
     run_lottery_draw,
 )
@@ -211,3 +214,36 @@ class TestRandomLotteryType:
 
 
 # ---------------------------------------------------------------------------
+
+class TestWeightedWithoutReplacement:
+    def test_multiple_unique_winners(self):
+        participants = [(1, 5), (2, 10), (3, 7)]
+        winners = pick_winners_weighted(participants, 3)
+        assert set(winners) == {1, 2, 3}
+        assert len(winners) == 3
+
+    def test_stops_when_pool_exhausted(self):
+        winners = pick_winners_weighted([(1, 4), (2, 1)], 5)
+        assert set(winners) == {1, 2}
+
+    def test_run_message_count_honors_count(self):
+        winners = run_lottery_draw('message_count', [(1, 5), (2, 10), (3, 3)], top_n_winners=2)
+        assert len(winners) == 2
+        assert len(set(winners)) == 2
+        assert set(winners) <= {1, 2, 3}
+
+
+class TestAssignPrizes:
+    def test_maps_in_row_order_and_reports_unfilled(self):
+        prizes = [{'name': 'A', 'winner_count': 1}, {'name': 'B', 'winner_count': 2}]
+        awards = assign_prizes([10, 20], prizes)
+        assert awards == [
+            {'user_id': 10, 'prize_name': 'A', 'prize_index': 0},
+            {'user_id': 20, 'prize_name': 'B', 'prize_index': 1},
+        ]
+        assert unfilled_prizes(prizes, awards) == [('B', 1)]
+
+    def test_empty_winners(self):
+        prizes = [{'name': 'A', 'winner_count': 1}]
+        assert assign_prizes([], prizes) == []
+        assert unfilled_prizes(prizes, []) == [('A', 1)]

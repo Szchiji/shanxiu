@@ -311,6 +311,7 @@ def export_group_config(group_id: int, *, include_users_points: bool = False) ->
                 'lottery_name': row.lottery_name,
                 'lottery_type': row.lottery_type,
                 'prize_description': row.prize_description,
+                'prizes': _json_load(row.prizes, None),
                 'min_messages': row.min_messages,
                 'top_n_winners': row.top_n_winners,
                 'points_cost': row.points_cost,
@@ -1052,13 +1053,30 @@ def _import_lotteries(group_id, config, imported):
         existing = GroupLottery.query.filter_by(group_id=group_id, lottery_name=name).first()
         if existing:
             continue
+        from app.services.lottery_workflow import parse_prize_rows, prize_summary
+        lottery_type = data.get('lottery_type', 'message_count')
+        try:
+            prizes = parse_prize_rows(
+                data.get('prizes'),
+                lottery_type=lottery_type,
+                prize_description=data.get('prize_description'),
+                top_n_winners=data.get('top_n_winners', 3),
+            )
+        except ValueError:
+            prizes = parse_prize_rows(
+                None,
+                lottery_type=lottery_type,
+                prize_description=data.get('prize_description'),
+                top_n_winners=data.get('top_n_winners', 3),
+            )
         lottery = GroupLottery(
             group_id=group_id,
             lottery_name=name or '抽奖',
-            lottery_type=data.get('lottery_type', 'message_count'),
-            prize_description=data.get('prize_description'),
+            lottery_type=lottery_type,
+            prizes=json.dumps(prizes, ensure_ascii=False),
+            prize_description=prize_summary(prizes),
             min_messages=data.get('min_messages', 10),
-            top_n_winners=data.get('top_n_winners', 3),
+            top_n_winners=sum(prize['winner_count'] for prize in prizes),
             points_cost=max(1, min(int(data.get('points_cost', 10)), 1000000)),
             start_time=_parse_dt(data.get('start_time')),
             end_time=_parse_dt(data.get('end_time')),

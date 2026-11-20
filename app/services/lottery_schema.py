@@ -13,6 +13,8 @@ def ensure_lottery_schema(db):
         'draw_lease_until': 'TIMESTAMP',
         'draw_candidates': 'TEXT',
         'draw_finished_at': 'TIMESTAMP',
+        'prizes': 'TEXT',
+        'winner_awards': 'TEXT',
     }
     with db.engine.begin() as connection:
         columns = {column['name'] for column in inspect(connection).get_columns('group_lottery')}

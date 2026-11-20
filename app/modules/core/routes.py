@@ -1925,21 +1925,30 @@ def page_group_lottery(gid):
     lotteries = GroupLottery.query.filter_by(group_id=gid).order_by(GroupLottery.created_at.desc()).all()
     
     # Convert to JSON for JavaScript
-    lotteries_json = json.dumps([{
-        'id': l.id,
-        'lottery_name': l.lottery_name,
-        'lottery_type': l.lottery_type,
-        'min_messages': l.min_messages,
-        'top_n_winners': l.top_n_winners,
-        'points_cost': l.points_cost,
-        'prize_description': l.prize_description or '',
-        'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
-        'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
-        'announce_channel_id': l.announce_channel_id or '',
-        'pool_source': 'speakers',
-        'status': l.status,
-        'winner_ids': l.winner_ids
-    } for l in lotteries], ensure_ascii=False)
+    from app.services.lottery_workflow import awards_of, prize_summary, prizes_of
+    lottery_views = []
+    for l in lotteries:
+        rows = prizes_of(l)
+        l.display_prizes = prize_summary(rows)
+        l.display_total = sum(prize['winner_count'] for prize in rows)
+        lottery_views.append({
+            'id': l.id,
+            'lottery_name': l.lottery_name,
+            'lottery_type': l.lottery_type,
+            'min_messages': l.min_messages,
+            'top_n_winners': l.display_total,
+            'points_cost': l.points_cost,
+            'prize_description': l.display_prizes or l.prize_description or '',
+            'prizes': rows,
+            'winner_awards': awards_of(l),
+            'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
+            'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
+            'announce_channel_id': l.announce_channel_id or '',
+            'pool_source': 'speakers',
+            'status': l.status,
+            'winner_ids': l.winner_ids
+        })
+    lotteries_json = json.dumps(lottery_views, ensure_ascii=False)
     
     from app.models import LotteryDelivery
     delivery_status = {}
@@ -5927,8 +5936,8 @@ def api_save_group_lottery():
     if err: return err
 
     try:
-        from app.services.lottery_workflow import validate_settings
-        start, end, minimum, winners, status = validate_settings(d)
+        from app.services.lottery_workflow import prize_summary, validate_settings
+        start, end, minimum, winners, status, prizes = validate_settings(d)
         raw_cost = d.get('points_cost', 10)
         points_cost = int(raw_cost)
         if isinstance(raw_cost, bool) or str(raw_cost).strip() != str(points_cost):
@@ -5957,7 +5966,8 @@ def api_save_group_lottery():
             db.session.add(lottery)
         lottery.lottery_name = lottery_name
         lottery.lottery_type = lottery_type
-        lottery.prize_description = d.get('prize_description') or None
+        lottery.prizes = json.dumps(prizes, ensure_ascii=False)
+        lottery.prize_description = prize_summary(prizes)
         lottery.min_messages, lottery.top_n_winners = minimum, winners
         lottery.points_cost = points_cost
         lottery.start_time, lottery.end_time, lottery.status = start, end, status
@@ -7270,23 +7280,8 @@ def api_publish_group_lottery():
         return jsonify({'status':'error','msg':'开奖中或已结束，不能重复发布活动公告'})
     if not lottery.start_time or not lottery.end_time or lottery.start_time >= lottery.end_time:
         return jsonify({'status':'error','msg':'请先补齐合法开始时间和开奖时间'})
-    from app.services.lottery_workflow import LABELS
-    lines = [f"🎉 抽奖活动：{lottery.lottery_name}", f"类型：{LABELS.get(lottery.lottery_type, '抽奖')}"]
-    if lottery.prize_description:
-        lines.append(f"奖品：{lottery.prize_description}")
-    if lottery.lottery_type == 'message_count':
-        lines.append(f"参与条件：本期发言至少 {lottery.min_messages} 条，按发言数量加权抽1人")
-    elif lottery.lottery_type == 'message_rank':
-        lines.append(f"本期发言最多前 {lottery.top_n_winners} 名获奖，同分按用户ID升序")
-    elif lottery.lottery_type == 'points':
-        lines.append(f"报名扣 {lottery.points_cost} 积分，每人每期一次；从有效报名者随机抽 {lottery.top_n_winners} 人，无需发言")
-        lines.append('正常开奖未中奖不退款；取消活动或开奖时已离群/封禁者原额退还报名积分。')
-    else:
-        lines.append(f"从本期发过言的不同用户中均匀随机抽 {lottery.top_n_winners} 人")
-    lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
-    lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-    lines.append(f"开奖时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-    announcement = "\n".join(lines)
+    from app.services.lottery_workflow import activity_notice_lines
+    announcement = "\n".join(activity_notice_lines(lottery))
     target_chat_ids = list(dict.fromkeys(str(x) for x in (group.chat_id, lottery.announce_channel_id) if x))
     from app.services.lottery_workflow import points_button
     registration_markup = points_button(lottery)
@@ -14132,19 +14127,29 @@ async def cmd_lottery_history(update: Update, context):
     for lottery in lotteries:
         message_lines.append(f"\n📌 {lottery.lottery_name}")
         message_lines.append(f"   类型: { {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖'}.get(lottery.lottery_type, '抽奖') }")
-        if lottery.prize_description:
+        from app.services.lottery_workflow import awards_of, prize_summary, prizes_of
+        awards = awards_of(lottery)
+        if awards:
+            message_lines.append('   奖品: ' + prize_summary(prizes_of(lottery)))
+        elif lottery.prize_description:
             message_lines.append(f"   奖品: {lottery.prize_description}")
         if lottery.end_time:
             message_lines.append(f"   结束时间: {lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Parse winners
+        # Parse winners; never invent prize assignments for pre-snapshot results.
         try:
-            winner_ids = json.loads(lottery.winner_ids or '[]')
-            if winner_ids:
-                winner_mentions = [f"用户{int(uid)}" for uid in winner_ids[:5]]
+            if awards:
+                winner_mentions = [f"用户{int(item['user_id'])} — {item['prize_name']}" for item in awards[:5]]
                 message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
-                if len(winner_ids) > 5:
-                    message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
+                if len(awards) > 5:
+                    message_lines.append(f"   （共{len(awards)}位获奖者）")
+            else:
+                winner_ids = json.loads(lottery.winner_ids or '[]')
+                if winner_ids:
+                    winner_mentions = [f"用户{int(uid)}" for uid in winner_ids[:5]]
+                    message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
+                    if len(winner_ids) > 5:
+                        message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             print(f"Error parsing winner_ids for lottery history: {e}")
     
@@ -14185,12 +14190,16 @@ async def cmd_lottery(update: Update, context):
                 else:
                     participant_count = LotteryMessageCount.query.filter_by(lottery_id=lottery.id).filter(
                         LotteryMessageCount.message_count >= threshold).count()
+                from app.services.lottery_workflow import prize_summary, prizes_of
+                rows = prizes_of(lottery)
                 results.append({
                     'id': lottery.id, 'name': lottery.lottery_name,
-                    'type': lottery.lottery_type, 'prize': lottery.prize_description,
+                    'type': lottery.lottery_type, 'prize': prize_summary(rows),
                     'end_time': lottery.end_time, 'min_messages': lottery.min_messages,
-                    'top_n_winners': lottery.top_n_winners, 'participant_count': participant_count,
+                    'top_n_winners': sum(prize['winner_count'] for prize in rows),
+                    'participant_count': participant_count,
                     'points_cost': lottery.points_cost,
+                    'prizes': rows,
                 })
             return results
     
@@ -14204,18 +14213,23 @@ async def cmd_lottery(update: Update, context):
     # Separate each activity to bound message size, then safely split plain text.
     for lottery in lotteries:
         lines = [f"🎰 #{lottery['id']} {lottery['name']}", f"类型：{LABELS.get(lottery['type'], '抽奖')}"]
+        total = lottery['top_n_winners']
         if lottery['type'] == 'message_count':
-            lines.append(f"参与条件：本期发言至少 {lottery['min_messages']} 条；按发言数加权选1人")
+            lines.append(f"参与条件：本期发言至少 {lottery['min_messages']} 条；按发言数加权不放回抽 {total} 人，发言越多机会越高但不保证中奖")
         elif lottery['type'] == 'message_rank':
-            lines.append(f"本期发言最多前 {lottery['top_n_winners']} 人获奖，同分按用户ID升序")
+            lines.append(f"本期发言最多前 {total} 人获奖，同分按用户ID升序；奖品按排名从高到低对应配置顺序")
         elif lottery['type'] == 'points':
-            lines.append(f"报名扣 {lottery['points_cost']} 积分，每人每期一次；随机抽 {lottery['top_n_winners']} 人，无需发言")
+            lines.append(f"报名扣 {lottery['points_cost']} 积分，每人每期一次；均匀随机抽 {total} 人，无需发言")
             lines.append('正常开奖未中奖不退分；活动取消或开奖时已离群/封禁者原额退款。')
         else:
-            lines.append(f"从本期发过言的不同用户中随机抽 {lottery['top_n_winners']} 人")
+            lines.append(f"从本期发过言的不同用户中均匀随机抽 {total} 人")
+        lines.append('同一人每期只中一份；奖品按配置从上到下分配，人数不足时按此顺序分配，未满额奖品空缺。')
         lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
         lines.append(f"开奖时间：{lottery['end_time'].strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-        lines.append(f"已达到发言条件：{lottery['participant_count']} 人（开奖时复核资格）")
+        if lottery['type'] == 'points':
+            lines.append(f"已报名：{lottery['participant_count']} 人（开奖时复核资格）")
+        else:
+            lines.append(f"已达到发言条件：{lottery['participant_count']} 人（开奖时复核资格）")
         if lottery['prize']:
             lines.append('奖品：' + lottery['prize'])
         text = '\n'.join(lines)

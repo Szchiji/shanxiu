@@ -210,6 +210,8 @@ def run_migrations():
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_lease_until TIMESTAMP",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_candidates TEXT",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_finished_at TIMESTAMP",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS prizes TEXT",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS winner_awards TEXT",
     ]
 
     with app.app_context():

@@ -27,6 +27,133 @@ DELIVERY_LEASE_SECONDS = 90
 LABELS = {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖'}
 
 
+MAX_PRIZE_NAME = 200
+
+
+def _integer(value, default, maximum, label='人数和发言门槛必须是整数'):
+    if value is None:
+        if default is None:
+            raise ValueError(label)
+        value = default
+    try:
+        if isinstance(value, bool) or str(value).strip() != str(int(value)):
+            raise ValueError(label)
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(label) from exc
+    if not 1 <= number <= maximum:
+        raise ValueError(label)
+    return number
+
+
+def legacy_prizes(lottery_type, prize_description=None, top_n_winners=None):
+    """Map a pre-multi-prize row. Old message_count activities stay at 1 winner."""
+    name = (prize_description or '').strip() or '奖品'
+    if len(name) > 10000:
+        name = name[:10000]
+    if lottery_type == 'message_count':
+        count = 1
+    else:
+        try:
+            count = int(top_n_winners or 1)
+        except (TypeError, ValueError):
+            count = 1
+        count = max(1, min(count, MAX_WINNERS))
+    return [{'name': name, 'winner_count': count}]
+
+
+def parse_prize_rows(raw, *, lottery_type=None, prize_description=None, top_n_winners=None, allow_legacy=True):
+    if raw is None:
+        if not allow_legacy:
+            raise ValueError('请至少添加一项奖品')
+        return legacy_prizes(lottery_type, prize_description, top_n_winners)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError('请至少添加一项奖品')
+    if len(raw) > MAX_WINNERS:
+        raise ValueError(f'奖品项数不能超过{MAX_WINNERS}')
+    prizes = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError('奖品格式无效')
+        name = str(item.get('name') or '').strip()
+        if not name:
+            raise ValueError('奖品名称不能为空')
+        if len(name) > MAX_PRIZE_NAME:
+            raise ValueError(f'奖品名称最多{MAX_PRIZE_NAME}字')
+        count = _integer(item.get('winner_count'), None, MAX_WINNERS, '每项中奖人数必须是1—100的整数')
+        prizes.append({'name': name, 'winner_count': count})
+    total = sum(prize['winner_count'] for prize in prizes)
+    if not 1 <= total <= MAX_WINNERS:
+        raise ValueError(f'中奖总人数必须在1—{MAX_WINNERS}之间')
+    return prizes
+
+
+def prizes_of(lottery):
+    raw = lottery.prizes
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if parsed:
+                return parse_prize_rows(parsed, allow_legacy=False)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return legacy_prizes(lottery.lottery_type, lottery.prize_description, lottery.top_n_winners)
+
+
+def prize_summary(prizes):
+    return '；'.join(f"{prize['name']} ×{prize['winner_count']}" for prize in prizes or [])
+
+
+def awards_of(lottery):
+    raw = getattr(lottery, 'winner_awards', None)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    awards = []
+    for item in data:
+        if not isinstance(item, dict):
+            return None
+        try:
+            awards.append({
+                'user_id': int(item['user_id']),
+                'prize_name': str(item.get('prize_name') or '奖品'),
+                'prize_index': int(item.get('prize_index', 0)),
+            })
+        except (TypeError, ValueError, KeyError):
+            return None
+    return awards
+
+
+def activity_notice_lines(lottery):
+    prizes = prizes_of(lottery)
+    total = sum(prize['winner_count'] for prize in prizes)
+    lines = [f"🎉 抽奖活动：{lottery.lottery_name}", f"类型：{LABELS.get(lottery.lottery_type, '抽奖')}"]
+    if lottery.lottery_type == 'message_count':
+        lines.append(f"参与条件：本期发言至少 {lottery.min_messages} 条，按发言数量加权不放回抽取 {total} 人；发言越多机会越高，但不保证中奖")
+    elif lottery.lottery_type == 'message_rank':
+        lines.append(f"本期发言最多前 {total} 名获奖，同分按用户ID升序；奖品按排名从高到低对应配置顺序")
+    elif lottery.lottery_type == 'points':
+        lines.append(f"报名扣 {lottery.points_cost} 积分，每人每期一次；从有效报名者均匀随机抽 {total} 人，无需发言")
+        lines.append('正常开奖未中奖不退款；取消活动或开奖时已离群/封禁者原额退还报名积分。')
+    else:
+        lines.append(f"从本期发过言的不同用户中均匀随机抽 {total} 人")
+    lines.append('同一人每期只中一份；奖品按配置从上到下分配，人数不足时按此顺序分配，未满额奖品空缺。')
+    lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
+    if lottery.start_time:
+        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
+    if lottery.end_time:
+        lines.append(f"开奖时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
+    summary = prize_summary(prizes)
+    if summary:
+        lines.append(f"奖品：{summary}")
+    return lines
+
+
 def validate_settings(data):
     """All new/edited lotteries use explicit Beijing-local, bounded intervals."""
     def stamp(key):
@@ -44,22 +171,24 @@ def validate_settings(data):
     start, end = stamp('start_time'), stamp('end_time')
     if start >= end:
         raise ValueError('开奖时间必须晚于开始时间')
-    def integer(key, default, maximum):
-        value = data.get(key, default)
-        if isinstance(value, bool) or str(value).strip() != str(int(value)):
-            raise ValueError('人数和发言门槛必须是整数')
-        number = int(value)
-        if not 1 <= number <= maximum:
-            raise ValueError(f'{key} 必须在 1—{maximum} 之间')
-        return number
-    minimum = integer('min_messages', 10, 1000000)
-    winners = integer('top_n_winners', 3, MAX_WINNERS)
+    minimum = _integer(data.get('min_messages', 10), 10, 1000000, '发言门槛必须在 1—1000000 之间')
+    lottery_type = data.get('lottery_type', 'message_count')
+    if 'prizes' in data:
+        prizes = parse_prize_rows(data.get('prizes'))
+        winners = sum(prize['winner_count'] for prize in prizes)
+    else:
+        winners = _integer(data.get('top_n_winners', 3), 3, MAX_WINNERS, '获奖人数必须在 1—100 之间')
+        description = data.get('prize_description') or None
+        if description and len(description) > 10000:
+            raise ValueError('名称最多255字，奖品描述最多10000字')
+        prizes = legacy_prizes(lottery_type, description, winners)
+        winners = sum(prize['winner_count'] for prize in prizes)
     status = data.get('status', 'pending')
     if status not in ('pending', 'active'):
         raise ValueError('新建或编辑活动仅允许待开始、进行中；已结束活动不能重新开启')
-    if len(data.get('lottery_name', '')) > 255 or len(data.get('prize_description') or '') > 10000:
+    if len(data.get('lottery_name', '')) > 255:
         raise ValueError('名称最多255字，奖品描述最多10000字')
-    return start, end, minimum, winners, status
+    return start, end, minimum, winners, status, prizes
 
 
 def current_lotteries(group_id, now=None):
@@ -170,15 +299,31 @@ async def _eligible(bot, chat_id, candidates):
     return eligible
 
 
-def result_parts(lottery, winners):
+def result_parts(lottery, winners, awards=None):
+    from app.services.lottery_service import unfilled_prizes
     lines = ['🎉 抽奖结束！', f'活动：{lottery.lottery_name}', f'类型：{LABELS.get(lottery.lottery_type, "抽奖")}']
-    lines.append('获奖者：' if winners else '无人符合条件，本期已结束。')
-    if winners:
+    prizes = prizes_of(lottery)
+    if awards is None:
+        awards = awards_of(lottery)
+    if awards:
+        lines.append('获奖者：')
+        lines.extend(f'用户 {int(item["user_id"])} — {item["prize_name"]}' for item in awards)
+        leftover = unfilled_prizes(prizes, awards)
+        if leftover:
+            lines.append('未满额：' + '；'.join(f'{name} 还缺{count}名' for name, count in leftover))
+    elif winners:
+        # Pre-snapshot results are never re-assigned onto prize rows.
+        lines.append('获奖者：')
         lines.extend(f'用户 {int(uid)}' for uid in winners)
+        if lottery.prize_description:
+            lines.extend(['奖品：', lottery.prize_description])
+    else:
+        lines.append('无人符合条件，本期已结束。')
+        summary = prize_summary(prizes)
+        if summary:
+            lines.append(f'奖品：{summary}')
     if lottery.lottery_type == 'points':
         lines.append('正常开奖未中奖不退分；已确认离群/封禁的报名积分已原额退还。')
-    if lottery.prize_description:
-        lines.extend(['奖品：', lottery.prize_description])
     # Plain names/descriptions are escaped before entering HTML. Chunk escaped
     # fragments, never cut an entity or anchor; <3000 UTF-16 units INCLUDING tags.
     fragments = []
@@ -218,8 +363,12 @@ def _finish(lottery_id, token, participants):
         return {'status': 'error', 'message': '抽奖类型无效，请联系管理员'}
     if l.lottery_type == 'message_count':
         pool = {uid: count for uid, count in pool.items() if count >= (l.min_messages or 10)}
-    n = max(1, min(l.top_n_winners or 1, MAX_WINNERS))
+    prizes = prizes_of(l)
+    n = sum(prize['winner_count'] for prize in prizes)
+    from app.services.lottery_service import assign_prizes
     winners = run_lottery_draw(l.lottery_type, list(pool.items()), n)
+    awards = assign_prizes(winners, prizes)
+    winners = [item['user_id'] for item in awards]
     if l.lottery_type == 'points':
         # Definitive departures / bans do not consume an entry fee. Unknown API
         # errors never reach this transaction, so cannot be mistaken for leaving.
@@ -227,12 +376,13 @@ def _finish(lottery_id, token, participants):
             if entry.user_id not in pool:
                 _refund(entry, '开奖资格不符')
     l.winner_ids = json.dumps(winners)
+    l.winner_awards = json.dumps(awards, ensure_ascii=False)
     l.status = 'ended'
     l.draw_error = None
     l.draw_finished_at = get_beijing_now()
     l.draw_token = None
     l.draw_lease_until = None
-    parts = json.dumps(result_parts(l, winners), ensure_ascii=False)
+    parts = json.dumps(result_parts(l, winners, awards), ensure_ascii=False)
     targets = dict.fromkeys(str(x).strip() for x in (group.chat_id, l.announce_channel_id) if x and str(x).strip())
     for target in targets:
         db.session.add(LotteryDelivery(lottery_id=l.id, target_chat_id=target, parts=parts))

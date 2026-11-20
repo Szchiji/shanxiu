@@ -38,7 +38,7 @@
 {% call feature_description('group_lottery') %}
 <ul>
     <li>在群内创建限时抽奖活动，成员通过发言或随机方式参与。</li>
-    <li>支持 <strong>积分抽奖</strong>（点击报名扣积分，每期一次，正常开奖未中奖不退款）、<strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（从本期活动期间发过言、开奖时仍在群内且未被封禁的用户中抽取，不要求认证）四种方式。</li>
+    <li>支持 <strong>积分抽奖</strong>（点击报名扣积分，每期一次，正常开奖未中奖不退款）、<strong>发言数量抽奖</strong>（发言越多中奖概率越高，加权不放回抽取）、<strong>发言排行抽奖</strong>（按发言从高到低分配奖品）和 <strong>随机抽奖</strong>（从本期活动期间发过言、开奖时仍在群内且未被封禁的用户中均匀抽取，不要求认证）四种方式。四种抽奖都可添加多个奖品，并分别设置中奖人数。</li>
     <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
     <li>创建好抽奖后，点击列表中的 <i class="fa-solid fa-bullhorn"></i> 按钮可立即将公告发送到 Telegram 群组。</li>
     <li>开奖后自动结束本期活动；公告发送失败会保留原结果重试，网络超时可能导致当前消息分段重复。</li>
@@ -66,20 +66,21 @@
                 <tr>
                     <td class="ps-3 ps-md-4 list-meta-stack">
                         <div class="fw-semibold">{{ lottery.lottery_name }}</div>
-                        <small class="text-muted list-text-preview" title="{{ (lottery.prize_description or '暂无奖品描述')|e }}">{{ lottery.prize_description or '暂无奖品描述' }}</small>
+                        <small class="text-muted list-text-preview" title="{{ (lottery.display_prizes or lottery.prize_description or '暂无奖品描述')|e }}">{{ lottery.display_prizes or lottery.prize_description or '暂无奖品描述' }}</small>
                     </td>
                     <td>
                         {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else ('积分抽奖' if lottery.lottery_type == 'points' else '随机抽奖')) }}
                     </td>
                     <td class="hide-mobile">
+                        {% set total = lottery.display_total if lottery.display_total is defined else lottery.top_n_winners %}
                         {% if lottery.lottery_type == 'message_count' %}
-                        最少发言 {{ lottery.min_messages }}
+                        最少发言 {{ lottery.min_messages }} · 共{{ total }}人
                         {% elif lottery.lottery_type == 'message_rank' %}
-                        前{{ lottery.top_n_winners }}名（同分按用户ID升序）
+                        前{{ total }}名（同分按用户ID升序，奖品从高到低分配）
                         {% elif lottery.lottery_type == 'points' %}
-                        报名 {{ lottery.points_cost }} 积分 · 抽{{ lottery.top_n_winners }}人
+                        报名 {{ lottery.points_cost }} 积分 · 共{{ total }}人
                         {% else %}
-                        {{ lottery.top_n_winners }}人 · 本期发言且开奖时仍在群内
+                        共{{ total }}人 · 本期发言且开奖时仍在群内
                         {% endif %}
                     </td>
                     <td class="hide-mobile list-meta-stack">
@@ -152,15 +153,16 @@
                     <label class="form-label">最少发言数</label>
                     <input type="number" class="form-control" id="min_messages" value="10" min="1">
                 </div>
-                <div class="mb-3" id="top_n_winners_field" style="display:none;">
-                    <label class="form-label">获奖人数（人）</label>
-                    <input type="number" class="form-control" id="top_n_winners" value="3" min="1" max="100">
-                </div>
-                <div class="alert alert-info small">所有方式均不要求认证。普通随机、发言抽奖仅统计本期时间窗内收到的群发言（含媒体，相册算一次）；开奖时核对当前成员身份。普通随机均匀抽取不同用户，排行同分按用户ID升序。积分抽奖无需发言，须点击按钮付积分报名。</div>
                 <div class="mb-3">
-                    <label class="form-label">奖品描述</label>
-                    <textarea class="form-control" id="prize_description" rows="2" maxlength="10000" placeholder="奖品详细描述"></textarea>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label mb-0">奖品（名称 + 中奖人数）</label>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPrizeRow()">添加奖品</button>
+                    </div>
+                    <div id="prize_rows"></div>
+                    <div class="form-text" id="prize_total_hint">总中奖人数：0 / 100</div>
+                    <div class="form-text" id="prize_rule_hint"></div>
                 </div>
+                <div class="alert alert-info small">所有方式均不要求认证。普通随机、发言抽奖仅统计本期时间窗内收到的群发言（含媒体，相册算一次）；开奖时核对当前成员身份。积分抽奖无需发言，须点击按钮付积分报名。同一人每期只中一份奖品；奖品按从上到下的顺序分配；人数不足时按此顺序分配，后面的奖品可能空缺。</div>
                 <div class="mb-3">
                     <label class="form-label">开始时间（北京时间，必填）</label>
                     <input type="datetime-local" class="form-control" id="start_time" required>
@@ -198,20 +200,80 @@ document.addEventListener('DOMContentLoaded', function() {
     lotteryModal = new bootstrap.Modal(document.getElementById('lotteryModal'));
 });
 
+function prizeRuleHint(type) {
+    if (type === 'message_rank') return '排行抽奖：奖品从高到低分配，第一行对应排名最前的若干人。';
+    if (type === 'message_count') return '发言加权：按发言数加权、不放回抽取，抽出顺序按奖品行依次分配。';
+    if (type === 'points') return '积分抽奖：从已付款报名者中均匀不放回抽取，抽出顺序按奖品行依次分配。';
+    return '随机抽奖：从合格用户中均匀不放回抽取，抽出顺序按奖品行依次分配。';
+}
+
 function toggleLotteryFields() {
     const type = document.getElementById('lottery_type').value;
     document.getElementById('points_cost_field').style.display = type === 'points' ? 'block' : 'none';
-    if (type === 'message_count') {
-        document.getElementById('min_messages_field').style.display = 'block';
-        document.getElementById('top_n_winners_field').style.display = 'none';
-    } else if (type === 'random') {
-        document.getElementById('min_messages_field').style.display = 'none';
-        document.getElementById('top_n_winners_field').style.display = 'block';
-    } else {
-        // message_rank uses top_n_winners
-        document.getElementById('min_messages_field').style.display = 'none';
-        document.getElementById('top_n_winners_field').style.display = 'block';
+    document.getElementById('min_messages_field').style.display = (type === 'message_count') ? 'block' : 'none';
+    document.getElementById('prize_rule_hint').textContent = prizeRuleHint(type);
+}
+
+function collectPrizes() {
+    return Array.from(document.querySelectorAll('#prize_rows .prize-row')).map(row => ({
+        name: row.querySelector('.prize-name').value.trim(),
+        winner_count: Number(row.querySelector('.prize-count').value)
+    }));
+}
+
+function updatePrizeTotal() {
+    const total = collectPrizes().reduce((sum, prize) => sum + (Number.isInteger(prize.winner_count) ? prize.winner_count : 0), 0);
+    const hint = document.getElementById('prize_total_hint');
+    hint.textContent = '总中奖人数：' + total + ' / 100';
+    hint.classList.toggle('text-danger', total < 1 || total > 100);
+}
+
+function addPrizeRow(prize) {
+    const wrap = document.getElementById('prize_rows');
+    if (wrap.children.length >= 100) {
+        showToast('奖品项数不能超过100', 'warning');
+        return;
     }
+    const row = document.createElement('div');
+    row.className = 'prize-row d-flex gap-2 mb-2';
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'form-control prize-name';
+    name.maxLength = 200;
+    name.placeholder = '奖品名称';
+    name.value = prize && prize.name ? prize.name : '';
+    name.addEventListener('input', updatePrizeTotal);
+    const count = document.createElement('input');
+    count.type = 'number';
+    count.className = 'form-control prize-count';
+    count.min = '1';
+    count.max = '100';
+    count.style.maxWidth = '110px';
+    count.value = prize && prize.winner_count ? prize.winner_count : 1;
+    count.addEventListener('input', updatePrizeTotal);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-outline-secondary';
+    remove.textContent = '删除';
+    remove.addEventListener('click', function () {
+        if (wrap.children.length <= 1) {
+            showToast('至少保留一项奖品', 'warning');
+            return;
+        }
+        row.remove();
+        updatePrizeTotal();
+    });
+    row.appendChild(name);
+    row.appendChild(count);
+    row.appendChild(remove);
+    wrap.appendChild(row);
+    updatePrizeTotal();
+}
+
+function setPrizeRows(prizes) {
+    const wrap = document.getElementById('prize_rows');
+    wrap.replaceChildren();
+    (prizes && prizes.length ? prizes : [{name: '', winner_count: 1}]).forEach(addPrizeRow);
 }
 
 function showAddModal() {
@@ -220,13 +282,12 @@ function showAddModal() {
     document.getElementById('lottery_name').value = '';
     document.getElementById('lottery_type').value = 'message_count';
     document.getElementById('min_messages').value = '10';
-    document.getElementById('top_n_winners').value = '3';
     document.getElementById('points_cost').value = '10';
-    document.getElementById('prize_description').value = '';
     document.getElementById('start_time').value = '';
     document.getElementById('end_time').value = '';
     document.getElementById('announce_channel_id').value = '';
     document.getElementById('status').value = 'pending';
+    setPrizeRows([{name: '', winner_count: 1}]);
     toggleLotteryFields();
     lotteryModal.show();
 }
@@ -240,13 +301,12 @@ function editLottery(id) {
     document.getElementById('lottery_name').value = lottery.lottery_name || '';
     document.getElementById('lottery_type').value = lottery.lottery_type || 'message_count';
     document.getElementById('min_messages').value = lottery.min_messages || 10;
-    document.getElementById('top_n_winners').value = lottery.top_n_winners || 3;
     document.getElementById('points_cost').value = lottery.points_cost || 10;
-    document.getElementById('prize_description').value = lottery.prize_description || '';
     document.getElementById('start_time').value = lottery.start_time || '';
     document.getElementById('end_time').value = lottery.end_time || '';
     document.getElementById('announce_channel_id').value = lottery.announce_channel_id || '';
     document.getElementById('status').value = lottery.status || 'pending';
+    setPrizeRows(lottery.prizes && lottery.prizes.length ? lottery.prizes : [{name: lottery.prize_description || '', winner_count: lottery.top_n_winners || 1}]);
     toggleLotteryFields();
     lotteryModal.show();
 }
@@ -263,9 +323,10 @@ function saveLottery() {
     const end = document.getElementById('end_time').value;
     const minimum = Number(document.getElementById('min_messages').value);
     const pointsCost = Number(document.getElementById('points_cost').value);
-    const winners = Number(document.getElementById('top_n_winners').value);
-    if (!Number.isInteger(pointsCost) || pointsCost < 1 || pointsCost > 1000000 || !start || !end || start >= end || !Number.isInteger(minimum) || minimum < 1 || minimum > 1000000 || !Number.isInteger(winners) || winners < 1 || winners > 100) {
-        showToast('请填写合法起止时间；开奖晚于开始，发言门槛1—1000000，获奖人数1—100', 'warning');
+    const prizes = collectPrizes();
+    const winners = prizes.reduce((sum, prize) => sum + (Number.isInteger(prize.winner_count) ? prize.winner_count : 0), 0);
+    if (!Number.isInteger(pointsCost) || pointsCost < 1 || pointsCost > 1000000 || !start || !end || start >= end || !Number.isInteger(minimum) || minimum < 1 || minimum > 1000000 || !prizes.length || prizes.some(prize => !prize.name || !Number.isInteger(prize.winner_count) || prize.winner_count < 1 || prize.winner_count > 100) || winners < 1 || winners > 100) {
+        showToast('请填写合法起止时间；开奖晚于开始，发言门槛1—1000000，奖品名称不能为空，每项人数为正整数，总人数1—100', 'warning');
         return;
     }
     const data = {
@@ -276,7 +337,7 @@ function saveLottery() {
         min_messages: minimum,
         top_n_winners: winners,
         points_cost: pointsCost,
-        prize_description: document.getElementById('prize_description').value,
+        prizes: prizes,
         start_time: document.getElementById('start_time').value || null,
         end_time: document.getElementById('end_time').value || null,
         announce_channel_id: document.getElementById('announce_channel_id').value.trim(),

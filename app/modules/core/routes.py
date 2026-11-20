@@ -4278,6 +4278,140 @@ def api_import_scheduled_messages():
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
 
+
+# --- One-time config sync to other groups (auto replies / scheduled messages) ---
+@core_bp.route('/api/config_sync_targets/<int:group_id>', methods=['GET'])
+def api_config_sync_targets(group_id):
+    """List same-bot groups eligible as sync targets, plus unfiltered source count."""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
+    kind = (request.args.get('kind') or '').strip()
+    from app.services.config_sync_service import (
+        is_valid_kind, kind_label, count_source_items, list_eligible_targets, serialize_target,
+    )
+    if not is_valid_kind(kind):
+        return jsonify({'status': 'error', 'msg': '不支持的同步类型'}), 400
+    group = db.session.get(BotGroup, group_id)
+    if not group:
+        return jsonify({'status': 'error', 'msg': '无权或不存在'}), 404
+    err = _api_check_group_access(group)
+    if err:
+        return err
+    targets = [serialize_target(g) for g in list_eligible_targets(group)]
+    return jsonify({
+        'status': 'ok',
+        'kind': kind,
+        'kind_label': kind_label(kind),
+        'source_count': count_source_items(group_id, kind),
+        'targets': targets,
+    })
+
+
+@core_bp.route('/api/sync_config_to_groups', methods=['POST'])
+def api_sync_config_to_groups():
+    """Copy all auto-reply or scheduled-message configs from one group to others.
+
+    One-time insert only: never overwrites, never sends messages, and new rows
+    are saved disabled.  Client-supplied target lists are re-checked server-side.
+    """
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
+    d = request.get_json(silent=True) or {}
+    kind = (d.get('kind') or '').strip()
+    source_group_id = d.get('source_group_id')
+    raw_targets = d.get('target_group_ids') or []
+    from app.services.config_sync_service import (
+        MAX_SYNC_TARGETS, classify_target, copy_snapshots_to_target,
+        count_source_items, is_valid_kind, kind_label, snapshot_source_items,
+        try_acquire_sync_lock,
+    )
+    if not is_valid_kind(kind):
+        return jsonify({'status': 'error', 'msg': '不支持的同步类型'}), 400
+    if not source_group_id:
+        return jsonify({'status': 'error', 'msg': '缺少源群'}), 400
+    source = db.session.get(BotGroup, source_group_id)
+    if not source:
+        return jsonify({'status': 'error', 'msg': '无权或不存在'}), 404
+    err = _api_check_group_access(source)
+    if err:
+        return err
+
+    if not isinstance(raw_targets, list) or not raw_targets:
+        return jsonify({'status': 'error', 'msg': '请选择目标群'}), 400
+
+    # Preserve first-seen order while dropping duplicate IDs.
+    seen_ids = set()
+    unique_ids = []
+    for tid in raw_targets:
+        try:
+            n = int(tid)
+        except (TypeError, ValueError):
+            n = tid
+        if n in seen_ids:
+            continue
+        seen_ids.add(n)
+        unique_ids.append(n)
+    if len(unique_ids) > MAX_SYNC_TARGETS:
+        return jsonify({'status': 'error', 'msg': f'一次最多选择 {MAX_SYNC_TARGETS} 个群'}), 400
+
+    source_count = count_source_items(source.id, kind)
+    if source_count <= 0:
+        return jsonify({'status': 'error', 'msg': f'本群没有可同步的{kind_label(kind)}'}), 400
+
+    session_clone_id = session.get('clone_id')
+    lock = try_acquire_sync_lock(source.id, kind)
+    if lock is None:
+        return jsonify({'status': 'error', 'msg': '同步正在进行，请稍后再试'}), 409
+
+    results = []
+    try:
+        snapshots = snapshot_source_items(source.id, kind)
+        # Do not copy source feature switches, runtime state, or send anything.
+        for tid in unique_ids:
+            target, target_err = classify_target(
+                source, tid, session_clone_id=session_clone_id
+            )
+            if target_err:
+                results.append({
+                    'target_id': tid if isinstance(tid, int) else None,
+                    'title': '',
+                    'added': 0,
+                    'skipped': 0,
+                    'error': target_err,
+                })
+                continue
+            try:
+                added, skipped = copy_snapshots_to_target(kind, target.id, snapshots)
+                db.session.commit()
+                results.append({
+                    'target_id': target.id,
+                    'title': target.title or '',
+                    'added': added,
+                    'skipped': skipped,
+                    'error': None,
+                })
+            except Exception:
+                db.session.rollback()
+                logging.exception('config sync failed for target %s', target.id)
+                results.append({
+                    'target_id': target.id,
+                    'title': target.title or '',
+                    'added': 0,
+                    'skipped': 0,
+                    'error': '同步失败',
+                })
+    finally:
+        lock.release()
+
+    return jsonify({
+        'status': 'ok',
+        'kind': kind,
+        'kind_label': kind_label(kind),
+        'source_count': source_count,
+        'results': results,
+    })
+
+
 # --- Start Message API Routes ---
 @core_bp.route('/api/save_start_message', methods=['POST'])
 def api_save_start_message():

@@ -411,6 +411,9 @@
             <button class="btn btn-info btn-sm" onclick="showImportModal()" title="导入配置">
                 <i class="fa-solid fa-upload me-1"></i>导入
             </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="syncConfigToGroupsBtn" onclick="openSyncToGroupsModal()" title="同步到其他群">
+                <i class="fa-solid fa-share-from-square me-1"></i>同步到其他群
+            </button>
             <button class="btn btn-light fw-bold btn-add-new" onclick="openAddModal()">
                 <i class="fa-solid fa-plus me-1 me-md-2"></i>新增规则
             </button>
@@ -1353,4 +1356,8 @@ async function importData(xlsx_content) {
     }
 }
 </script>
+{% set sync_config_kind = 'auto_replies' %}
+{% set sync_config_kind_label = '自动回复' %}
+{% include 'partials/sync_config_to_groups.html' %}
 {% endblock %}
+

@@ -7280,17 +7280,20 @@ def api_publish_group_lottery():
         return jsonify({'status':'error','msg':'开奖中或已结束，不能重复发布活动公告'})
     if not lottery.start_time or not lottery.end_time or lottery.start_time >= lottery.end_time:
         return jsonify({'status':'error','msg':'请先补齐合法开始时间和开奖时间'})
-    from app.services.lottery_workflow import activity_notice_lines
-    announcement = "\n".join(activity_notice_lines(lottery))
+    from app.services.lottery_workflow import activity_notice_parts, points_button
+    from telegram import LinkPreviewOptions
+    parts = activity_notice_parts(lottery)
     target_chat_ids = list(dict.fromkeys(str(x) for x in (group.chat_id, lottery.announce_channel_id) if x))
-    from app.services.lottery_workflow import points_button
     registration_markup = points_button(lottery)
     lottery_id_db = lottery.id
 
     async def _send_lottery_announcement(chat_id):
-        for offset in range(0, len(announcement), 1500):
-            await ptb_app.bot.send_message(chat_id=chat_id, text=announcement[offset:offset+1500],
-                reply_markup=registration_markup if offset+1500 >= len(announcement) else None)
+        last = len(parts) - 1
+        for index, part in enumerate(parts):
+            await ptb_app.bot.send_message(
+                chat_id=chat_id, text=part, parse_mode='HTML',
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                reply_markup=registration_markup if index == last else None)
 
     for target_chat_id in target_chat_ids:
         future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(target_chat_id), global_bot_loop)
@@ -14106,56 +14109,30 @@ async def cmd_lottery_history(update: Update, context):
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
-            
-            # Get recent ended lotteries
+            from app.services.lottery_workflow import result_parts
+            notices = []
             lotteries = GroupLottery.query.filter_by(
                 group_id=group.id,
                 status='ended'
             ).order_by(GroupLottery.end_time.desc()).limit(10).all()
-            
-            return lotteries
+            for lottery in lotteries:
+                try:
+                    winners = json.loads(lottery.winner_ids or '[]')
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    winners = []
+                notices.append(result_parts(lottery, winners))
+            return notices
     
-    lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_lottery_history)
+    notices = await asyncio.get_running_loop().run_in_executor(None, _get_lottery_history)
     
-    if not lotteries:
-        _sched_del(context, await update.message.reply_text("📭 暂无抽奖历史记录"), 20)
+    if not notices:
+        _sched_del(context, await update.message.reply_text("暂无抽奖历史记录"), 20)
         return
-    
-    message_lines = ["🏆 抽奖历史记录\n"]
-    message_lines.append("━━━━━━━━━━━━━━━━")
-    
-    for lottery in lotteries:
-        message_lines.append(f"\n📌 {lottery.lottery_name}")
-        message_lines.append(f"   类型: { {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖'}.get(lottery.lottery_type, '抽奖') }")
-        from app.services.lottery_workflow import awards_of, prize_summary, prizes_of
-        awards = awards_of(lottery)
-        if awards:
-            message_lines.append('   奖品: ' + prize_summary(prizes_of(lottery)))
-        elif lottery.prize_description:
-            message_lines.append(f"   奖品: {lottery.prize_description}")
-        if lottery.end_time:
-            message_lines.append(f"   结束时间: {lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Parse winners; never invent prize assignments for pre-snapshot results.
-        try:
-            if awards:
-                winner_mentions = [f"用户{int(item['user_id'])} — {item['prize_name']}" for item in awards[:5]]
-                message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
-                if len(awards) > 5:
-                    message_lines.append(f"   （共{len(awards)}位获奖者）")
-            else:
-                winner_ids = json.loads(lottery.winner_ids or '[]')
-                if winner_ids:
-                    winner_mentions = [f"用户{int(uid)}" for uid in winner_ids[:5]]
-                    message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
-                    if len(winner_ids) > 5:
-                        message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            print(f"Error parsing winner_ids for lottery history: {e}")
-    
-    history_text = "\n".join(message_lines)
-    for offset in range(0, len(history_text), 1500):
-        _sched_del(context, await update.message.reply_text(history_text[offset:offset+1500]), 300)
+    from telegram import LinkPreviewOptions
+    for parts in notices:
+        for part in parts:
+            _sched_del(context, await update.message.reply_text(
+                part, parse_mode='HTML', link_preview_options=LinkPreviewOptions(is_disabled=True)), 300)
 
 
 async def cmd_lottery(update: Update, context):
@@ -14179,10 +14156,9 @@ async def cmd_lottery(update: Update, context):
             if not group:
                 return []
             
-            from app.services.lottery_workflow import current_lotteries
-            lotteries = current_lotteries(group.id)
-            results = []
-            for lottery in lotteries:
+            from app.services.lottery_workflow import activity_notice_parts, current_lotteries, points_button
+            notices = []
+            for lottery in current_lotteries(group.id):
                 threshold = (lottery.min_messages or 10) if lottery.lottery_type == 'message_count' else 1
                 if lottery.lottery_type == 'points':
                     from app.models import LotteryEntry
@@ -14190,55 +14166,25 @@ async def cmd_lottery(update: Update, context):
                 else:
                     participant_count = LotteryMessageCount.query.filter_by(lottery_id=lottery.id).filter(
                         LotteryMessageCount.message_count >= threshold).count()
-                from app.services.lottery_workflow import prize_summary, prizes_of
-                rows = prizes_of(lottery)
-                results.append({
-                    'id': lottery.id, 'name': lottery.lottery_name,
-                    'type': lottery.lottery_type, 'prize': prize_summary(rows),
-                    'end_time': lottery.end_time, 'min_messages': lottery.min_messages,
-                    'top_n_winners': sum(prize['winner_count'] for prize in rows),
-                    'participant_count': participant_count,
-                    'points_cost': lottery.points_cost,
-                    'prizes': rows,
+                notices.append({
+                    'parts': activity_notice_parts(lottery, participant_count),
+                    'markup': points_button(lottery),
                 })
-            return results
+            return notices
     
-    lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
+    notices = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
     
-    if not lotteries:
-        _sched_del(context, await update.message.reply_text("📭 当前没有进行中的抽奖活动"), 20)
+    if not notices:
+        _sched_del(context, await update.message.reply_text("当前没有进行中的抽奖活动"), 20)
         return
-    
-    from app.services.lottery_workflow import LABELS
-    # Separate each activity to bound message size, then safely split plain text.
-    for lottery in lotteries:
-        lines = [f"🎰 #{lottery['id']} {lottery['name']}", f"类型：{LABELS.get(lottery['type'], '抽奖')}"]
-        total = lottery['top_n_winners']
-        if lottery['type'] == 'message_count':
-            lines.append(f"参与条件：本期发言至少 {lottery['min_messages']} 条；按发言数加权不放回抽 {total} 人，发言越多机会越高但不保证中奖")
-        elif lottery['type'] == 'message_rank':
-            lines.append(f"本期发言最多前 {total} 人获奖，同分按用户ID升序；奖品按排名从高到低对应配置顺序")
-        elif lottery['type'] == 'points':
-            lines.append(f"报名扣 {lottery['points_cost']} 积分，每人每期一次；均匀随机抽 {total} 人，无需发言")
-            lines.append('正常开奖未中奖不退分；活动取消或开奖时已离群/封禁者原额退款。')
-        else:
-            lines.append(f"从本期发过言的不同用户中均匀随机抽 {total} 人")
-        lines.append('同一人每期只中一份；奖品按配置从上到下分配，人数不足时按此顺序分配，未满额奖品空缺。')
-        lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
-        lines.append(f"开奖时间：{lottery['end_time'].strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-        if lottery['type'] == 'points':
-            lines.append(f"已报名：{lottery['participant_count']} 人（开奖时复核资格）")
-        else:
-            lines.append(f"已达到发言条件：{lottery['participant_count']} 人（开奖时复核资格）")
-        if lottery['prize']:
-            lines.append('奖品：' + lottery['prize'])
-        text = '\n'.join(lines)
-        for offset in range(0, len(text), 1500):
-            markup = None
-            if lottery['type'] == 'points' and offset+1500 >= len(text):
-                markup = InlineKeyboardMarkup([[InlineKeyboardButton(
-                    f"报名参加（扣 {lottery['points_cost']} 积分，仅一次）",callback_data=f"lottery_join:{lottery['id']}:{lottery['points_cost']}")]])
-            _sched_del(context, await update.message.reply_text(text[offset:offset+1500],reply_markup=markup), 300)
+    from telegram import LinkPreviewOptions
+    for lottery in notices:
+        last = len(lottery['parts']) - 1
+        for index, part in enumerate(lottery['parts']):
+            _sched_del(context, await update.message.reply_text(
+                part, parse_mode='HTML',
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                reply_markup=lottery['markup'] if index == last else None), 300)
 
 
 async def check_auction_expiration(context):

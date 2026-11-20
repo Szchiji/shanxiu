@@ -288,6 +288,8 @@ async def test_chinese_keyword_reuses_current_list_no_join_button(env):
     await e.routes.on_message(update,ctx)
     text=message.reply_text.await_args.args[0]
     assert '随机抽奖' in text and '已达到发言条件' in text and '不要求认证' in text
+    assert f'#{lid}' not in text and '🎰' not in text
+    assert message.reply_text.await_args.kwargs.get('parse_mode')=='HTML'
     assert message.reply_text.await_args.kwargs.get('reply_markup') is None
 
 
@@ -302,7 +304,9 @@ from app.models import LotteryEntry, UserPoints, PointsLog
 
 
 def funded_lottery(e, *, balance=100, cost=10, **kw):
-    lid=e.add('points',counts=(),end_time=w.get_beijing_now()+timedelta(hours=1),points_cost=cost,**kw)
+    opts=dict(end_time=w.get_beijing_now()+timedelta(hours=1),points_cost=cost)
+    opts.update(kw)
+    lid=e.add('points',counts=(),**opts)
     with e.app.app_context():
         db.session.add(UserPoints(group_id=e.gid,user_id=101,points_balance=balance));db.session.commit()
     return lid
@@ -628,8 +632,10 @@ async def test_multi_prize_assignment_and_no_replacement(env,typ,counts,expect):
     if expect:
         assert state.winners==expect
     parts=e.call(lambda:json.loads(__import__('app.models',fromlist=['LotteryDelivery']).LotteryDelivery.query.one().parts))
-    assert any('用户 '+str(state.winners[0])+' — 一等奖' in part for part in parts)
-    assert any('用户 '+str(state.winners[1])+' — 二等奖' in part for part in parts)
+    text='\n'.join(parts)
+    assert f'<a href="tg://user?id={state.winners[0]}">{state.winners[0]}</a>' in text
+    assert f'<a href="tg://user?id={state.winners[1]}">{state.winners[1]}</a>' in text
+    assert text.index('<b>一等奖</b>') < text.index(f'tg://user?id={state.winners[0]}') < text.index('<b>二等奖</b>') < text.index(f'tg://user?id={state.winners[1]}')
 
 
 @pytest.mark.asyncio
@@ -651,7 +657,8 @@ async def test_insufficient_participants_fill_in_order_and_retry_keeps_snapshot(
     state=e.state(lid)
     assert state.winners==[101] and state.awards==[{'user_id':101,'prize_name':'一等奖','prize_index':0}]
     text='\n'.join(e.call(lambda:json.loads(__import__('app.models',fromlist=['LotteryDelivery']).LotteryDelivery.query.one().parts)))
-    assert '二等奖 还缺2名' in text
+    assert '<b>二等奖</b>' in text and '还缺 2 人' in text
+    assert f'<a href="tg://user?id=101">101</a>' in text
     first=list(state.awards)
     e.bot.send_message.side_effect=RuntimeError('temporary send failure')
     await w.deliver_results(e.app,lambda _:e.bot)
@@ -661,15 +668,17 @@ async def test_insufficient_participants_fill_in_order_and_retry_keeps_snapshot(
     e.bot.send_message.reset_mock();e.bot.send_message.side_effect=None
     await w.deliver_results(e.app,lambda _:e.bot)
     assert e.state(lid).awards==first and e.state(lid).winners==[101]
-    assert '用户 101 — 一等奖' in e.bot.send_message.await_args.kwargs['text']
+    sent=e.bot.send_message.await_args.kwargs['text']
+    assert '<b>一等奖</b>' in sent and '<a href="tg://user?id=101">101</a>' in sent
+    assert e.bot.send_message.await_args.kwargs.get('parse_mode')=='HTML'
 
 
 def test_ended_legacy_results_are_not_reassigned(env):
     e=env;lid=e.add(status='ended',winner_ids='[101,102]',prize_description='旧共享奖品',top_n_winners=2,prizes=None)
     parts=e.call(lambda:w.result_parts(db.session.get(GroupLottery,lid),[101,102]))
     text='\n'.join(parts)
-    assert '用户 101' in text and '用户 102' in text
-    assert '—' not in text
+    assert '<a href="tg://user?id=101">101</a>' in text and '<a href="tg://user?id=102">102</a>' in text
+    assert '用户101' not in text.replace(' ','') and '—' not in text
     assert '旧共享奖品' in text
     assert e.state(lid).awards is None and e.state(lid).winners==[101,102]
 
@@ -694,3 +703,203 @@ def test_prizes_validation_and_points_lock_includes_prize_rows(env):
               start_time='2030-01-01T00:00',end_time='2030-01-02T00:00',status='pending',
               prizes=[{'name':'新奖','winner_count':2}])
     assert c.post('/core/api/save_group_lottery',json=data).json['status']=='error'
+
+
+def _group_update(e, text='抽奖', uid=101):
+    message=NS(text=text,reply_text=AsyncMock(return_value=NS(message_id=1)))
+    update=NS(effective_chat=NS(id=-100173,type='supergroup'),effective_user=NS(id=uid,is_bot=False),effective_message=message,message=message)
+    ctx=NS(application=NS(bot_data={}),bot=e.bot)
+    return update,ctx,message
+
+
+def _seed_member(e, uid, *, first='', last='', username=None, profile=None):
+    with e.app.app_context():
+        db.session.add(GroupMember(group_id=e.gid,user_id=uid,first_name=first,last_name=last,username=username,status='member'))
+        if profile is not None:
+            db.session.add(GroupUser(group_id=e.gid,tg_id=uid,profile_data=json.dumps(profile,ensure_ascii=False)))
+        db.session.commit()
+
+
+def test_user_mentions_cover_name_combinations_and_malicious_html():
+    from app.services.lottery_format import user_mention_html
+    both=user_mention_html(101,{'display_name':'Alice Li','username':'alice_li'})
+    assert both=='<a href="tg://user?id=101">Alice Li</a> @alice_li'
+    only_name=user_mention_html(102,{'display_name':'Only Name'})
+    assert only_name=='<a href="tg://user?id=102">Only Name</a>' and '@' not in only_name
+    only_user=user_mention_html(103,{'username':'only_user'})
+    assert only_user=='<a href="tg://user?id=103">@only_user</a>'
+    neither=user_mention_html(104,{})
+    assert neither=='<a href="tg://user?id=104">104</a>' and '用户' not in neither
+    evil=user_mention_html(105,{'display_name':'<b>x</b> & "y"','username':'ab'})  # short username dropped
+    assert evil=='<a href="tg://user?id=105">&lt;b&gt;x&lt;/b&gt; &amp; &quot;y&quot;</a>'
+    assert '<b>x</b>' not in evil
+
+
+@pytest.mark.asyncio
+async def test_draw_snapshots_live_and_local_names_and_retry_stays_stable(env):
+    e=env
+    _seed_member(e,101,first='Local',last='One',username='local_one')
+    _seed_member(e,102,first='Only',last='Name')
+    _seed_member(e,103,username='only_handle')
+    # 104 has no local name; live API also omits it
+    e.bot.get_chat_member.side_effect=lambda **kw:{
+        101:NS(status='member',user=NS(is_bot=False,first_name='Live',last_name='Alice',username='live_alice')),
+        102:NS(status='member',user=NS(is_bot=False,first_name='Only',last_name='Name')),
+        103:NS(status='member',user=NS(is_bot=False,username='only_handle')),
+        104:NS(status='member'),
+    }[kw['user_id']]
+    lid=e.add('random',counts=((101,1),(102,1),(103,1),(104,1)),prizes=_prizes(('一等奖',1),('二等奖',1),('三等奖',1),('四等奖',1)))
+    await w.draw_lottery(e.app,lid,e.bot,automatic=True)
+    awards={item['user_id']:item for item in e.state(lid).awards}
+    assert awards[101]['display_name']=='Live Alice' and awards[101]['username']=='live_alice'
+    assert awards[102]['display_name']=='Only Name' and 'username' not in awards[102]
+    assert awards[103]['username']=='only_handle' and 'display_name' not in awards[103]
+    assert 'display_name' not in awards[104] and 'username' not in awards[104]
+    text='\n'.join(e.call(lambda:json.loads(LotteryDelivery.query.one().parts)))
+    assert '<a href="tg://user?id=101">Live Alice</a> @live_alice' in text
+    assert '<a href="tg://user?id=102">Only Name</a>' in text
+    assert '<a href="tg://user?id=103">@only_handle</a>' in text
+    assert '<a href="tg://user?id=104">104</a>' in text
+    assert '用户104' not in text.replace(' ','')
+    # later rename must not change the frozen snapshot or a retry announcement
+    with e.app.app_context():
+        member=GroupMember.query.filter_by(group_id=e.gid,user_id=101).one()
+        member.first_name,member.last_name,member.username='Renamed','User','renamed_user'
+        db.session.commit()
+    first=e.state(lid).awards
+    e.bot.send_message.side_effect=RuntimeError('temporary send failure')
+    await w.deliver_results(e.app,lambda _:e.bot)
+    with e.app.app_context():
+        for row in LotteryDelivery.query.all():row.retry_at=None
+        db.session.commit()
+    e.bot.send_message.reset_mock();e.bot.send_message.side_effect=None
+    await w.deliver_results(e.app,lambda _:e.bot)
+    sent='\n'.join(call.kwargs['text'] for call in e.bot.send_message.await_args_list)
+    assert e.state(lid).awards==first
+    assert 'Live Alice' in sent and '@live_alice' in sent
+    assert 'Renamed' not in sent and 'renamed_user' not in sent
+
+
+def test_legacy_display_fills_local_names_without_writeback(env):
+    e=env
+    _seed_member(e,101,first='旧',last='昵称',username='old_user')
+    _seed_member(e,102,profile={'name':'资料名','username':'from_profile'})
+    lid=e.add(status='ended',winner_ids='[101,102,103]',prize_description='旧共享奖品',top_n_winners=3,prizes=None,winner_awards=None)
+    parts=e.call(lambda:w.result_parts(db.session.get(GroupLottery,lid),[101,102,103]))
+    text='\n'.join(parts)
+    assert '<a href="tg://user?id=101">旧 昵称</a> @old_user' in text
+    assert '<a href="tg://user?id=102">资料名</a> @from_profile' in text
+    assert '<a href="tg://user?id=103">103</a>' in text
+    assert '—' not in text and e.state(lid).awards is None and e.state(lid).winners==[101,102,103]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text',['抽奖','/lottery','/lottery_list'])
+async def test_plain_keyword_and_slash_commands_share_list_without_activity_id(env,text):
+    e=env;now=w.get_beijing_now()
+    lid=e.add(lottery_name='春季活动',end_time=now+timedelta(hours=1),status='pending')
+    if text=='抽奖':
+        for n in ('check_spam_protection','check_keyword_filter','check_forced_subscription','check_and_mute_expired_user','update_user_activity','track_message_statistics','track_user_name_change','update_group_member','handle_sync_group_messages'):
+            e.mp.setattr(e.routes,n,AsyncMock(return_value=False))
+        update,ctx,message=_group_update(e,text)
+        await e.routes.on_message(update,ctx)
+    else:
+        update,ctx,message=_group_update(e,text)
+        await e.routes.cmd_lottery(update,ctx)
+    body=message.reply_text.await_args.args[0]
+    assert '春季活动' in body and '随机抽奖' in body and '不要求认证' in body
+    assert f'#{lid}' not in body and '🎰' not in body
+    assert message.reply_text.await_args.kwargs.get('parse_mode')=='HTML'
+    assert message.reply_text.await_args.kwargs.get('reply_markup') is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typ,expect', [
+    ('message_count','按发言数加权'),
+    ('message_rank','从高到低录取'),
+    ('random','每人机会相同'),
+    ('points','点击下方按钮报名'),
+])
+async def test_four_types_list_and_publish_html(env,typ,expect):
+    e=env;now=w.get_beijing_now()
+    kw=dict(end_time=now+timedelta(hours=1),status='active',start_time=now-timedelta(minutes=1),lottery_name=f'{typ}活动',prizes=_prizes(('奖品A',2),('奖品B',1)))
+    if typ=='points':
+        lid=funded_lottery(e,cost=7,**kw)
+    else:
+        lid=e.add(typ,counts=((101,12),),**kw)
+    update,ctx,message=_group_update(e,'/lottery')
+    await e.routes.cmd_lottery(update,ctx)
+    body=message.reply_text.await_args.args[0]
+    assert typ+'活动' in body and expect in body and '奖品A  ×2' in body and '共 3 人' in body
+    assert f'#{lid}' not in body
+    kw=message.reply_text.await_args.kwargs
+    assert kw.get('parse_mode')=='HTML'
+    if typ=='points':
+        markup=kw.get('reply_markup')
+        assert markup and '扣 7 积分' in markup.inline_keyboard[0][0].text
+        assert markup.inline_keyboard[0][0].callback_data==f'lottery_join:{lid}:7'
+    else:
+        assert kw.get('reply_markup') is None
+
+
+@pytest.mark.asyncio
+async def test_history_uses_snapshot_names_and_html(env):
+    e=env
+    awards=[{'user_id':101,'prize_name':'一等奖','prize_index':0,'display_name':'Ann','username':'ann_ok'}]
+    lid=e.add(status='ended',winner_ids='[101]',winner_awards=json.dumps(awards,ensure_ascii=False),prizes=_prizes(('一等奖',1)),lottery_name='历史活动')
+    update,ctx,message=_group_update(e,'/lottery_history')
+    await e.routes.cmd_lottery_history(update,ctx)
+    body=message.reply_text.await_args.args[0]
+    assert '历史活动' in body and '<a href="tg://user?id=101">Ann</a> @ann_ok' in body
+    assert message.reply_text.await_args.kwargs.get('parse_mode')=='HTML'
+
+
+def test_publish_uses_html_and_puts_points_button_on_last_chunk(env):
+    e=env;now=w.get_beijing_now()
+    lid=funded_lottery(e,cost=9,lottery_name='超长名称'+('😀<&>'*800),status='pending',
+                       start_time=now-timedelta(minutes=1),end_time=now+timedelta(hours=1),
+                       prizes=_prizes(('一等奖',1)))
+    sent=[]
+    async def capture(**kw):
+        sent.append(kw)
+        return NS(message_id=len(sent))
+    e.bot.send_message.side_effect=capture
+    class Fut:
+        def result(self, timeout=None):
+            return None
+    def run(coro, loop):
+        asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+        return Fut()
+    e.mp.setattr(e.routes,'global_bot_loop',object())
+    e.mp.setattr(e.routes,'global_ptb_app',NS(bot=e.bot))
+    e.mp.setattr('asyncio.run_coroutine_threadsafe',run)
+    c=e.app.test_client()
+    with c.session_transaction() as s:s['logged_in']=True
+    assert c.post('/core/api/publish_group_lottery',json={'id':lid}).json['status']=='ok'
+    assert len(sent)>1
+    assert all(item.get('parse_mode')=='HTML' for item in sent)
+    assert all(item['reply_markup'] is None for item in sent[:-1])
+    assert sent[-1]['reply_markup'] and '扣 9 积分' in sent[-1]['reply_markup'].inline_keyboard[0][0].text
+    text='\n'.join(item['text'] for item in sent)
+    assert f'#{lid}' not in text and '&lt;' in text and '<&>' not in text
+    assert all(len(item['text'].encode('utf-16-le'))//2<=3000 for item in sent)
+
+
+def test_formatter_chunks_keep_tags_closed_for_long_emoji_and_hundred_winners(env):
+    from app.services.lottery_format import format_result_notice, utf16_len
+    e=env
+    prizes=[{'name':'奖'+('🎉<&>'*400),'winner_count':100}]
+    awards=[{'user_id':1000+i,'prize_name':prizes[0]['name'],'prize_index':0,
+             'display_name':f'名字<script>{i}','username':f'user_{i:02d}'} for i in range(100)]
+    lid=e.add(status='ended',winner_ids=json.dumps([1000+i for i in range(100)]),
+              winner_awards=json.dumps(awards,ensure_ascii=False),
+              prizes=json.dumps(prizes,ensure_ascii=False),lottery_name='超长'+('😀'*200))
+    parts=e.call(lambda:format_result_notice(db.session.get(GroupLottery,lid),list(range(1000,1100)),awards))
+    assert len(parts)>1
+    joined='\n'.join(parts)
+    assert all(utf16_len(part)<=3000 for part in parts)
+    assert '<script>' not in joined and '&lt;script&gt;' in joined
+    assert all(part.count('<b>')==part.count('</b>') for part in parts)
+    assert all(part.count('<a ')==part.count('</a>') for part in parts)
+    for i in range(100):
+        assert f'<a href="tg://user?id={1000+i}">名字&lt;script&gt;{i}</a> @user_{i:02d}' in joined

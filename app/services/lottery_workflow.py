@@ -7,7 +7,6 @@ retry: the Bot API has no idempotency key; never re-draw to recover delivery.
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import secrets
 from datetime import datetime, timedelta
@@ -119,39 +118,26 @@ def awards_of(lottery):
         if not isinstance(item, dict):
             return None
         try:
-            awards.append({
+            award = {
                 'user_id': int(item['user_id']),
                 'prize_name': str(item.get('prize_name') or '奖品'),
                 'prize_index': int(item.get('prize_index', 0)),
-            })
+            }
         except (TypeError, ValueError, KeyError):
             return None
+        name = str(item.get('display_name') or '').strip()
+        username = str(item.get('username') or '').strip()
+        if name:
+            award['display_name'] = name
+        if username:
+            award['username'] = username
+        awards.append(award)
     return awards
 
 
-def activity_notice_lines(lottery):
-    prizes = prizes_of(lottery)
-    total = sum(prize['winner_count'] for prize in prizes)
-    lines = [f"🎉 抽奖活动：{lottery.lottery_name}", f"类型：{LABELS.get(lottery.lottery_type, '抽奖')}"]
-    if lottery.lottery_type == 'message_count':
-        lines.append(f"参与条件：本期发言至少 {lottery.min_messages} 条，按发言数量加权不放回抽取 {total} 人；发言越多机会越高，但不保证中奖")
-    elif lottery.lottery_type == 'message_rank':
-        lines.append(f"本期发言最多前 {total} 名获奖，同分按用户ID升序；奖品按排名从高到低对应配置顺序")
-    elif lottery.lottery_type == 'points':
-        lines.append(f"报名扣 {lottery.points_cost} 积分，每人每期一次；从有效报名者均匀随机抽 {total} 人，无需发言")
-        lines.append('正常开奖未中奖不退款；取消活动或开奖时已离群/封禁者原额退还报名积分。')
-    else:
-        lines.append(f"从本期发过言的不同用户中均匀随机抽 {total} 人")
-    lines.append('同一人每期只中一份；奖品按配置从上到下分配，人数不足时按此顺序分配，未满额奖品空缺。')
-    lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
-    if lottery.start_time:
-        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-    if lottery.end_time:
-        lines.append(f"开奖时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
-    summary = prize_summary(prizes)
-    if summary:
-        lines.append(f"奖品：{summary}")
-    return lines
+def activity_notice_parts(lottery, participant_count=None):
+    from app.services.lottery_format import format_activity_notice
+    return format_activity_notice(lottery, participant_count=participant_count, labels=LABELS)
 
 
 def validate_settings(data):
@@ -280,7 +266,8 @@ async def _eligible(bot, chat_id, candidates):
             status = member.status
             if status in ('creator', 'administrator', 'member') or (
                     status == 'restricted' and member.is_member):
-                return uid, count
+                from app.services.lottery_format import profile_from_tg_user
+                return uid, count, profile_from_tg_user(getattr(member, 'user', None))
             if status in ('left', 'kicked', 'restricted'):
                 return None
             raise ValueError('unknown membership status')
@@ -299,44 +286,14 @@ async def _eligible(bot, chat_id, candidates):
     return eligible
 
 
-def result_parts(lottery, winners, awards=None):
-    from app.services.lottery_service import unfilled_prizes
-    lines = ['🎉 抽奖结束！', f'活动：{lottery.lottery_name}', f'类型：{LABELS.get(lottery.lottery_type, "抽奖")}']
-    prizes = prizes_of(lottery)
-    if awards is None:
-        awards = awards_of(lottery)
-    if awards:
-        lines.append('获奖者：')
-        lines.extend(f'用户 {int(item["user_id"])} — {item["prize_name"]}' for item in awards)
-        leftover = unfilled_prizes(prizes, awards)
-        if leftover:
-            lines.append('未满额：' + '；'.join(f'{name} 还缺{count}名' for name, count in leftover))
-    elif winners:
-        # Pre-snapshot results are never re-assigned onto prize rows.
-        lines.append('获奖者：')
-        lines.extend(f'用户 {int(uid)}' for uid in winners)
-        if lottery.prize_description:
-            lines.extend(['奖品：', lottery.prize_description])
-    else:
-        lines.append('无人符合条件，本期已结束。')
-        summary = prize_summary(prizes)
-        if summary:
-            lines.append(f'奖品：{summary}')
-    if lottery.lottery_type == 'points':
-        lines.append('正常开奖未中奖不退分；已确认离群/封禁的报名积分已原额退还。')
-    # Plain names/descriptions are escaped before entering HTML. Chunk escaped
-    # fragments, never cut an entity or anchor; <3000 UTF-16 units INCLUDING tags.
-    fragments = []
-    for line in lines:
-        fragments.extend(html.escape(line[i:i+400]) for i in range(0, len(line), 400))
-    parts, current = [], ''
-    for fragment in fragments:
-        if current and len((current + '\n' + fragment).encode('utf-16-le')) // 2 > 3000:
-            parts.append(current); current = ''
-        current += ('\n' if current else '') + fragment
-    if current:
-        parts.append(current)
-    return parts
+def result_parts(lottery, winners, awards=None, profiles=None):
+    from app.services.lottery_format import format_result_notice, local_profiles
+    if profiles is None:
+        user_ids = [item['user_id'] for item in (awards or [])] or list(winners or [])
+        # Display-only fill for historical rows that have no name snapshot.
+        # Never writes back or reassigns prizes.
+        profiles = local_profiles(getattr(lottery, 'group_id', None), user_ids)
+    return format_result_notice(lottery, winners, awards, profiles=profiles, labels=LABELS)
 
 
 def _finish(lottery_id, token, participants):
@@ -356,8 +313,16 @@ def _finish(lottery_id, token, participants):
         return {'status': 'paused', 'message': '积分功能已停用，暂缓开奖'}
     # Filter application-level bans again after network I/O.
     banned = {uid for (uid,) in db.session.query(GroupUser.tg_id).filter_by(group_id=l.group_id, is_banned=True).all()}
-    pool = {int(uid): int(count) for uid, count in participants if uid not in banned}
+    from app.services.lottery_format import local_profiles, merge_profiles
     from app.services.lottery_service import run_lottery_draw
+    seen = {}
+    for item in participants or []:
+        uid, count = int(item[0]), int(item[1])
+        if uid in banned:
+            continue
+        seen[uid] = (count, item[2] if len(item) > 2 and isinstance(item[2], dict) else {})
+    pool = {uid: count for uid, (count, _) in seen.items()}
+    live_profiles = {uid: profile for uid, (_, profile) in seen.items() if profile}
     if l.lottery_type not in LABELS:
         db.session.rollback()
         return {'status': 'error', 'message': '抽奖类型无效，请联系管理员'}
@@ -369,6 +334,13 @@ def _finish(lottery_id, token, participants):
     winners = run_lottery_draw(l.lottery_type, list(pool.items()), n)
     awards = assign_prizes(winners, prizes)
     winners = [item['user_id'] for item in awards]
+    local = local_profiles(l.group_id, winners)
+    for award in awards:
+        profile = merge_profiles(live_profiles.get(award['user_id']), local.get(award['user_id']))
+        if profile.get('display_name'):
+            award['display_name'] = profile['display_name']
+        if profile.get('username'):
+            award['username'] = profile['username']
     if l.lottery_type == 'points':
         # Definitive departures / bans do not consume an entry fee. Unknown API
         # errors never reach this transaction, so cannot be mistaken for leaving.
@@ -507,8 +479,10 @@ async def deliver_results(app, bot_resolver, lottery_id=None):
             continue
         try:
             for index in range(claim['next_part'], len(claim['parts'])):
+                from telegram import LinkPreviewOptions
                 message = await asyncio.wait_for(bot.send_message(
-                    chat_id=claim['chat_id'], text=claim['parts'][index], parse_mode='HTML'), timeout=20)
+                    chat_id=claim['chat_id'], text=claim['parts'][index], parse_mode='HTML',
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)), timeout=20)
                 saved = await asyncio.to_thread(call, _delivery_progress, delivery_id, claim['token'], index, message.message_id)
                 if not saved:
                     break

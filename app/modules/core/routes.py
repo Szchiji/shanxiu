@@ -12900,6 +12900,8 @@ async def run_bot(app_instance):
 
     print("🤖 正在初始化 Bot...", flush=True)
     app = Application.builder().token(token).build()
+    from app.send_audit import register_bot
+    register_bot(app.bot)
     
     global global_ptb_app
     global_ptb_app = app
@@ -13279,8 +13281,9 @@ def do_like(chat_id, message_id, emoji, token=None):
     clean_emoji = normalize_like_emoji(emoji)
     try:
         url = f"https://api.telegram.org/bot{token}/setMessageReaction"
-        resp = requests.post(
-            url,
+        from app.send_audit import bot_api_post
+        resp = bot_api_post(
+            requests.post, url,
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
@@ -13340,8 +13343,9 @@ def _telegram_get_chat_member(chat_id, user_id, token):
         return None, 'missing_args'
     try:
         url = f"https://api.telegram.org/bot{token}/getChatMember"
-        resp = requests.post(
-            url, json={"chat_id": chat_id, "user_id": int(user_id)}, timeout=5
+        from app.send_audit import bot_api_post
+        resp = bot_api_post(
+            requests.post, url, json={"chat_id": chat_id, "user_id": int(user_id)}, timeout=5
         )
         try:
             data = resp.json()
@@ -13431,7 +13435,8 @@ def _set_chat_member_tag(chat_id, user_id, tag, token=None):
             "user_id": int(user_id),
             "tag": clean_tag,
         }
-        resp = requests.post(url, json=payload, timeout=5)
+        from app.send_audit import bot_api_post
+        resp = bot_api_post(requests.post, url, json=payload, timeout=5)
         try:
             data = resp.json()
         except ValueError:

@@ -1160,7 +1160,7 @@
             <div class="dropdown">
                 <span class="nav-link px-2 text-muted d-flex align-items-center gap-1 dropdown-toggle-no-caret" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="{{ current_group.title }}" style="cursor:pointer;">
                     <img class="tg-group-avatar-img" id="navGroupAvatar"
-                         src="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
+                         src="/core/avatar-placeholder.svg" data-tg-photo="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
                          onerror="this.style.display='none';document.getElementById('navGroupIcon').style.display='inline-block';"
                          alt="{{ current_group.title }}" />
                     {% if current_group.type == 'channel' %}
@@ -1181,7 +1181,7 @@
             <div class="dropdown">
                 <span class="nav-link px-2 text-muted d-flex align-items-center gap-1 dropdown-toggle-no-caret" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="{{ session.get('login_user_name') }}" style="cursor:pointer;">
                     <img class="tg-avatar-img" id="navUserAvatar"
-                         src="/core/api/tg-photo?id={{ session.get('login_user_id') }}&type=user"
+                         src="/core/avatar-placeholder.svg" data-tg-photo="/core/api/tg-photo?id={{ session.get('login_user_id') }}&type=user"
                          onerror="this.style.display='none';document.getElementById('navUserBadge').style.display='inline-flex';"
                          alt="{{ session.get('login_user_name') }}" />
                     <span class="user-avatar-badge" id="navUserBadge" style="display:none;">{{ session.get('login_user_name')[0] }}</span>
@@ -1209,7 +1209,7 @@
                     <div class="sidebar-heading">
                         {% if current_group is defined and current_group %}
                             <img style="width:16px;height:16px;border-radius:50%;object-fit:cover;flex-shrink:0;vertical-align:middle;"
-                                 src="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
+                                 src="/core/avatar-placeholder.svg" data-tg-photo="/core/api/tg-photo?id={{ current_group.chat_id }}&type=group"
                                  onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block';"
                                  alt="{{ current_group.title }}" />
                             {% if current_group.type == 'channel' %}
@@ -1777,5 +1777,44 @@
             }, 1500);
         }
     </script>
+<script>
+// Default avatars are already visible in HTML. Bounded progressive loading
+// never delays rendering or retries a failed Telegram fetch on every refresh.
+document.addEventListener('DOMContentLoaded', () => {
+    const groups = new Map();
+    document.querySelectorAll('img[data-tg-photo]').forEach(img => {
+        const url = img.dataset.tgPhoto;
+        if (!groups.has(url)) groups.set(url, []);
+        groups.get(url).push(img);
+    });
+    const queue = Array.from(groups.entries());
+    async function load(url, images) {
+        for (let attempt = 0; attempt < 6; attempt++) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
+            try {
+                const res = await fetch(url, {signal: controller.signal, cache: 'no-store'});
+                if (!res.ok) return;
+                const state = res.headers.get('X-Avatar-State');
+                if (state === 'ready') {
+                    const objectUrl = URL.createObjectURL(await res.blob());
+                    images.forEach(img => {img.src = objectUrl;});
+                    // Retain until navigation; at most one bounded avatar per URL.
+                    window.addEventListener('pagehide', () => URL.revokeObjectURL(objectUrl), {once: true});
+                    return;
+                }
+                if (!['pending', 'busy'].includes(state)) return;
+            } catch (_) { return; }
+            finally { clearTimeout(timeout); }
+            await new Promise(resolve => setTimeout(resolve, 750));
+        }
+    }
+    async function worker() {
+        while (queue.length) { const [url, images] = queue.shift(); await load(url, images); }
+    }
+    const workers = Math.min(4, queue.length);
+    for (let i = 0; i < workers; i++) worker();
+});
+</script>
 </body>
 </html>

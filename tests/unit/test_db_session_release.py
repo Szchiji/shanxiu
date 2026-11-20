@@ -217,3 +217,54 @@ def test_bulk_update_is_not_auto_committed(flask_app):
 
     with flask_app.app_context():
         assert GroupBottomButton.query.filter_by(group_id=group_id).one().button_text == '旧文案'
+
+
+def test_select_materializes_before_cursor_is_closed_by_commit(flask_app, monkeypatch):
+    """Model psycopg's cursor lifetime, which SQLite normally hides."""
+    from sqlalchemy import select
+    from flask_sqlalchemy.session import Session as FSASession
+    from app import db
+    with flask_app.app_context():
+        group = _make_group(db, 'buffer-before-commit')
+        gid = group.id
+        real_execute = FSASession.execute
+        raw_cursors = []
+        def capture(session, statement, *args, **kwargs):
+            result = real_execute(session, statement, *args, **kwargs)
+            cursor = getattr(result, 'cursor', None)
+            if cursor is not None: raw_cursors.append(cursor)
+            return result
+        monkeypatch.setattr(FSASession, 'execute', capture)
+        session = db.session()
+        real_commit = session.commit
+        def closing_commit():
+            for cursor in raw_cursors: cursor.close()
+            real_commit()
+        monkeypatch.setattr(session, 'commit', closing_commit)
+        rows = session.execute(select(BotGroup.__table__.c.id).where(BotGroup.id == gid)).all()
+        assert rows == [(gid,)]
+        assert not session.in_transaction()
+        assert session.expire_on_commit is True
+
+
+def test_buffered_select_handles_expired_attribute_load(flask_app):
+    from app import db
+    with flask_app.app_context():
+        group = _make_group(db, 'expired attribute')
+        # commit expired the object; auto-release must not expire it AGAIN
+        # during its deferred attribute loading operation.
+        assert group.id and group.title == 'expired attribute'
+        assert not db.session().in_transaction()
+
+
+def test_explicit_streaming_select_keeps_cursor_transaction(flask_app):
+    from app import db
+    from sqlalchemy import select
+    with flask_app.app_context():
+        group = _make_group(db, 'streaming')
+        gid = group.id
+        result = db.session.execute(select(BotGroup).where(BotGroup.id == gid).execution_options(stream_results=True))
+        assert db.session().in_transaction()
+        assert result.scalar_one().id == gid
+        result.close()
+        db.session.rollback()

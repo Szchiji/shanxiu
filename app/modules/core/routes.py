@@ -1,3 +1,5 @@
+import re
+from flask import current_app
 from flask import Blueprint, render_template, request, redirect, session, jsonify, abort, Response
 from app import db, limiter
 from app import get_bot_instance_role, is_clone_instance, is_main_instance
@@ -94,9 +96,6 @@ CLONE_STOP_TIMEOUT = bot_clone_manager.CLONE_STOP_BUDGET + 5
 CLONE_RESTART_TIMEOUT = CLONE_START_TIMEOUT + CLONE_STOP_TIMEOUT + 5
 SUBSCRIPTION_CHECK_BATCH_SIZE = 10  # Users checked per run in forced-channel subscription task
 
-# Simple in-memory cache for Telegram photos: key -> (timestamp, bytes, content_type)
-_tg_photo_cache: dict = {}
-TG_PHOTO_CACHE_TTL = 300  # seconds (5 minutes)
 
 # Mute reasons (internationalization support)
 MUTE_REASON_INACTIVE = '不活跃用户'  # Inactive user
@@ -2908,76 +2907,53 @@ def api_get_user_info():
         }
     })
 
+@core_bp.route('/avatar-placeholder.svg')
+def avatar_placeholder():
+    from app.services.telegram_photos import PLACEHOLDER
+    return Response(PLACEHOLDER, mimetype='image/svg+xml', headers={'Cache-Control': 'public, max-age=86400'})
+
+
 @core_bp.route('/api/tg-photo')
 def api_tg_photo():
-    """代理 Telegram 用户/群组头像。
-    参数:
-      id   - Telegram user_id 或 chat_id（字符串）
-      type - 'user' | 'group'（默认 'user'）
-    """
+    """Return a cached image or an immediate placeholder; never wait on Telegram."""
     if not session.get('logged_in'):
         return '', 403
-
+    from app.services import telegram_photos as photos
     entity_id = request.args.get('id', '').strip()
     entity_type = request.args.get('type', 'user')
-
-    if not entity_id:
+    if entity_type not in ('user', 'group') or not re.fullmatch(r'-?[0-9]{1,20}', entity_id):
         return '', 400
-
-    cache_key = f"{entity_type}:{entity_id}"
-    now = time.time()
-
-    # Return cached bytes if still fresh
-    cached = _tg_photo_cache.get(cache_key)
-    if cached and (now - cached[0]) < TG_PHOTO_CACHE_TTL:
-        return Response(cached[1], mimetype=cached[2])
-
-    # Determine which bot to use
-    bot = None
-    if global_ptb_app:
-        bot = global_ptb_app.bot
-
-    # For group photos, prefer the clone bot that manages the group
-    if entity_type == 'group' and entity_id:
-        group = BotGroup.query.filter_by(chat_id=str(entity_id)).first()
-        if group and group.clone_id:
-            clone_info = bot_clone_manager.active_clones.get(group.clone_id)
-            if clone_info:
-                bot = clone_info['app'].bot
-
-    if not bot or not global_bot_loop:
-        return '', 503
-
-    try:
-        async def _fetch_photo():
-            if entity_type == 'group':
-                chat = await bot.get_chat(entity_id)
-                if not chat.photo:
-                    return None, None
-                file = await bot.get_file(chat.photo.small_file_id)
-            else:
-                photos = await bot.get_user_profile_photos(int(entity_id), limit=1)
-                if not photos or photos.total_count == 0:
-                    return None, None
-                file = await bot.get_file(photos.photos[0][-1].file_id)
-            # Download raw bytes
-            bio = BytesIO()
-            await file.download_to_memory(bio)
-            bio.seek(0)
-            return bio.read(), 'image/jpeg'
-
-        future = asyncio.run_coroutine_threadsafe(_fetch_photo(), global_bot_loop)
-        img_bytes, mime = future.result(timeout=10)
-
-        if not img_bytes:
+    bot = global_ptb_app.bot if global_ptb_app else None
+    clone_id = session.get('clone_id')
+    if entity_type == 'group':
+        group = BotGroup.query.filter_by(chat_id=entity_id).first()
+        if not group:
             return '', 404
-
-        _tg_photo_cache[cache_key] = (now, img_bytes, mime)
-        return Response(img_bytes, mimetype=mime)
-
-    except Exception as e:
-        logging.warning(f"tg-photo fetch failed for {entity_type}:{entity_id}: {e}")
-        return '', 404
+        err = _api_check_group_access(group)
+        if err:
+            return '', 403
+        clone_id = group.clone_id
+    if clone_id is not None:
+        info = bot_clone_manager.active_clones.get(clone_id)
+        bot = info['app'].bot if info else None
+    # All DB work/materialization ends before scheduling I/O. In particular,
+    # no ORM object or request-scoped Session escapes into the bot loop.
+    db.session.remove()
+    state, data = 'missing', None
+    if bot and global_bot_loop:
+        key = (bot.id, entity_type, entity_id)
+        state, data = photos.cache.lookup_or_claim(key)
+        if state == 'fetch':
+            task = photos.load(key, bot, entity_id, entity_type)
+            try:
+                asyncio.run_coroutine_threadsafe(task, global_bot_loop)
+                state = 'pending'
+            except Exception:
+                task.close()
+                photos.cache.complete(key, None)
+                state = 'missing'
+    return Response(data or photos.PLACEHOLDER, mimetype='image/jpeg' if data else 'image/svg+xml',
+                    headers={'Cache-Control': 'private, no-store', 'X-Avatar-State': state})
 
 
 @core_bp.route('/api/bulk_import_users', methods=['POST'])
@@ -7248,73 +7224,61 @@ def api_publish_group_vote():
     return jsonify({'status':'ok','msg':'投票已发布到群组'})
 
 
+def _authorized_publication_lottery(lottery_id):
+    lottery = db.session.get(GroupLottery, lottery_id)
+    if not lottery:
+        return None, None, (jsonify({'status': 'error', 'msg': 'Lottery not found'}), 404)
+    group = db.session.get(BotGroup, lottery.group_id)
+    if not group:
+        return None, None, (jsonify({'status': 'error', 'msg': 'Group not found'}), 404)
+    return lottery, group, _api_check_group_access(group)
+
+
+@core_bp.route('/api/lottery_publication_status/<int:lottery_id>')
+def api_lottery_publication_status(lottery_id):
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
+    lottery, group, err = _authorized_publication_lottery(lottery_id)
+    if err:
+        return err
+    from app.services import lottery_publication as pub
+    return jsonify(status='ok', **pub.status(lottery_id))
+
+
 @core_bp.route('/api/publish_group_lottery', methods=['POST'])
 def api_publish_group_lottery():
-    """发布群抽奖公告到 Telegram 群组"""
-    if not session.get('logged_in'): return jsonify({'status':'error','msg':'Auth required'})
-    d = request.json
-    if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
-
-    lottery = GroupLottery.query.get(d['id'])
-    if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
-    group = BotGroup.query.get(lottery.group_id)
-    if not group: return jsonify({'status':'error','msg':'Group not found'})
-    err = _api_check_group_access(group)
-    if err: return err
-
-    if not global_bot_loop:
-        return jsonify({'status':'error','msg':'Bot not initialized'})
-
-    group_clone_id = group.clone_id
-    if group_clone_id is not None:
-        clone_info = bot_clone_manager.active_clones.get(group_clone_id)
-        if not clone_info:
-            return jsonify({'status':'error','msg':'Clone bot not running'})
-        ptb_app = clone_info['app']
-    else:
-        if not global_ptb_app:
-            return jsonify({'status':'error','msg':'Bot not initialized'})
-        ptb_app = global_ptb_app
-
-    if lottery.status in ('ended', 'drawing', 'cancelled'):
-        return jsonify({'status':'error','msg':'开奖中或已结束，不能重复发布活动公告'})
-    if not lottery.start_time or not lottery.end_time or lottery.start_time >= lottery.end_time:
-        return jsonify({'status':'error','msg':'请先补齐合法开始时间和开奖时间'})
-    from app.services.lottery_workflow import activity_notice_parts, points_button
-    from telegram import LinkPreviewOptions
-    parts = activity_notice_parts(lottery)
-    target_chat_ids = list(dict.fromkeys(str(x) for x in (group.chat_id, lottery.announce_channel_id) if x))
-    registration_markup = points_button(lottery)
-    lottery_id_db = lottery.id
-
-    async def _send_lottery_announcement(chat_id):
-        last = len(parts) - 1
-        for index, part in enumerate(parts):
-            await ptb_app.bot.send_message(
-                chat_id=chat_id, text=part, parse_mode='HTML',
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-                reply_markup=registration_markup if index == last else None)
-
-    for target_chat_id in target_chat_ids:
-        future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(target_chat_id), global_bot_loop)
-        try:
-            future.result(timeout=20)
-        except TimeoutError:
-            return jsonify({'status':'error','msg':'发送超时，请稍后重试'})
-        except Exception as send_err:
-            logging.error(f"❌ [api_publish_group_lottery] send error to {target_chat_id}: {send_err}")
-            return jsonify({'status':'error','msg':'消息发送失败，请检查机器人权限或稍后重试'})
-
-    # Mark lottery as active if still pending
+    """Persist and enqueue once, never hold the HTTP request for Telegram."""
+    if not session.get('logged_in'):
+        return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
+    data = request.get_json(silent=True) or {}
     try:
-        lottery = GroupLottery.query.get(lottery_id_db)
-        if lottery and lottery.status == 'pending' and lottery.start_time <= get_beijing_now():
-            lottery.status = 'active'
-            db.session.commit()
-    except Exception as db_err:
-        logging.error(f"❌ [api_publish_group_lottery] DB update error: {db_err}")
-
-    return jsonify({'status':'ok','msg':'抽奖公告已发送到群组'})
+        lottery_id = int(data['id'])
+    except (KeyError, ValueError, TypeError):
+        return jsonify({'status': 'error', 'msg': 'Missing/invalid id'}), 400
+    lottery, group, err = _authorized_publication_lottery(lottery_id)
+    if err:
+        return err
+    if lottery.status in ('ended', 'drawing', 'cancelled') or not group.is_active:
+        return jsonify({'status': 'error', 'msg': '活动或群已停用/结束，不能发布'})
+    if not lottery.start_time or not lottery.end_time or lottery.start_time >= lottery.end_time:
+        return jsonify({'status': 'error', 'msg': '请先补齐合法开始时间和开奖时间'})
+    ptb = (bot_clone_manager.active_clones.get(group.clone_id) or {}).get('app') if group.clone_id is not None else global_ptb_app
+    if not global_bot_loop or not ptb:
+        return jsonify({'status': 'error', 'msg': '对应机器人未运行'})
+    from app.services import lottery_publication as pub
+    result, token = pub.enqueue(lottery, group)
+    db.session.remove()
+    if token:
+        # Pass the real Flask app, not its request proxy, and scalar snapshot ID.
+        app = current_app._get_current_object()
+        task = pub.send(app, lottery_id, token, ptb.bot)
+        try:
+            asyncio.run_coroutine_threadsafe(task, global_bot_loop)
+        except Exception:
+            task.close()
+            pub.submission_failed(lottery_id, token)
+            result = pub.status(lottery_id)
+    return jsonify(status='ok', **result), 202 if result['state'] in ('pending', 'sending') else 200
 
 
 @core_bp.route('/api/save_channel_forward_rule', methods=['POST'])

@@ -606,6 +606,25 @@ class LotteryDelivery(db.Model):
     __table_args__ = (db.UniqueConstraint('lottery_id', 'target_chat_id', name='_lottery_delivery_target_uc'),)
 
 
+class LotteryPublication(db.Model):
+    """Manual pre-draw notice only; independent from draw result deliveries.
+
+    One durable slot per activity prevents concurrent tabs/workers/restarts
+    from publishing twice. No FK: retain audit even if an activity is deleted.
+    """
+    __tablename__ = 'lottery_publication'
+    lottery_id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, nullable=False, index=True)
+    clone_id = db.Column(db.Integer, nullable=True)
+    payload = db.Column(db.Text, nullable=False)
+    state = db.Column(db.String(20), nullable=False, default='pending')
+    next_part = db.Column(db.Integer, nullable=False, default=0)
+    message_ids = db.Column(db.Text, nullable=False, default='[]')
+    claim_token = db.Column(db.String(64), nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False)
+    last_error = db.Column(db.String(255), nullable=True)
+
+
 class MemberLevel(db.Model):
     """群成员等级"""
     __tablename__ = 'member_level'

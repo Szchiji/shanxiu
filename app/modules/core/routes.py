@@ -9,7 +9,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelPostButtonConfig, ChannelMessageStats, LotteryMessageCount,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
-                        PointsExchangeItem, PointsExchangeRecord)
+                        PointsExchangeItem, PointsExchangeRecord, ConfigSyncLink)
 from app.services import sanitize_html_for_telegram
 from app.services.chat_migration import (
     call_with_chat_migration_retry,
@@ -1182,6 +1182,8 @@ def _delete_group_cascade(group_id: int) -> None:
         model.query.filter_by(group_id=group_id).delete(synchronize_session=False)
 
     # --- Different FK column name ---
+    from app.services.config_sync_service import detach_links_for_group
+    detach_links_for_group(group_id)
     SyncGroupMessages.query.filter_by(source_group_id=group_id).delete(synchronize_session=False)
     SyncMessageLog.query.filter_by(source_group_id=group_id).delete(synchronize_session=False)
 
@@ -1588,9 +1590,11 @@ def page_auto_replies(gid):
     if page > total_pages: page = total_pages
     
     auto_replies = query.order_by(AutoReply.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    from app.services.config_sync_service import KIND_AUTO_REPLIES, annotations_for_group
+    sync_links = annotations_for_group(gid, KIND_AUTO_REPLIES)
     
     return render_template('auto_replies.html', page='auto_replies', group=group, conf=get_group_conf(group),
-                          auto_replies=auto_replies,
+                          auto_replies=auto_replies, sync_links=sync_links,
                           current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items, search=search_query)
 
 @core_bp.route('/group/<int:gid>/scheduled_messages')
@@ -1637,9 +1641,11 @@ def page_scheduled_messages(gid):
     if page > total_pages: page = total_pages
     
     scheduled_messages = query.order_by(ScheduledMessage.id.desc()).offset((page-1)*per_page).limit(per_page).all()
+    from app.services.config_sync_service import KIND_SCHEDULED_MESSAGES, annotations_for_group
+    sync_links = annotations_for_group(gid, KIND_SCHEDULED_MESSAGES)
     
     return render_template('scheduled_messages.html', page='scheduled_messages', group=group,
-                          scheduled_messages=scheduled_messages,
+                          scheduled_messages=scheduled_messages, sync_links=sync_links,
                           current_page=page, total_pages=total_pages, per_page=per_page, total_items=total_items, search=search_query)
 
 @core_bp.route('/group/<int:gid>/start_messages')
@@ -2661,6 +2667,11 @@ def api_save_settings():
     conf.update(warn_cfg)
     d['config'] = conf
     group.config = json.dumps(conf, ensure_ascii=False)
+    from app.services.config_sync_service import (
+        KIND_AUTO_REPLIES, KIND_SCHEDULED_MESSAGES, propagate_source_group_master,
+    )
+    propagate_source_group_master(KIND_AUTO_REPLIES, group)
+    propagate_source_group_master(KIND_SCHEDULED_MESSAGES, group)
     db.session.commit()
     return jsonify({
         'status': 'ok',
@@ -3286,6 +3297,8 @@ def api_set_channel_auto_reply():
     conf = get_group_conf(group)
     conf['auto_reply_open'] = data['enabled']
     group.config = json.dumps(conf, ensure_ascii=False)
+    from app.services.config_sync_service import KIND_AUTO_REPLIES, propagate_source_group_master
+    propagate_source_group_master(KIND_AUTO_REPLIES, group)
     db.session.commit()
     return jsonify({'status': 'ok'})
 
@@ -3376,7 +3389,13 @@ def api_toggle_auto_reply():
         if not item: return jsonify({'status':'error','msg':'Rule not found'})
         err = _api_check_group_access(BotGroup.query.get(item.group_id))
         if err: return err
+        from app.services.config_sync_service import (
+            FOLLOWED_TOGGLE_MSG, KIND_AUTO_REPLIES, link_for_target_item, propagate_source_item_status,
+        )
+        if link_for_target_item(KIND_AUTO_REPLIES, item.id):
+            return jsonify({'status':'error','msg': FOLLOWED_TOGGLE_MSG})
         item.is_active = not item.is_active
+        propagate_source_item_status(KIND_AUTO_REPLIES, item)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3395,6 +3414,8 @@ def api_delete_auto_reply():
         if not item: return jsonify({'status':'error','msg':'Rule not found'})
         err = _api_check_group_access(BotGroup.query.get(item.group_id))
         if err: return err
+        from app.services.config_sync_service import KIND_AUTO_REPLIES, detach_links_for_item
+        detach_links_for_item(KIND_AUTO_REPLIES, item.id)
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -3959,10 +3980,16 @@ def api_toggle_scheduled_message():
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         err = _api_check_group_access(item.group)
         if err: return err
+        from app.services.config_sync_service import (
+            FOLLOWED_TOGGLE_MSG, KIND_SCHEDULED_MESSAGES, link_for_target_item, propagate_source_item_status,
+        )
+        if link_for_target_item(KIND_SCHEDULED_MESSAGES, item.id):
+            return jsonify({'status':'error','msg': FOLLOWED_TOGGLE_MSG})
         item.is_active = not item.is_active
         # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
         if item.is_active:
             prepare_scheduled_message_enable(item, get_beijing_now())
+        propagate_source_item_status(KIND_SCHEDULED_MESSAGES, item)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3981,6 +4008,8 @@ def api_delete_scheduled_message():
         if not item: return jsonify({'status':'error','msg':'Message not found'})
         err = _api_check_group_access(item.group)
         if err: return err
+        from app.services.config_sync_service import KIND_SCHEDULED_MESSAGES, detach_links_for_item
+        detach_links_for_item(KIND_SCHEDULED_MESSAGES, item.id)
         db.session.delete(item)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -4002,23 +4031,35 @@ def api_batch_scheduled_messages():
     try:
         items = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).all()
         session_clone_id = session.get('clone_id')
+        from app.services.config_sync_service import (
+            KIND_SCHEDULED_MESSAGES, detach_links_for_item, followed_target_ids,
+            propagate_source_item_status,
+        )
+        followed = followed_target_ids(KIND_SCHEDULED_MESSAGES, [item.id for item in items])
         processed = 0
+        skipped_followed = 0
         for item in items:
             # Global admins (no clone_id in session) may operate on any group.
             # Clone admins may only operate on groups that belong to their clone.
             if session_clone_id and item.group and item.group.clone_id != session_clone_id:
                 continue
+            if item.id in followed and action != 'delete':
+                skipped_followed += 1
+                continue
             if action == 'delete':
+                detach_links_for_item(KIND_SCHEDULED_MESSAGES, item.id)
                 db.session.delete(item)
             elif action == 'enable':
                 item.is_active = True
                 # 重新启用时重新计算下次发送时间，不立即触发发送（不算手动发送）
                 prepare_scheduled_message_enable(item, get_beijing_now())
+                propagate_source_item_status(KIND_SCHEDULED_MESSAGES, item)
             elif action == 'pause':
                 item.is_active = False
+                propagate_source_item_status(KIND_SCHEDULED_MESSAGES, item)
             processed += 1
         db.session.commit()
-        return jsonify({'status':'ok','count':processed})
+        return jsonify({'status':'ok','count':processed,'skipped_followed':skipped_followed})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status':'error','msg':str(e)})
@@ -4287,7 +4328,8 @@ def api_config_sync_targets(group_id):
         return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
     kind = (request.args.get('kind') or '').strip()
     from app.services.config_sync_service import (
-        is_valid_kind, kind_label, count_source_items, list_eligible_targets, serialize_target,
+        is_valid_kind, kind_label, count_source_items, list_eligible_targets,
+        serialize_target, source_block_reason,
     )
     if not is_valid_kind(kind):
         return jsonify({'status': 'error', 'msg': '不支持的同步类型'}), 400
@@ -4297,22 +4339,26 @@ def api_config_sync_targets(group_id):
     err = _api_check_group_access(group)
     if err:
         return err
-    targets = [serialize_target(g) for g in list_eligible_targets(group)]
+    block = source_block_reason(group_id, kind)
+    targets = [serialize_target(g, kind=kind) for g in list_eligible_targets(group)]
     return jsonify({
         'status': 'ok',
         'kind': kind,
         'kind_label': kind_label(kind),
         'source_count': count_source_items(group_id, kind),
+        'can_be_source': not bool(block),
+        'source_block_reason': block or '',
         'targets': targets,
     })
 
 
 @core_bp.route('/api/sync_config_to_groups', methods=['POST'])
 def api_sync_config_to_groups():
-    """Copy all auto-reply or scheduled-message configs from one group to others.
+    """Copy configs to other groups and keep a unidirectional enable/pause link.
 
-    One-time insert only: never overwrites, never sends messages, and new rows
-    are saved disabled.  Client-supplied target lists are re-checked server-side.
+    Existing linked rows are updated in place.  Native target rules are never
+    claimed.  New/updated rows follow the source rule and source module switch,
+    but the target group's own module switch is not changed.  Nothing is sent.
     """
     if not session.get('logged_in'):
         return jsonify({'status': 'error', 'msg': 'Auth required'}), 403
@@ -4321,9 +4367,9 @@ def api_sync_config_to_groups():
     source_group_id = d.get('source_group_id')
     raw_targets = d.get('target_group_ids') or []
     from app.services.config_sync_service import (
-        MAX_SYNC_TARGETS, classify_target, copy_snapshots_to_target,
+        MAX_SYNC_TARGETS, classify_target, upsert_linked_copies,
         count_source_items, is_valid_kind, kind_label, snapshot_source_items,
-        try_acquire_sync_lock,
+        source_block_reason, try_acquire_sync_lock,
     )
     if not is_valid_kind(kind):
         return jsonify({'status': 'error', 'msg': '不支持的同步类型'}), 400
@@ -4335,6 +4381,9 @@ def api_sync_config_to_groups():
     err = _api_check_group_access(source)
     if err:
         return err
+    block = source_block_reason(source.id, kind)
+    if block:
+        return jsonify({'status': 'error', 'msg': block}), 400
 
     if not isinstance(raw_targets, list) or not raw_targets:
         return jsonify({'status': 'error', 'msg': '请选择目标群'}), 400
@@ -4366,28 +4415,29 @@ def api_sync_config_to_groups():
     results = []
     try:
         snapshots = snapshot_source_items(source.id, kind)
-        # Do not copy source feature switches, runtime state, or send anything.
         for tid in unique_ids:
             target, target_err = classify_target(
-                source, tid, session_clone_id=session_clone_id
+                source, tid, session_clone_id=session_clone_id, kind=kind
             )
             if target_err:
                 results.append({
                     'target_id': tid if isinstance(tid, int) else None,
                     'title': '',
                     'added': 0,
+                    'updated': 0,
                     'skipped': 0,
                     'error': target_err,
                 })
                 continue
             try:
-                added, skipped = copy_snapshots_to_target(kind, target.id, snapshots)
+                added, updated = upsert_linked_copies(kind, source, target, snapshots)
                 db.session.commit()
                 results.append({
                     'target_id': target.id,
                     'title': target.title or '',
                     'added': added,
-                    'skipped': skipped,
+                    'updated': updated,
+                    'skipped': 0,
                     'error': None,
                 })
             except Exception:
@@ -4397,6 +4447,7 @@ def api_sync_config_to_groups():
                     'target_id': target.id,
                     'title': target.title or '',
                     'added': 0,
+                    'updated': 0,
                     'skipped': 0,
                     'error': '同步失败',
                 })

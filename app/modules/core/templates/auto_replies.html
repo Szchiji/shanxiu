@@ -424,7 +424,7 @@
 {% if is_channel %}
 <div class="card p-3 mb-3">
  <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="channel_auto_reply_open" {{ 'checked' if conf.get('auto_reply_open', True) }} onchange="saveChannelReplySwitch(this)"><label class="form-check-label" for="channel_auto_reply_open">启用本频道自动回复（总开关）</label></div>
- <small class="text-muted">总开关和规则均启用才回复；停用频道时不回复。默认开启，显示当前实际保存值。</small>
+ <small class="text-muted">总开关和规则均启用才回复；停用频道时不回复。默认开启，显示当前实际保存值。本频道总开关由本地控制，不会被其他群的同步改动；总开关关闭时，即使跟随规则是启用状态也不会回复。</small>
 </div>
 <script>
 async function saveChannelReplySwitch(el) {
@@ -444,7 +444,7 @@ async function saveChannelReplySwitch(el) {
     <li>仅支持<strong>精确匹配</strong>，区分大小写；多个关键词用英文逗号分隔。</li>
     <li>回复内容支持：文字、图片、视频、图片+视频；可附链接按钮。</li>
     <li>可设置回复后的自动删除时间；相册及其跟随消息一起删除（需要删除权限）。</li>
-    <li>支持导入/导出配置文件，方便批量管理。</li>
+    <li>支持导入/导出配置文件，也可同步到其他群并<strong>跟随源群的开启和停止</strong>；再次同步会更新已关联的规则，不会重复新建。不会开关目标群自己的功能总开关，目标群总开关关闭时跟随规则也不会生效。目标群原有规则不受影响。</li>
 </ul>
 {% endcall %}
 
@@ -504,18 +504,31 @@ async function saveChannelReplySwitch(el) {
                     </td>
                     <td><span class="remark-cell" title="{{ (item.remark or '-')|e }}">{{ item.remark or '-' }}</span></td>
                     <td>
+                        {% set link = (sync_links or {}).get(item.id) %}
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>
                         {% else %}
                         <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
+                        {% if link and link.role == 'target' %}
+                        <div class="small text-muted mt-1">跟随「{{ (link.source_title or '源群')|e }}」</div>
+                        {% elif link and link.role == 'source' %}
+                        <div class="small text-muted mt-1">已同步到 {{ link.target_count }} 个群，开启/停止会跟随</div>
+                        {% endif %}
                     </td>
                     <td>{{ item.updated_at.strftime('%m-%d %H:%M:%S') if item.updated_at else '-' }}</td>
                     <td class="text-end pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-end">
+                            {% set link = (sync_links or {}).get(item.id) %}
+                            {% if link and link.role == 'target' %}
+                            <button type="button" class="action-btn btn btn-sm btn-outline-secondary" disabled title="该规则跟随源群「{{ (link.source_title or '源群')|e }}」，请到源群修改开启或停止">
+                                <i class="fa-solid fa-link"></i>
+                            </button>
+                            {% else %}
                             <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                                 <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
                             </button>
+                            {% endif %}
                             <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
                                 <i class="fa-solid fa-pen"></i>
                             </button>

@@ -1,4 +1,4 @@
-"""One-time copy of auto-reply / scheduled-message config to other groups."""
+"""Copy auto-reply / scheduled-message config to other groups and follow enable/pause."""
 
 import json
 from datetime import datetime
@@ -6,12 +6,13 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import AutoReply, BotGroup, ScheduledMessage
+from app.models import AutoReply, BotGroup, ConfigSyncLink, ScheduledMessage
 from app.services.config_sync_service import (
     MAX_SYNC_TARGETS,
     auto_reply_fingerprint,
     scheduled_message_fingerprint,
 )
+from app.utils import get_beijing_now
 
 
 PAYLOAD = '<img src=x onerror="auditInjected()">'
@@ -83,6 +84,14 @@ def _conf(group):
     return json.loads(group.config or '{}')
 
 
+def _sync(client, source_id, kind, target_ids):
+    return client.post('/core/api/sync_config_to_groups', json={
+        'source_group_id': source_id,
+        'kind': kind,
+        'target_group_ids': target_ids,
+    })
+
+
 @pytest.fixture()
 def admin(client):
     return _login(client)
@@ -101,6 +110,7 @@ class TestTargetList:
         data = r.get_json()
         assert data['status'] == 'ok'
         assert data['source_count'] == 0
+        assert data['can_be_source'] is True
         ids = {t['id'] for t in data['targets']}
         titles = {t['title'] for t in data['targets']}
         assert keep.id in ids
@@ -141,7 +151,7 @@ class TestTargetList:
 
 @pytest.mark.usefixtures('db')
 class TestAutoReplySync:
-    def test_copies_all_fields_disabled_and_dedups(self, db, admin):
+    def test_copies_all_fields_follows_status_and_updates_links(self, db, admin):
         source = _group(db, title='源', config={'auto_reply_open': True})
         dest = _group(db, title='目标', config={'auto_reply_open': False})
         links = json.dumps([
@@ -167,21 +177,18 @@ class TestAutoReplySync:
         # Same keyword, different content — keyword is not a unique key.
         _reply(db, source.id, trigger_keyword='优惠,活动', content='另一份文案', is_active=False)
 
-        r = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id],
-        })
+        r = _sync(admin, source.id, 'auto_replies', [dest.id])
         assert r.status_code == 200
         result = r.get_json()['results'][0]
         assert result['error'] is None
         assert result['added'] == 2
-        assert result['skipped'] == 0
+        assert result['updated'] == 0
 
         rows = AutoReply.query.filter_by(group_id=dest.id).order_by(AutoReply.id.asc()).all()
         assert len(rows) == 2
-        assert all(row.is_active is False for row in rows)
-        first = rows[0]
+        first, second = rows
+        assert first.is_active is True
+        assert second.is_active is False
         assert first.trigger_keyword == '优惠,活动'
         assert first.media_type == 'media'
         assert first.get_media_url_with_types() == [
@@ -199,37 +206,33 @@ class TestAutoReplySync:
         assert _conf(dest)['auto_reply_open'] is False
         assert _conf(source)['auto_reply_open'] is True
         assert AutoReply.query.filter_by(group_id=source.id, is_active=True).count() == 1
+        assert ConfigSyncLink.query.filter_by(
+            kind='auto_replies', source_group_id=source.id, target_group_id=dest.id
+        ).count() == 2
 
-        # Repeat sync is idempotent.
-        r2 = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id],
-        }).get_json()
+        # Repeat sync updates already-linked rows instead of inserting duplicates.
+        r2 = _sync(admin, source.id, 'auto_replies', [dest.id]).get_json()
         assert r2['results'][0]['added'] == 0
-        assert r2['results'][0]['skipped'] == 2
+        assert r2['results'][0]['updated'] == 2
         assert AutoReply.query.filter_by(group_id=dest.id).count() == 2
 
-    def test_native_identical_config_is_skipped_without_keyword_uniqueness(self, db, admin):
-        source = _group(db, title='源')
-        dest = _group(db, title='目标')
+    def test_native_identical_config_is_not_claimed(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': True})
         _reply(db, source.id, trigger_keyword='同样词', content='源文案')
         native = _reply(db, dest.id, trigger_keyword='同样词', content='源文案', is_active=True)
         # Same keyword already exists on dest with different content — still copy.
         _reply(db, source.id, trigger_keyword='同样词', content='不同文案')
 
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id],
-        }).get_json()
-        assert data['results'][0]['added'] == 1
-        assert data['results'][0]['skipped'] == 1
+        data = _sync(admin, source.id, 'auto_replies', [dest.id]).get_json()
+        assert data['results'][0]['added'] == 2
+        assert data['results'][0]['updated'] == 0
         rows = AutoReply.query.filter_by(group_id=dest.id).all()
-        assert len(rows) == 2
+        assert len(rows) == 3
         db.session.refresh(native)
         assert native.is_active is True
         assert native.content == '源文案'
+        assert ConfigSyncLink.query.filter_by(kind='auto_replies', target_item_id=native.id).count() == 0
         assert auto_reply_fingerprint(native) == auto_reply_fingerprint(
             AutoReply.query.filter_by(group_id=source.id, content='源文案').one()
         )
@@ -265,14 +268,10 @@ class TestScheduledSync:
             next_send_at=datetime(2026, 11, 20, 15, 0, 0),
             fail_count=3,
         )
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'scheduled_messages',
-            'target_group_ids': [dest.id],
-        }).get_json()
+        data = _sync(admin, source.id, 'scheduled_messages', [dest.id]).get_json()
         assert data['results'][0]['added'] == 1
         copied = ScheduledMessage.query.filter_by(group_id=dest.id).one()
-        assert copied.is_active is False
+        assert copied.is_active is True
         assert copied.media_type == 'image'
         assert copied.get_media_url_list() == ['https://cdn.example/a.jpg', 'https://cdn.example/b.jpg']
         assert copied.content == '<i>相册说明</i>'
@@ -289,7 +288,6 @@ class TestScheduledSync:
         assert copied.last_message_id is None
         assert copied.last_message_ids is None
         assert copied.last_sent_at is None
-        assert copied.next_send_at is None
         assert copied.fail_count == 0
         assert copied.id != src.id
         db.session.refresh(dest)
@@ -300,27 +298,23 @@ class TestScheduledSync:
         assert src.last_message_id == 555
         assert src.fail_count == 3
 
-        # Disabled copy must not fire even if start_time is already past.
+        # Enabling a recurring copy aligns the next slot and must not backfill immediately.
         from app.modules.core import routes
-        due = routes.scheduled_should_send(
-            copied.last_sent_at, copied.next_send_at, copied.repeat_interval, BASE_NOW
-        )
-        # The helper itself may say due, but the scheduler skips inactive rows.
-        assert copied.is_active is False
-        assert ScheduledMessage.query.filter_by(group_id=dest.id, is_active=True).count() == 0
+        now = get_beijing_now()
+        assert copied.next_send_at is not None
+        assert routes.scheduled_should_send(
+            copied.last_sent_at, copied.next_send_at, copied.repeat_interval, now
+        ) is False
 
-        again = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'scheduled_messages',
-            'target_group_ids': [dest.id],
-        }).get_json()
+        again = _sync(admin, source.id, 'scheduled_messages', [dest.id]).get_json()
         assert again['results'][0]['added'] == 0
-        assert again['results'][0]['skipped'] == 1
+        assert again['results'][0]['updated'] == 1
+        db.session.refresh(copied)
         assert scheduled_message_fingerprint(copied) == scheduled_message_fingerprint(src)
 
     def test_sync_does_not_send_messages(self, db, admin, monkeypatch):
-        source = _group(db, title='源')
-        dest = _group(db, title='目标')
+        source = _group(db, title='源', config={'scheduled_msg_open': True})
+        dest = _group(db, title='目标', config={'scheduled_msg_open': True})
         _sched(db, source.id, start_time=BASE_NOW, is_active=True)
         sent = {'called': False}
 
@@ -331,14 +325,207 @@ class TestScheduledSync:
         monkeypatch.setattr(admin.application, 'bot', None, raising=False)
         from app.modules.core import routes
         monkeypatch.setattr(routes, 'send_multi_media', _boom, raising=False)
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'scheduled_messages',
-            'target_group_ids': [dest.id],
-        }).get_json()
+        data = _sync(admin, source.id, 'scheduled_messages', [dest.id]).get_json()
         assert data['status'] == 'ok'
         assert sent['called'] is False
-        assert ScheduledMessage.query.filter_by(group_id=dest.id).one().is_active is False
+        copied = ScheduledMessage.query.filter_by(group_id=dest.id).one()
+        assert copied.is_active is True
+        assert routes.scheduled_should_send(
+            copied.last_sent_at, copied.next_send_at, copied.repeat_interval, get_beijing_now()
+        ) is False
+
+
+@pytest.mark.usefixtures('db')
+class TestFollowStatus:
+    def test_follows_source_enable_and_pause(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': True})
+        src = _reply(db, source.id, content='跟随我', is_active=True)
+        native = _reply(db, dest.id, content='本地规则', is_active=True)
+        assert _sync(admin, source.id, 'auto_replies', [dest.id]).status_code == 200
+        linked = AutoReply.query.filter_by(group_id=dest.id, content='跟随我').one()
+        assert linked.is_active is True
+        assert native.is_active is True
+
+        r = admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
+        assert r.get_json()['status'] == 'ok'
+        db.session.refresh(src)
+        db.session.refresh(linked)
+        db.session.refresh(native)
+        assert src.is_active is False
+        assert linked.is_active is False
+        assert native.is_active is True
+
+        refused = admin.post('/core/api/toggle_auto_reply', json={'id': linked.id})
+        assert refused.get_json()['status'] == 'error'
+        assert '源群' in refused.get_json()['msg']
+        db.session.refresh(linked)
+        assert linked.is_active is False
+
+        admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
+        db.session.refresh(linked)
+        assert linked.is_active is True
+
+    def test_source_master_switch_only_affects_linked_rules(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True, 'scheduled_msg_open': False})
+        dest = _group(db, title='目标', config={'auto_reply_open': True, 'scheduled_msg_open': False})
+        _reply(db, source.id, is_active=True)
+        native = _reply(db, dest.id, content='本地', is_active=True)
+        _sync(admin, source.id, 'auto_replies', [dest.id])
+        linked = AutoReply.query.filter(
+            AutoReply.group_id == dest.id, AutoReply.id != native.id
+        ).one()
+        assert linked.is_active is True
+
+        r = admin.post('/core/api/save_settings', json={
+            'group_id': source.id,
+            'config': {'auto_reply_open': False, 'scheduled_msg_open': False},
+        })
+        assert r.get_json()['status'] == 'ok'
+        db.session.refresh(linked)
+        db.session.refresh(native)
+        db.session.refresh(dest)
+        db.session.refresh(source)
+        assert linked.is_active is False
+        assert native.is_active is True
+        assert _conf(dest)['auto_reply_open'] is True
+        assert _conf(source)['auto_reply_open'] is False
+
+        # Turning the source switch back on resumes only the linked rule.
+        admin.post('/core/api/save_settings', json={
+            'group_id': source.id,
+            'config': {'auto_reply_open': True, 'scheduled_msg_open': False},
+        })
+        db.session.refresh(linked)
+        assert linked.is_active is True
+
+    def test_dest_master_stays_local(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': False})
+        src = _reply(db, source.id, is_active=True)
+        _sync(admin, source.id, 'auto_replies', [dest.id])
+        linked = AutoReply.query.filter_by(group_id=dest.id).one()
+        assert linked.is_active is True
+        db.session.refresh(dest)
+        assert _conf(dest)['auto_reply_open'] is False
+
+        admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
+        admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
+        db.session.refresh(dest)
+        db.session.refresh(linked)
+        assert linked.is_active is True
+        assert _conf(dest)['auto_reply_open'] is False
+
+        # Closing the dest switch locally is not overwritten by a later source pause/enable.
+        admin.post('/core/api/save_settings', json={
+            'group_id': dest.id,
+            'config': {'auto_reply_open': False, 'scheduled_msg_open': False},
+        })
+        admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
+        db.session.refresh(dest)
+        db.session.refresh(linked)
+        assert _conf(dest)['auto_reply_open'] is False
+        assert linked.is_active is False
+
+    def test_scheduled_toggle_follows_without_backfill(self, db, admin):
+        from app.modules.core import routes
+        source = _group(db, title='源', config={'scheduled_msg_open': True})
+        dest = _group(db, title='目标', config={'scheduled_msg_open': True})
+        src = _sched(db, source.id, start_time=BASE_NOW, repeat_interval=180, is_active=True)
+        assert _sync(admin, source.id, 'scheduled_messages', [dest.id]).status_code == 200
+        copied = ScheduledMessage.query.filter_by(group_id=dest.id).one()
+        assert copied.is_active is True
+
+        admin.post('/core/api/toggle_scheduled_message', json={'id': src.id})
+        db.session.refresh(copied)
+        assert copied.is_active is False
+
+        refused = admin.post('/core/api/toggle_scheduled_message', json={'id': copied.id})
+        assert refused.get_json()['status'] == 'error'
+        db.session.refresh(copied)
+        assert copied.is_active is False
+
+        admin.post('/core/api/toggle_scheduled_message', json={'id': src.id})
+        db.session.expire_all()
+        copied = ScheduledMessage.query.filter_by(group_id=dest.id).one()
+        assert copied.is_active is True
+        assert copied.next_send_at is not None
+        assert routes.scheduled_should_send(
+            copied.last_sent_at, copied.next_send_at, copied.repeat_interval, get_beijing_now()
+        ) is False
+
+        # Batch enable/pause on the dest skips followed rows.
+        paused = admin.post('/core/api/batch_scheduled_messages', json={
+            'ids': [copied.id],
+            'action': 'pause',
+        }).get_json()
+        assert paused['status'] == 'ok'
+        assert paused['skipped_followed'] == 1
+        assert paused['count'] == 0
+        db.session.refresh(copied)
+        assert copied.is_active is True
+
+    def test_refuse_follower_as_source_and_source_as_target(self, db, admin):
+        source = _group(db, title='甲', config={'auto_reply_open': True})
+        follower = _group(db, title='乙', config={'auto_reply_open': True})
+        other = _group(db, title='丙', config={'auto_reply_open': True})
+        _reply(db, source.id, content='源规则')
+        _reply(db, follower.id, content='乙本地')
+        _reply(db, other.id, content='丙规则')
+        assert _sync(admin, source.id, 'auto_replies', [follower.id]).status_code == 200
+
+        blocked = _sync(admin, follower.id, 'auto_replies', [other.id])
+        assert blocked.status_code == 400
+        assert '不能再作为源' in blocked.get_json()['msg']
+        assert AutoReply.query.filter_by(group_id=other.id, content='乙本地').count() == 0
+
+        listed = admin.get(f'/core/api/config_sync_targets/{follower.id}?kind=auto_replies').get_json()
+        assert listed['can_be_source'] is False
+        assert '不能再作为源' in listed['source_block_reason']
+
+        # A group that already has outgoing links cannot receive (no chains / cycles).
+        receive = _sync(admin, other.id, 'auto_replies', [source.id]).get_json()
+        assert receive['results'][0]['error'] == '目标群已作为源同步到其他群，不能再接收跟随'
+        assert AutoReply.query.filter_by(group_id=source.id).count() == 1
+
+        targets = admin.get(f'/core/api/config_sync_targets/{other.id}?kind=auto_replies').get_json()
+        by_id = {t['id']: t for t in targets['targets']}
+        assert by_id[source.id]['can_receive'] is False
+        assert '不能再接收' in by_id[source.id]['block_reason']
+        assert by_id[follower.id]['can_receive'] is True
+
+    def test_resync_updates_content_without_duplicate(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': True})
+        src = _reply(db, source.id, content='旧文案', is_active=True)
+        _sync(admin, source.id, 'auto_replies', [dest.id])
+        src.content = '新文案'
+        src.is_active = False
+        db.session.commit()
+        data = _sync(admin, source.id, 'auto_replies', [dest.id]).get_json()
+        assert data['results'][0]['added'] == 0
+        assert data['results'][0]['updated'] == 1
+        rows = AutoReply.query.filter_by(group_id=dest.id).all()
+        assert len(rows) == 1
+        assert rows[0].content == '新文案'
+        assert rows[0].is_active is False
+
+    def test_delete_detaches_without_cascade_deleting_the_other_row(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': True})
+        src = _reply(db, source.id, content='可删', is_active=True)
+        _sync(admin, source.id, 'auto_replies', [dest.id])
+        linked = AutoReply.query.filter_by(group_id=dest.id).one()
+        admin.post('/core/api/delete_auto_reply', json={'id': src.id})
+        assert AutoReply.query.get(src.id) is None
+        leftover = AutoReply.query.get(linked.id)
+        assert leftover is not None
+        assert ConfigSyncLink.query.filter(
+            (ConfigSyncLink.source_item_id == src.id) | (ConfigSyncLink.target_item_id == linked.id)
+        ).count() == 0
+        # After detach the leftover row can be toggled locally.
+        r = admin.post('/core/api/toggle_auto_reply', json={'id': leftover.id})
+        assert r.get_json()['status'] == 'ok'
 
 
 @pytest.mark.usefixtures('db')
@@ -348,11 +535,7 @@ class TestPermissionsAndLimits:
         dest = _group(db, title='主号目标')
         other = _group(db, title='秘密克隆群', clone_id=8)
         _reply(db, source.id, content='不可泄露的文案')
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id, other.id, 99999999],
-        }).get_json()
+        data = _sync(admin, source.id, 'auto_replies', [dest.id, other.id, 99999999]).get_json()
         assert data['status'] == 'ok'
         by_id = {row['target_id']: row for row in data['results']}
         assert by_id[dest.id]['added'] == 1
@@ -370,11 +553,7 @@ class TestPermissionsAndLimits:
         dest = _group(db, title='主号目标')
         _reply(db, source.id, content='主号规则')
         _login(client, clone_id=3)
-        r = client.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id],
-        })
+        r = _sync(client, source.id, 'auto_replies', [dest.id])
         body = r.get_data(as_text=True)
         assert r.status_code in (200, 403)
         assert '主号规则' not in body
@@ -384,11 +563,7 @@ class TestPermissionsAndLimits:
         source = _group(db, title='源')
         channel = _group(db, title='频道', type='channel')
         _reply(db, source.id)
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [source.id, channel.id],
-        }).get_json()
+        data = _sync(admin, source.id, 'auto_replies', [source.id, channel.id]).get_json()
         errors = {row['error'] for row in data['results']}
         assert '不能同步到源群自己' in errors
         assert '只能同步到已添加的群组' in errors
@@ -399,11 +574,7 @@ class TestPermissionsAndLimits:
         a = _group(db, title='甲')
         b = _group(db, title='乙')
         _sched(db, source.id, content='一条')
-        data = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'scheduled_messages',
-            'target_group_ids': [a.id, b.id, a.id],
-        }).get_json()
+        data = _sync(admin, source.id, 'scheduled_messages', [a.id, b.id, a.id]).get_json()
         assert [row['added'] for row in data['results']] == [1, 1]
         assert ScheduledMessage.query.filter_by(group_id=a.id).count() == 1
         assert ScheduledMessage.query.filter_by(group_id=b.id).count() == 1
@@ -411,17 +582,9 @@ class TestPermissionsAndLimits:
     def test_empty_and_too_many_targets(self, db, admin):
         source = _group(db)
         _reply(db, source.id)
-        empty = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [],
-        })
+        empty = _sync(admin, source.id, 'auto_replies', [])
         assert empty.status_code == 400
-        too_many = admin.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': list(range(1, MAX_SYNC_TARGETS + 2)),
-        })
+        too_many = _sync(admin, source.id, 'auto_replies', list(range(1, MAX_SYNC_TARGETS + 2)))
         assert too_many.status_code == 400
         assert '最多' in too_many.get_json()['msg']
 
@@ -433,11 +596,7 @@ class TestPermissionsAndLimits:
         lock = svc.try_acquire_sync_lock(source.id, 'auto_replies')
         assert lock is not None
         try:
-            r = admin.post('/core/api/sync_config_to_groups', json={
-                'source_group_id': source.id,
-                'kind': 'auto_replies',
-                'target_group_ids': [dest.id],
-            })
+            r = _sync(admin, source.id, 'auto_replies', [dest.id])
             assert r.status_code == 409
             assert '正在进行' in r.get_json()['msg']
             assert AutoReply.query.filter_by(group_id=dest.id).count() == 0
@@ -448,11 +607,7 @@ class TestPermissionsAndLimits:
         source = _group(db)
         dest = _group(db)
         _reply(db, source.id)
-        r = client.post('/core/api/sync_config_to_groups', json={
-            'source_group_id': source.id,
-            'kind': 'auto_replies',
-            'target_group_ids': [dest.id],
-        })
+        r = _sync(client, source.id, 'auto_replies', [dest.id])
         assert r.status_code == 403
         assert AutoReply.query.filter_by(group_id=dest.id).count() == 0
 
@@ -474,10 +629,27 @@ class TestFrontendPages:
             body = r.get_data(as_text=True)
             assert '同步到其他群' in body
             assert f'同步本群全部{label}' in body or 'SYNC_KIND_LABEL' in body
-            assert '同步后默认停用，请到目标群确认后启用' in body
+            assert '跟随源规则当前的开启或停止' in body
+            assert '再次同步会更新已关联' in body
+            assert '同步后默认停用' not in body
             assert 'showConfirm' in body
             assert 'window.confirm' not in body.split('confirmSyncToGroups')[1][:800]
-            # Search/pagination count is not hardcoded; JS fills it from the API.
             assert f'（共 {1} 条）' not in body
-            # Group title is escaped; the raw payload attribute must not appear unescaped.
             assert 'onerror="auditInjected()"' not in body
+
+    def test_dest_page_marks_follow_and_disables_toggle(self, db, admin):
+        source = _group(db, title='源群甲', config={'auto_reply_open': True})
+        dest = _group(db, title='目标乙', config={'auto_reply_open': True})
+        _reply(db, source.id, content='跟随文案', is_active=True)
+        _sync(admin, source.id, 'auto_replies', [dest.id])
+
+        dest_page = admin.get(f'/core/group/{dest.id}/auto_replies').get_data(as_text=True)
+        assert '跟随「源群甲」' in dest_page
+        assert '请到源群修改开启或停止' in dest_page
+        assert 'fa-link' in dest_page
+
+        source_page = admin.get(f'/core/group/{source.id}/auto_replies').get_data(as_text=True)
+        assert '已同步到 1 个群' in source_page
+
+        settings = admin.get(f'/core/group/{dest.id}/settings').get_data(as_text=True)
+        assert '本群自己的功能总开关' in settings

@@ -488,6 +488,7 @@
     <li><strong>重复发送：</strong>设置间隔（分钟）可以让消息定期循环发送，0 表示只发一次。</li>
     <li><strong>时间控制：</strong>可设置开始时间和停止时间，控制消息发送的时间范围。</li>
     <li><strong>自动删除：</strong>启用「删除上一条」可在发新消息时自动删除前一条，保持{{ '频道' if group.type == 'channel' else '群内' }}整洁。</li>
+    <li>可将本群全部定时消息同步到其他群，并<strong>跟随源群的开启和停止</strong>；再次同步会更新已关联的规则，不会重复新建。不会打开或关闭目标群自己的功能总开关，目标群总开关关闭时跟随规则也不会发送。目标群原有定时消息不受影响。</li>
 </ul>
 {% endcall %}
 
@@ -622,17 +623,29 @@
                     </td>
                     <td><span class="remark-cell" title="{{ (item.remark or '-')|e }}">{{ (item.remark or '-')|e }}</span></td>
                     <td>
+                        {% set link = (sync_links or {}).get(item.id) %}
                         {% if item.is_active %}
                         <span class="badge-status badge bg-success">启用</span>
                         {% else %}
                         <span class="badge-status badge bg-secondary">暂停</span>
                         {% endif %}
+                        {% if link and link.role == 'target' %}
+                        <div class="small text-muted mt-1">跟随「{{ (link.source_title or '源群')|e }}」</div>
+                        {% elif link and link.role == 'source' %}
+                        <div class="small text-muted mt-1">已同步到 {{ link.target_count }} 个群，开启/停止会跟随</div>
+                        {% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center">
+                            {% if link and link.role == 'target' %}
+                            <button type="button" class="action-btn btn btn-sm btn-outline-secondary" disabled title="该规则跟随源群「{{ (link.source_title or '源群')|e }}」，请到源群修改开启或停止">
+                                <i class="fa-solid fa-link"></i>
+                            </button>
+                            {% else %}
                             <button class="action-btn btn btn-sm btn-{{ 'warning' if item.is_active else 'success' }}" onclick="toggleStatus({{ item.id }}, {{ 'true' if item.is_active else 'false' }})" title="{{ '暂停' if item.is_active else '启用' }}">
                                 <i class="fa-solid fa-{{ 'pause' if item.is_active else 'play' }}"></i>
                             </button>
+                            {% endif %}
                             <button class="action-btn btn btn-sm btn-primary" onclick="openEditModal({{ item.id }})" title="编辑">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
@@ -1714,6 +1727,10 @@ async function importData(xlsx_content) {
             });
             const result = await res.json();
             if (result.status === 'ok') {
+                const skipped = result.skipped_followed || 0;
+                if (skipped) {
+                    alert('已处理 ' + (result.count || 0) + ' 条，另有 ' + skipped + ' 条跟随源群的规则未改动，请到源群开启或停止。');
+                }
                 window.location.href = window.location.href;
             } else {
                 alert(result.msg || '操作失败');

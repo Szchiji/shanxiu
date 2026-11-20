@@ -208,6 +208,7 @@ def run_migrations():
 
     with app.app_context():
         # Ensure all tables exist first
+        # ConfigSyncLink (config_sync_links) is created via db.create_all().
         db.create_all()
         print("✅ 数据库表初始化完成", flush=True)
 

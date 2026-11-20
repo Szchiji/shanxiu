@@ -19,44 +19,51 @@ REASON_MESSAGE = "发送消息"
 REASON_SHARE = "转发消息"
 
 
-def increment_lottery_message_counts(group_id: int, user_id: int, now: Optional[datetime] = None) -> int:
-    """Increment message_count for active/pending speech lotteries. Return updated rows."""
+def increment_lottery_message_counts(group_id: int, user_id: int, now: Optional[datetime] = None,
+                                     *, return_qualifications=False):
+    """Same window/counter for text and media, including random lotteries.
+
+    The guarded parent UPDATE serializes each increment against the draw claim.
+    No await happens inside this transaction. Counters freeze once drawing starts.
+    """
     from app import db
-    from app.models import GroupLottery, LotteryMessageCount
+    from app.models import BotGroup, GroupLottery, LotteryMessageCount
     from app.plugins import is_plugin_enabled
     from app.utils import get_beijing_now
 
-    if not is_plugin_enabled(group_id, 'lottery'):
-        return 0
-
+    group = BotGroup.query.filter_by(id=group_id).with_for_update().first()
+    if not group or not group.is_active or not is_plugin_enabled(group_id, 'lottery'):
+        return [] if return_qualifications else 0
     stamp = now or get_beijing_now()
-    lotteries = GroupLottery.query.filter_by(group_id=group_id).filter(
+    ids = [lid for (lid,) in db.session.query(GroupLottery.id).filter(
+        GroupLottery.group_id == group_id,
+        GroupLottery.lottery_type.in_(['message_count', 'message_rank', 'random']),
         GroupLottery.status.in_(['pending', 'active']),
-        GroupLottery.lottery_type.in_(['message_count', 'message_rank']),
-    ).limit(10).all()
-
-    updated = 0
-    for lottery in lotteries:
-        if lottery.start_time and lottery.end_time:
-            if not (lottery.start_time <= stamp <= lottery.end_time):
-                continue
-        row = LotteryMessageCount.query.filter_by(
-            lottery_id=lottery.id, user_id=user_id
-        ).first()
-        if not row:
-            row = LotteryMessageCount(
-                lottery_id=lottery.id,
-                group_id=group_id,
-                user_id=user_id,
-                message_count=0,
-            )
+        GroupLottery.start_time <= stamp, GroupLottery.end_time >= stamp,
+    ).order_by(GroupLottery.id).all()]
+    updated, qualifications = 0, []
+    for lid in ids:
+        # Do not replace this write with an unlocked SELECT: this is also the
+        # serialization point for a concurrent draw and first counter insertion.
+        locked = GroupLottery.query.filter(
+            GroupLottery.id == lid, GroupLottery.status.in_(['pending', 'active']),
+            GroupLottery.start_time <= stamp, GroupLottery.end_time >= stamp,
+        ).update({'updated_at': GroupLottery.updated_at}, synchronize_session=False)
+        if not locked:
+            continue
+        lottery = db.session.get(GroupLottery, lid, populate_existing=True)
+        row = LotteryMessageCount.query.filter_by(lottery_id=lid, user_id=user_id).first()
+        if row is None:
+            row = LotteryMessageCount(lottery_id=lid, group_id=group_id,
+                                      user_id=user_id, message_count=0)
             db.session.add(row)
         row.message_count = (row.message_count or 0) + 1
         row.updated_at = stamp
+        if lottery.lottery_type == 'message_count' and row.message_count == lottery.min_messages:
+            qualifications.append(lid)
         updated += 1
-    if updated:
-        db.session.commit()
-    return updated
+    db.session.commit()
+    return qualifications if return_qualifications else updated
 
 
 def award_speech_points(

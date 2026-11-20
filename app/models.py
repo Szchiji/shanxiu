@@ -553,6 +553,7 @@ class GroupLottery(db.Model):
     min_messages = db.Column(db.Integer, default=10)  # 最少发言数
     # 发言排行抽奖
     top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖
+    points_cost = db.Column(db.Integer, default=10, nullable=False)  # points lottery entry fee
     # 通用设置
     start_time = db.Column(db.DateTime, nullable=True)
     end_time = db.Column(db.DateTime, nullable=True)
@@ -560,11 +561,47 @@ class GroupLottery(db.Model):
     pool_source = db.Column(db.String(20), default='certified')  # certified=认证用户, all_members=全部群成员
     draw_error = db.Column(db.String(255), nullable=True)  # Safe live-roster failure shown to admins
     winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
+    draw_token = db.Column(db.String(64), nullable=True)
+    draw_lease_until = db.Column(db.DateTime, nullable=True)
+    draw_candidates = db.Column(db.Text, nullable=True)  # frozen [(uid, count)] at claim
+    draw_finished_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(20), default='pending')  # pending, active, ended
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     group = db.relationship('BotGroup', backref='group_lottery', lazy=True)
+
+
+class LotteryEntry(db.Model):
+    """A once-only paid entry; never delete its economic audit history."""
+    __tablename__ = 'lottery_entry'
+    id = db.Column(db.Integer, primary_key=True)
+    lottery_id = db.Column(db.Integer, db.ForeignKey('group_lottery.id'), nullable=False, index=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    user_id = db.Column(db.BigInteger, nullable=False)
+    amount = db.Column(db.Integer, nullable=False)
+    state = db.Column(db.String(20), default='paid', nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    refunded_at = db.Column(db.DateTime, nullable=True)
+    __table_args__ = (db.UniqueConstraint('lottery_id', 'user_id', name='_lottery_entry_user_uc'),)
+
+
+class LotteryDelivery(db.Model):
+    """Durable per-target/chunk progress. Telegram has no idempotency key."""
+    __tablename__ = 'lottery_delivery'
+    id = db.Column(db.Integer, primary_key=True)
+    lottery_id = db.Column(db.Integer, db.ForeignKey('group_lottery.id'), nullable=False, index=True)
+    target_chat_id = db.Column(db.String(50), nullable=False)
+    parts = db.Column(db.Text, nullable=False)
+    next_part = db.Column(db.Integer, default=0, nullable=False)
+    message_ids = db.Column(db.Text, default='[]', nullable=False)
+    state = db.Column(db.String(20), default='pending', nullable=False, index=True)
+    claim_token = db.Column(db.String(64), nullable=True)
+    lease_until = db.Column(db.DateTime, nullable=True)
+    retry_at = db.Column(db.DateTime, nullable=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    last_error = db.Column(db.String(255), nullable=True)
+    __table_args__ = (db.UniqueConstraint('lottery_id', 'target_chat_id', name='_lottery_delivery_target_uc'),)
 
 
 class MemberLevel(db.Model):

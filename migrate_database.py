@@ -204,6 +204,12 @@ def run_migrations():
         # group_lottery: random draw pool (certified users vs live Telegram members)
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_error VARCHAR(255)",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS pool_source VARCHAR(20) DEFAULT 'certified'",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS points_cost INTEGER NOT NULL DEFAULT 10",
+        # Lottery claim leases; NULL leaves historical ended results untouched.
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_token VARCHAR(64)",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_lease_until TIMESTAMP",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_candidates TEXT",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_finished_at TIMESTAMP",
     ]
 
     with app.app_context():
@@ -270,6 +276,8 @@ def run_migrations():
         ensure_user_report_schema(db)
         ensure_report_web_schema(db)
         ensure_points_exchange_record_schema(db)
+        from app.services.lottery_schema import ensure_lottery_schema
+        ensure_lottery_schema(db)
 
 
 if __name__ == '__main__':

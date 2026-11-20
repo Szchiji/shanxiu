@@ -27,6 +27,9 @@ def init_database(app):
     with app.app_context():
         try:
             db.create_all()
+            from app.services.lottery_schema import ensure_lottery_schema
+            ensure_lottery_schema(db)
+            print('✅ 抽奖报名、开奖与公告恢复结构就绪', flush=True)
             print("✅ 数据库表初始化完成", flush=True)
         except Exception as e:
             print(f"❌ 数据库初始化失败: {e}", flush=True)

@@ -1,3 +1,44 @@
+<style>
+    /* Dedicated to the “同步到其他群” actions only; do not reuse on other buttons. */
+    .btn-sync-config-to-groups {
+        --sync-btn-bg: #6f42c1;
+        --sync-btn-hover: #5a32a3;
+        --sync-btn-active: #4c2b8a;
+        color: #fff;
+        background-color: var(--sync-btn-bg);
+        border-color: var(--sync-btn-bg);
+    }
+    .btn-sync-config-to-groups:hover {
+        color: #fff;
+        background-color: var(--sync-btn-hover);
+        border-color: var(--sync-btn-hover);
+    }
+    .btn-sync-config-to-groups:focus,
+    .btn-sync-config-to-groups:focus-visible {
+        color: #fff;
+        background-color: var(--sync-btn-hover);
+        border-color: var(--sync-btn-hover);
+        box-shadow: 0 0 0 0.2rem rgba(111, 66, 193, 0.45);
+    }
+    .btn-sync-config-to-groups:active {
+        color: #fff;
+        background-color: var(--sync-btn-active);
+        border-color: var(--sync-btn-active);
+    }
+    .btn-sync-config-to-groups:disabled,
+    .btn-sync-config-to-groups.disabled {
+        color: #fff;
+        background-color: var(--sync-btn-bg);
+        border-color: var(--sync-btn-bg);
+        opacity: 0.55;
+    }
+    [data-bs-theme="dark"] .btn-sync-config-to-groups {
+        --sync-btn-bg: #7b4fd0;
+        --sync-btn-hover: #6f42c1;
+        --sync-btn-active: #5a32a3;
+        color: #fff;
+    }
+</style>
 {# Config copy + follow-status modal. Count always comes from the API (all source
    rows of this kind), never from the current page's search or pagination. #}
 <div class="modal fade" id="syncConfigToGroupsModal" tabindex="-1" aria-labelledby="syncConfigToGroupsTitle" aria-hidden="true">
@@ -28,7 +69,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" id="syncConfigConfirmBtn" onclick="confirmSyncToGroups()">
+                <button type="button" class="btn btn-sync-config-to-groups" id="syncConfigConfirmBtn" onclick="confirmSyncToGroups()">
                     开始同步
                 </button>
             </div>

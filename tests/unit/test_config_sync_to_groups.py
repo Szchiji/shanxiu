@@ -636,6 +636,23 @@ class TestFrontendPages:
             assert 'window.confirm' not in body.split('confirmSyncToGroups')[1][:800]
             assert f'（共 {1} 条）' not in body
             assert 'onerror="auditInjected()"' not in body
+            assert 'btn-sync-config-to-groups' in body
+            assert 'id="syncConfigToGroupsBtn"' in body
+            assert 'id="syncConfigConfirmBtn"' in body
+            # Dedicated class on the toolbar and modal confirm buttons only.
+            assert body.count('class="btn btn-sm btn-sync-config-to-groups"') == 1
+            assert 'id="syncConfigConfirmBtn"' in body
+            assert 'btn-sync-config-to-groups" id="syncConfigConfirmBtn"' in body
+            assert '#6f42c1' in body
+            assert '.btn-sync-config-to-groups:hover' in body
+            assert '.btn-sync-config-to-groups:focus' in body
+            assert '.btn-sync-config-to-groups:disabled' in body
+            assert '[data-bs-theme="dark"] .btn-sync-config-to-groups' in body
+            # Export / import keep their original colors.
+            assert 'btn btn-success btn-sm' in body
+            assert 'btn btn-info btn-sm' in body
+            assert 'btn-outline-primary btn-sm" id="syncConfigToGroupsBtn"' not in body
+            assert 'btn-primary" id="syncConfigConfirmBtn"' not in body
 
     def test_dest_page_marks_follow_and_disables_toggle(self, db, admin):
         source = _group(db, title='源群甲', config={'auto_reply_open': True})

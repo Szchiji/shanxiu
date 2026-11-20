@@ -549,10 +549,11 @@ class GroupLottery(db.Model):
     lottery_name = db.Column(db.String(255), nullable=False)
     lottery_type = db.Column(db.String(50), nullable=False)  # message_count, message_rank
     prize_description = db.Column(db.Text, nullable=True)
+    prizes = db.Column(db.Text, nullable=True)  # JSON [{name, winner_count}, ...]
     # 发言数量抽奖
     min_messages = db.Column(db.Integer, default=10)  # 最少发言数
     # 发言排行抽奖
-    top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖
+    top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖，等于奖品人数合计
     points_cost = db.Column(db.Integer, default=10, nullable=False)  # points lottery entry fee
     # 通用设置
     start_time = db.Column(db.DateTime, nullable=True)
@@ -561,6 +562,7 @@ class GroupLottery(db.Model):
     pool_source = db.Column(db.String(20), default='certified')  # certified=认证用户, all_members=全部群成员
     draw_error = db.Column(db.String(255), nullable=True)  # Safe live-roster failure shown to admins
     winner_ids = db.Column(db.Text, default='[]')  # JSON array of winner user IDs
+    winner_awards = db.Column(db.Text, nullable=True)  # JSON [{user_id, prize_name, prize_index}]
     draw_token = db.Column(db.String(64), nullable=True)
     draw_lease_until = db.Column(db.DateTime, nullable=True)
     draw_candidates = db.Column(db.Text, nullable=True)  # frozen [(uid, count)] at claim

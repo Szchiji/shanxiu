@@ -149,6 +149,8 @@ class TestExportImport:
         lot = GroupLottery.query.filter_by(group_id=dest.id, lottery_name='周末抽奖').first()
         assert lot.lottery_type == 'random'
         assert lot.pool_source == 'speakers'  # legacy selection removed; use period speakers
+        assert lot.top_n_winners == 2
+        assert json.loads(lot.prizes) == [{'name': '奖品', 'winner_count': 2}]
         assert GroupBottomButton.query.filter_by(group_id=dest.id, button_text='菜单').count() == 1
         assert SyncGroupMessages.query.filter_by(source_group_id=dest.id, target_group_id='-10022').first().enabled is True
         assert ChannelForwardRule.query.filter_by(group_id=dest.id, rule_name='转发A').first().target_chat_id == '-1003'

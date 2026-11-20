@@ -49,8 +49,9 @@ def env(tmp_path, monkeypatch):
     def state(lid):
         with app.app_context():
             l=db.session.get(GroupLottery,lid)
-            return NS(status=l.status,winners=json.loads(l.winner_ids or '[]'),snapshot=l.draw_candidates,
-                      error=l.draw_error,token=l.draw_token,lease=l.draw_lease_until)
+            return NS(status=l.status,winners=json.loads(l.winner_ids or '[]'),
+                      awards=json.loads(l.winner_awards) if l.winner_awards else None,
+                      snapshot=l.draw_candidates,error=l.draw_error,token=l.draw_token,lease=l.draw_lease_until)
     e=NS(app=app, gid=gid, bot=bot, call=call, add=add, state=state, routes=routes, mp=monkeypatch)
     yield e
     with app.app_context(): db.session.remove(); db.drop_all()
@@ -597,3 +598,99 @@ async def test_group_delete_cannot_erase_paid_entry_or_ledger(env):
         db.session.rollback()
         assert LotteryEntry.query.count()==1 and PointsLog.query.count()==1
         assert UserPoints.query.one().points_balance==90
+
+
+def _prizes(*rows):
+    return json.dumps([{'name': name, 'winner_count': count} for name, count in rows], ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_legacy_message_count_without_prizes_still_draws_one(env):
+    e=env;lid=e.add('message_count',counts=((101,10),(102,20),(103,30)),top_n_winners=3,prize_description='旧奖品')
+    await w.draw_lottery(e.app,lid,e.bot,automatic=True)
+    assert len(e.state(lid).winners)==1 and e.state(lid).winners[0] in {101,102,103}
+    assert e.state(lid).awards[0]['prize_name']=='旧奖品'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typ,counts,expect',[
+    ('message_count',((101,10),(102,20),(103,30)),None),
+    ('random',((101,1),(102,1),(103,1)),None),
+    ('message_rank',((101,5),(102,9),(103,9)),[102,103]),
+])
+async def test_multi_prize_assignment_and_no_replacement(env,typ,counts,expect):
+    e=env
+    lid=e.add(typ,counts=counts,prizes=_prizes(('一等奖',1),('二等奖',1)))
+    await w.draw_lottery(e.app,lid,e.bot,automatic=True)
+    state=e.state(lid)
+    assert len(state.winners)==2 and len(set(state.winners))==2
+    assert [a['prize_name'] for a in state.awards]==['一等奖','二等奖']
+    if expect:
+        assert state.winners==expect
+    parts=e.call(lambda:json.loads(__import__('app.models',fromlist=['LotteryDelivery']).LotteryDelivery.query.one().parts))
+    assert any('用户 '+str(state.winners[0])+' — 一等奖' in part for part in parts)
+    assert any('用户 '+str(state.winners[1])+' — 二等奖' in part for part in parts)
+
+
+@pytest.mark.asyncio
+async def test_points_multi_prize_assignment(env):
+    e=env;lid=funded_lottery(e,top_n_winners=2,prizes=_prizes(('A',1),('B',1)))
+    with e.app.app_context():
+        db.session.add(UserPoints(group_id=e.gid,user_id=102,points_balance=100));db.session.commit()
+    await join(e,lid,101);await join(e,lid,102)
+    await w.draw_lottery(e.app,lid,e.bot,group_id=e.gid)
+    state=e.state(lid)
+    assert set(state.winners)=={101,102}
+    assert [a['prize_name'] for a in state.awards]==['A','B']
+
+
+@pytest.mark.asyncio
+async def test_insufficient_participants_fill_in_order_and_retry_keeps_snapshot(env):
+    e=env;lid=e.add('random',counts=((101,1),),prizes=_prizes(('一等奖',1),('二等奖',2)),prize_description='should not reassign')
+    await w.draw_lottery(e.app,lid,e.bot,automatic=True)
+    state=e.state(lid)
+    assert state.winners==[101] and state.awards==[{'user_id':101,'prize_name':'一等奖','prize_index':0}]
+    text='\n'.join(e.call(lambda:json.loads(__import__('app.models',fromlist=['LotteryDelivery']).LotteryDelivery.query.one().parts)))
+    assert '二等奖 还缺2名' in text
+    first=list(state.awards)
+    e.bot.send_message.side_effect=RuntimeError('temporary send failure')
+    await w.deliver_results(e.app,lambda _:e.bot)
+    with e.app.app_context():
+        for row in LotteryDelivery.query.all():row.retry_at=None
+        db.session.commit()
+    e.bot.send_message.reset_mock();e.bot.send_message.side_effect=None
+    await w.deliver_results(e.app,lambda _:e.bot)
+    assert e.state(lid).awards==first and e.state(lid).winners==[101]
+    assert '用户 101 — 一等奖' in e.bot.send_message.await_args.kwargs['text']
+
+
+def test_ended_legacy_results_are_not_reassigned(env):
+    e=env;lid=e.add(status='ended',winner_ids='[101,102]',prize_description='旧共享奖品',top_n_winners=2,prizes=None)
+    parts=e.call(lambda:w.result_parts(db.session.get(GroupLottery,lid),[101,102]))
+    text='\n'.join(parts)
+    assert '用户 101' in text and '用户 102' in text
+    assert '—' not in text
+    assert '旧共享奖品' in text
+    assert e.state(lid).awards is None and e.state(lid).winners==[101,102]
+
+
+def test_prizes_validation_and_points_lock_includes_prize_rows(env):
+    e=env
+    start,end,minimum,winners,status,prizes=w.validate_settings(dict(
+        start_time='2030-01-01T00:00',end_time='2030-01-02T00:00',lottery_type='random',
+        prizes=[{'name':'A','winner_count':2},{'name':'B','winner_count':3}]))
+    assert winners==5 and prizes==[{'name':'A','winner_count':2},{'name':'B','winner_count':3}]
+    with pytest.raises(ValueError):
+        w.validate_settings(dict(start_time='2030-01-01T00:00',end_time='2030-01-02T00:00',prizes=[{'name':'A','winner_count':101}]))
+    with pytest.raises(ValueError):
+        w.validate_settings(dict(start_time='2030-01-01T00:00',end_time='2030-01-02T00:00',prizes=[{'name':'','winner_count':1}]))
+    lid=funded_lottery(e)
+    with e.app.app_context():
+        db.session.add(LotteryEntry(lottery_id=lid,group_id=e.gid,user_id=101,amount=10,state='paid'))
+        db.session.commit()
+    c=e.app.test_client();
+    with c.session_transaction() as s:s['logged_in']=True
+    data=dict(id=lid,group_id=e.gid,lottery_name='改奖',lottery_type='points',points_cost=10,
+              start_time='2030-01-01T00:00',end_time='2030-01-02T00:00',status='pending',
+              prizes=[{'name':'新奖','winner_count':2}])
+    assert c.post('/core/api/save_group_lottery',json=data).json['status']=='error'

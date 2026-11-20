@@ -313,11 +313,12 @@ def export_group_config(group_id: int, *, include_users_points: bool = False) ->
                 'prize_description': row.prize_description,
                 'min_messages': row.min_messages,
                 'top_n_winners': row.top_n_winners,
+                'points_cost': row.points_cost,
                 'start_time': _iso(row.start_time),
                 'end_time': _iso(row.end_time),
                 'announce_channel_id': row.announce_channel_id,
                 'status': row.status,
-                'pool_source': getattr(row, 'pool_source', None) or 'certified',
+                'pool_source': 'speakers',
             }
             for row in GroupLottery.query.filter_by(group_id=group_id).all()
         ],
@@ -1058,6 +1059,7 @@ def _import_lotteries(group_id, config, imported):
             prize_description=data.get('prize_description'),
             min_messages=data.get('min_messages', 10),
             top_n_winners=data.get('top_n_winners', 3),
+            points_cost=max(1, min(int(data.get('points_cost', 10)), 1000000)),
             start_time=_parse_dt(data.get('start_time')),
             end_time=_parse_dt(data.get('end_time')),
             announce_channel_id=data.get('announce_channel_id'),

@@ -1150,6 +1150,14 @@ def _delete_group_cascade(group_id: int) -> None:
     RedPacketClaim → RedPacket) in the correct order so that FK constraints
     are not violated.
     """
+    from app.models import LotteryEntry, LotteryDelivery
+    if LotteryEntry.query.filter_by(group_id=group_id).first():
+        raise ValueError('此群有积分抽奖报名/退款流水，不能删除，请停用群组以保留资金记录')
+    lottery_ids = db.session.query(GroupLottery.id).filter_by(group_id=group_id).subquery()
+    if LotteryDelivery.query.filter(LotteryDelivery.lottery_id.in_(lottery_ids), LotteryDelivery.state != 'sent').first():
+        raise ValueError('此群仍有待发送的中奖公告，暂不能删除')
+    LotteryDelivery.query.filter(LotteryDelivery.lottery_id.in_(lottery_ids)).delete(synchronize_session=False)
+
     # --- Grandchildren first (FK references a child, not the group directly) ---
 
     # vote_record → group_vote
@@ -1171,7 +1179,7 @@ def _delete_group_cascade(group_id: int) -> None:
         InvitationActivity, InvitationRecord, ForcedChannelSubscription,
         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints,
         PointsExchangeItem, PointsExchangeRecord,
-        GroupLottery, LotteryMessageCount,
+        LotteryMessageCount, GroupLottery,
         MemberLevel, UserNameChange, GroupBottomButton,
         OtherSettings, InactiveUserSettings, KeywordFilter, MessageStatistics,
         GroupVote, QuizGame, QuizSession, RedPacket,
@@ -1923,16 +1931,24 @@ def page_group_lottery(gid):
         'lottery_type': l.lottery_type,
         'min_messages': l.min_messages,
         'top_n_winners': l.top_n_winners,
+        'points_cost': l.points_cost,
         'prize_description': l.prize_description or '',
         'start_time': l.start_time.strftime('%Y-%m-%dT%H:%M') if l.start_time else '',
         'end_time': l.end_time.strftime('%Y-%m-%dT%H:%M') if l.end_time else '',
         'announce_channel_id': l.announce_channel_id or '',
-        'pool_source': getattr(l, 'pool_source', None) or 'certified',
+        'pool_source': 'speakers',
         'status': l.status,
         'winner_ids': l.winner_ids
     } for l in lotteries], ensure_ascii=False)
     
-    return render_template('group_lottery.html', page='group_lottery', group=group, lotteries=lotteries, lotteries_json=lotteries_json)
+    from app.models import LotteryDelivery
+    delivery_status = {}
+    for lottery in lotteries:
+        deliveries = LotteryDelivery.query.filter_by(lottery_id=lottery.id).all()
+        if deliveries:
+            sent = sum(row.state == 'sent' for row in deliveries)
+            delivery_status[lottery.id] = f'{sent}/{len(deliveries)} 个目标已发送' + ('，其余待重试' if sent < len(deliveries) else '')
+    return render_template('group_lottery.html', page='group_lottery', group=group, lotteries=lotteries, lotteries_json=lotteries_json, delivery_status=delivery_status)
 
 @core_bp.route('/group/<int:gid>/member_level')
 def page_member_level(gid):
@@ -5902,7 +5918,7 @@ def api_save_group_lottery():
     if not lottery_name:
         return jsonify({'status':'error','msg':'抽奖名称不能为空'})
     lottery_type = d.get('lottery_type', 'message_count')
-    if lottery_type not in ('message_count', 'message_rank', 'random'):
+    if lottery_type not in ('message_count', 'message_rank', 'random', 'points'):
         return jsonify({'status':'error','msg':'无效的抽奖类型'})
 
     group = BotGroup.query.get(d['group_id'])
@@ -5911,46 +5927,44 @@ def api_save_group_lottery():
     if err: return err
 
     try:
+        from app.services.lottery_workflow import validate_settings
+        start, end, minimum, winners, status = validate_settings(d)
+        raw_cost = d.get('points_cost', 10)
+        points_cost = int(raw_cost)
+        if isinstance(raw_cost, bool) or str(raw_cost).strip() != str(points_cost):
+            raise ValueError('积分费用必须是整数')
+        if not 1 <= points_cost <= 1000000:
+            return jsonify({'status':'error','msg':'积分报名费用必须在1—1000000之间'})
+        if get_beijing_now() < start:
+            status = 'pending'
+
         if d.get('id'):
-            lottery = GroupLottery.query.get(d['id'])
+            lottery = GroupLottery.query.filter_by(id=d['id']).with_for_update().first()
             if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
-            if lottery.group_id != d['group_id']: return jsonify({'status':'error','msg':'Permission denied'})
+            if lottery.group_id != group.id: return jsonify({'status':'error','msg':'Permission denied'})
+            if lottery.status in ('ended', 'drawing', 'cancelled'):
+                return jsonify({'status':'error','msg':'开奖中或已结束的活动不能编辑或重开，请新建活动'})
+            from app.models import LotteryEntry
+            if LotteryEntry.query.filter_by(lottery_id=lottery.id).first():
+                return jsonify({'status':'error','msg':'已有积分报名，活动规则已锁定；可取消退款后新建活动'})
+            if ((lottery.lottery_type != lottery_type or lottery.start_time != start or lottery.end_time != end)
+                    and LotteryMessageCount.query.filter_by(lottery_id=lottery.id).first()):
+                return jsonify({'status':'error','msg':'已有发言记录，不能修改类型或时间窗，请新建活动'})
+
+
         else:
-            lottery = GroupLottery(group_id=d['group_id'])
+            lottery = GroupLottery(group_id=group.id, winner_ids='[]')
             db.session.add(lottery)
-        
         lottery.lottery_name = lottery_name
         lottery.lottery_type = lottery_type
         lottery.prize_description = d.get('prize_description') or None
-        lottery.min_messages = safe_int(d.get('min_messages'), 10) or 10
-        lottery.top_n_winners = safe_int(d.get('top_n_winners'), 3) or 3
-        if d.get('start_time'):
-            try:
-                start_time = d['start_time']
-                if 'Z' in start_time:
-                    start_time = start_time.replace('Z', '+00:00')
-                lottery.start_time = datetime.fromisoformat(start_time)
-            except (ValueError, TypeError):
-                pass
-        else:
-            lottery.start_time = None
-        if d.get('end_time'):
-            try:
-                end_time = d['end_time']
-                if 'Z' in end_time:
-                    end_time = end_time.replace('Z', '+00:00')
-                lottery.end_time = datetime.fromisoformat(end_time)
-            except (ValueError, TypeError):
-                pass
-        else:
-            lottery.end_time = None
-        lottery.status = d.get('status', 'pending')
+        lottery.min_messages, lottery.top_n_winners = minimum, winners
+        lottery.points_cost = points_cost
+        lottery.start_time, lottery.end_time, lottery.status = start, end, status
         lottery.announce_channel_id = (d.get('announce_channel_id') or '').strip() or None
-        from app.services.lottery_service import normalize_pool_source
-        lottery.pool_source = normalize_pool_source(d.get('pool_source'))
-        if not lottery.winner_ids:
-            lottery.winner_ids = '[]'
-        
+        # Deprecated field retained only for schema/backups; never a candidate source.
+        lottery.pool_source = 'speakers'
+        lottery.draw_error = None
         db.session.commit()
         return jsonify({'status':'ok', 'id': lottery.id})
     except Exception as e:
@@ -5966,10 +5980,25 @@ def api_delete_group_lottery():
     if not d or 'id' not in d: return jsonify({'status':'error','msg':'Missing id'})
     
     try:
-        lottery = GroupLottery.query.get(d['id'])
+        lottery = GroupLottery.query.filter_by(id=d['id']).with_for_update().first()
         if not lottery: return jsonify({'status':'error','msg':'Lottery not found'})
         err = _api_check_group_access(BotGroup.query.get(lottery.group_id))
         if err: return err
+        from app.models import LotteryEntry
+        if LotteryEntry.query.filter_by(lottery_id=lottery.id).first():
+            if lottery.status == 'ended':
+                return jsonify({'status':'error','msg':'积分抽奖已结束，须保留报名和积分流水，不能删除'})
+            from app.services.lottery_workflow import cancel_paid_lottery
+            if cancel_paid_lottery(lottery.id):
+                return jsonify({'status':'ok','msg':'活动已取消，报名积分已原额退还，历史流水保留'})
+            return jsonify({'status':'error','msg':'活动状态已变化，请刷新'})
+        if lottery.status == 'drawing':
+            return jsonify({'status':'error','msg':'开奖处理中暂不能删除'})
+        from app.models import LotteryDelivery
+        if LotteryDelivery.query.filter_by(lottery_id=lottery.id).filter(LotteryDelivery.state != 'sent').first():
+            return jsonify({'status':'error','msg':'中奖公告尚待发送，完成后再删除'})
+        LotteryDelivery.query.filter_by(lottery_id=lottery.id).delete(synchronize_session=False)
+        LotteryMessageCount.query.filter_by(lottery_id=lottery.id).delete(synchronize_session=False)
         db.session.delete(lottery)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -7237,34 +7266,36 @@ def api_publish_group_lottery():
             return jsonify({'status':'error','msg':'Bot not initialized'})
         ptb_app = global_ptb_app
 
-    _type_label = {'message_count': '💬 发言数量抽奖', 'message_rank': '🏆 发言排行抽奖', 'random': '🎲 随机抽奖'}.get(lottery.lottery_type, lottery.lottery_type)
-    lines = [f"🎉 <b>抽奖活动：{lottery.lottery_name}</b>"]
-    lines.append(f"类型：{_type_label}")
+    if lottery.status in ('ended', 'drawing', 'cancelled'):
+        return jsonify({'status':'error','msg':'开奖中或已结束，不能重复发布活动公告'})
+    if not lottery.start_time or not lottery.end_time or lottery.start_time >= lottery.end_time:
+        return jsonify({'status':'error','msg':'请先补齐合法开始时间和开奖时间'})
+    from app.services.lottery_workflow import LABELS
+    lines = [f"🎉 抽奖活动：{lottery.lottery_name}", f"类型：{LABELS.get(lottery.lottery_type, '抽奖')}"]
     if lottery.prize_description:
         lines.append(f"奖品：{lottery.prize_description}")
     if lottery.lottery_type == 'message_count':
-        lines.append(f"参与条件：活动期间发言 ≥ {lottery.min_messages} 条（发言越多，中奖概率越高）")
+        lines.append(f"参与条件：本期发言至少 {lottery.min_messages} 条，按发言数量加权抽1人")
     elif lottery.lottery_type == 'message_rank':
-        lines.append(f"获奖人数：发言最多的前 {lottery.top_n_winners} 名")
+        lines.append(f"本期发言最多前 {lottery.top_n_winners} 名获奖，同分按用户ID升序")
+    elif lottery.lottery_type == 'points':
+        lines.append(f"报名扣 {lottery.points_cost} 积分，每人每期一次；从有效报名者随机抽 {lottery.top_n_winners} 人，无需发言")
+        lines.append('正常开奖未中奖不退款；取消活动或开奖时已离群/封禁者原额退还报名积分。')
     else:
-        lines.append(f"获奖人数：随机抽取 {lottery.top_n_winners} 名幸运者")
-    if lottery.start_time:
-        lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    if lottery.end_time:
-        lines.append(f"结束时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append("\n积极发言，参与抽奖！")
+        lines.append(f"从本期发过言的不同用户中均匀随机抽 {lottery.top_n_winners} 人")
+    lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
+    lines.append(f"开始时间：{lottery.start_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
+    lines.append(f"开奖时间：{lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
     announcement = "\n".join(lines)
-    target_chat_ids = [group.chat_id]
-    if lottery.announce_channel_id and lottery.announce_channel_id not in target_chat_ids:
-        target_chat_ids.append(lottery.announce_channel_id)
+    target_chat_ids = list(dict.fromkeys(str(x) for x in (group.chat_id, lottery.announce_channel_id) if x))
+    from app.services.lottery_workflow import points_button
+    registration_markup = points_button(lottery)
     lottery_id_db = lottery.id
 
     async def _send_lottery_announcement(chat_id):
-        return await ptb_app.bot.send_message(
-            chat_id=chat_id,
-            text=announcement,
-            parse_mode='HTML'
-        )
+        for offset in range(0, len(announcement), 1500):
+            await ptb_app.bot.send_message(chat_id=chat_id, text=announcement[offset:offset+1500],
+                reply_markup=registration_markup if offset+1500 >= len(announcement) else None)
 
     for target_chat_id in target_chat_ids:
         future = asyncio.run_coroutine_threadsafe(_send_lottery_announcement(target_chat_id), global_bot_loop)
@@ -7279,7 +7310,7 @@ def api_publish_group_lottery():
     # Mark lottery as active if still pending
     try:
         lottery = GroupLottery.query.get(lottery_id_db)
-        if lottery and lottery.status == 'pending':
+        if lottery and lottery.status == 'pending' and lottery.start_time <= get_beijing_now():
             lottery.status = 'active'
             db.session.commit()
     except Exception as db_err:
@@ -8765,7 +8796,9 @@ async def handle_left_chat_member(update: Update, context):
                 group_id=group.id,
                 user_id=left_member.id
             ).first()
-            if user_points:
+            from app.models import LotteryEntry
+            has_lottery_funds = LotteryEntry.query.filter_by(group_id=group.id,user_id=left_member.id).first() is not None
+            if user_points and not has_lottery_funds:
                 db.session.delete(user_points)
                 print(f"删除用户积分记录: user_id={left_member.id}, group_id={group.id}")
             
@@ -11189,7 +11222,7 @@ async def update_lottery_status(context):
                 
                 now = get_beijing_now()
                 # Find all lotteries that should be active now, across ALL groups (main + clone)
-                group_ids = [g.id for g in BotGroup.query.all() if is_plugin_enabled(g.id, 'lottery')]
+                group_ids = [g.id for g in BotGroup.query.filter_by(is_active=True).all() if is_plugin_enabled(g.id, 'lottery')]
                 
                 if not group_ids:
                     return 0
@@ -11219,201 +11252,21 @@ async def update_lottery_status(context):
         logging.error(traceback.format_exc())
 
 async def run_lottery_draws(context):
-    """Background task to run lottery draws when time is up"""
+    """One system-wide scheduler; both new draws and durable outbox recovery."""
     if not global_flask_app:
-        logging.warning("🎲 [抽奖任务] global_flask_app 未初始化")
         return
-    
-    try:
-        def _get_active_lottery_ids():
-            with global_flask_app.app_context():
-                # Ensure we get fresh data from the database (not cached)
-                db.session.expire_all()
-                
-                now = get_beijing_now()
-                # Find lotteries that have ended but not yet drawn, across ALL groups (main + clone)
-                # Query both pending and active status to handle edge cases where:
-                # 1. Lottery goes from pending directly to end_time without status update task running first
-                # 2. Status update task hasn't run yet but end_time has been reached
-                # Return only IDs to avoid detached object issues
-                lotteries = GroupLottery.query.filter(
-                    GroupLottery.status.in_(['pending', 'active']),
-                    GroupLottery.end_time != None,
-                    GroupLottery.end_time <= now,
-                ).all()
-                lottery_ids = [lottery.id for lottery in lotteries]
-                if lottery_ids:
-                    logging.info(f"🎲 [抽奖任务] 发现 {len(lottery_ids)} 个需要开奖的抽奖活动: {lottery_ids}")
-                return lottery_ids
-        
-        lottery_ids = await asyncio.get_running_loop().run_in_executor(None, _get_active_lottery_ids)
-        
-        for lottery_id in lottery_ids:
-            try:
-                def _process_lottery(lid):
-                    with global_flask_app.app_context():
-                        # Ensure we get fresh data from the database (not cached)
-                        db.session.expire_all()
-                        
-                        # Re-fetch lottery in this context to ensure it's attached to the session
-                        lottery = GroupLottery.query.get(lid)
-                        if not lottery:
-                            logging.warning(f"🎲 [抽奖任务] 抽奖 ID {lid} 未找到")
-                            return None
-                        
-                        # Double-check status hasn't changed (race condition protection)
-                        if lottery.status == 'ended':
-                            logging.info(f"🎲 [抽奖任务] 抽奖 '{lottery.lottery_name}' (ID: {lid}) 已结束，跳过")
-                            return None
-                        
-                        group = BotGroup.query.get(lottery.group_id)
-                        if not group:
-                            logging.warning(f"🎲 [抽奖任务] 群组 ID {lottery.group_id} 未找到")
-                            return None
-
-                        if not is_plugin_enabled(lottery.group_id, 'lottery'):
-                            logging.info(f"🎲 [抽奖任务] 群组 {lottery.group_id} 抽奖插件已关闭，跳过 '{lottery.lottery_name}' (ID: {lid})")
-                            return None
-                        
-                        logging.info(f"🎲 [抽奖任务] 开始处理抽奖 '{lottery.lottery_name}' (ID: {lid}, 类型: {lottery.lottery_type}, 群组 ID: {lottery.group_id})")
-                        
-                        chat_id = int(group.chat_id)
-                        winners = []
-                        
-                        if lottery.lottery_type == 'message_count':
-                            # 🆕 Use actual message tracking data
-                            # Get participants who sent at least one message
-                            # Limit to top MAX_LOTTERY_MESSAGE_COUNT_RECORDS participants for performance in very large groups
-                            message_counts = LotteryMessageCount.query.filter_by(
-                                lottery_id=lottery.id
-                            ).filter(LotteryMessageCount.message_count > 0).order_by(
-                                LotteryMessageCount.message_count.desc()
-                            ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
-                            
-                            logging.info(f"🎲 [抽奖任务] 消息计数抽奖: 找到 {len(message_counts)} 个参与者")
-                            
-                            if message_counts:
-                                # Create weighted random selection based on message counts
-                                # Users with more messages have higher chance to win
-                                participants = [(mc.user_id, mc.message_count) for mc in message_counts]
-                                
-                                # Weighted random selection
-                                total_messages = sum(count for _, count in participants)
-                                if total_messages > 0:
-                                    rand_val = random.uniform(0, total_messages)
-                                    cumulative = 0
-                                    for user_id, count in participants:
-                                        cumulative += count
-                                        if cumulative >= rand_val:
-                                            winners = [user_id]
-                                            logging.info(f"🎲 [抽奖任务] 选中获奖者: 用户 {user_id} (消息数: {count})")
-                                            break
-                            else:
-                                # Fallback: if no one sent messages, pick from group users (limited sample)
-                                logging.warning(f"🎲 [抽奖任务] 无消息记录，使用随机备选方案")
-                                eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
-                                if eligible_users:
-                                    winner = random.choice(eligible_users)
-                                    winners = [winner.tg_id]
-                                    logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: 用户 {winner.tg_id}")
-                        
-                        elif lottery.lottery_type == 'message_rank':
-                            # 🆕 Use actual message tracking data - top N senders
-                            # Optimized: use limit() to avoid loading all records
-                            top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                            top_senders = LotteryMessageCount.query.filter_by(
-                                lottery_id=lottery.id
-                            ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                                top_n
-                            ).all()
-                            
-                            logging.info(f"🎲 [抽奖任务] 消息排名抽奖: 需要前 {top_n} 名，找到 {len(top_senders)} 个参与者")
-                            
-                            winners = [mc.user_id for mc in top_senders]
-                            
-                            if winners:
-                                logging.info(f"🎲 [抽奖任务] 选中获奖者: {winners}")
-                            else:
-                                # Fallback: if no tracking data, use group users (limited sample)
-                                logging.warning(f"🎲 [抽奖任务] 无消息记录，使用随机备选方案")
-                                top_users = GroupUser.query.filter_by(group_id=group.id).limit(top_n).all()
-                                winners = [u.tg_id for u in top_users]
-                                if winners:
-                                    logging.info(f"🎲 [抽奖任务] 从备选池中选中获奖者: {winners}")
-
-                        elif lottery.lottery_type == 'random':
-                            # Certified users (default) or a complete live Telegram roster
-                            from app.services.lottery_service import draw_random_winners, normalize_pool_source
-                            top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                            pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
-                            from app.services.lottery_roster import LiveRosterError
-                            try:
-                                winners = draw_random_winners(group.id, pool_source, top_n)
-                            except LiveRosterError as error:
-                                lottery.draw_error = str(error)
-                                db.session.commit()
-                                logging.warning("抽奖 %s 未开奖: %s", lid, error)
-                                return None
-                            lottery.draw_error = None
-                            logging.info(
-                                f"🎲 [抽奖任务] 随机抽奖: 奖池={pool_source}, 抽出 {len(winners)}/{top_n} 名"
-                            )
-                            if winners:
-                                logging.info(f"🎲 [抽奖任务] 随机抽中获奖者: {winners}")
-                        
-                        # Update lottery with winners
-                        lottery.winner_ids = json.dumps(winners)
-                        lottery.status = 'ended'
-                        db.session.commit()
-                        
-                        logging.info(f"✅ [抽奖任务] 抽奖 '{lottery.lottery_name}' (ID: {lid}) 已结束，获奖者: {winners}")
-                        
-                        return {
-                            'chat_id': chat_id,
-                            'clone_id': group.clone_id,  # which bot to use
-                            'lottery_name': lottery.lottery_name,
-                            'prize_description': lottery.prize_description,
-                            'winners': winners,
-                            'announce_channel_id': lottery.announce_channel_id,
-                        }
-                
-                result = await asyncio.get_running_loop().run_in_executor(None, _process_lottery, lottery_id)
-                
-                # Announce winners (outside the DB context)
-                # Only announce if there are actual winners (empty list = no winners)
-                if result and result.get('winners'):
-                    winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in result['winners']]
-                    message = f"🎉 <b>抽奖结束！</b>\n\n"
-                    message += f"活动：{result['lottery_name']}\n"
-                    message += f"获奖者：{', '.join(winner_mentions)}\n"
-                    if result['prize_description']:
-                        message += f"奖品：{result['prize_description']}\n"
-                    
-                    bot = _get_bot_for_clone(result.get('clone_id'), context.bot)
-                    if bot is None:
-                        logging.warning(f"⏭️ [抽奖任务] 跳过公告：对应克隆机器人未运行 (群组: {result['chat_id']})")
-                    else:
-                        announce_targets = [result['chat_id']]
-                        if result.get('announce_channel_id') and result['announce_channel_id'] not in announce_targets:
-                            announce_targets.append(result['announce_channel_id'])
-                        for target_chat_id in announce_targets:
-                            try:
-                                await bot.send_message(
-                                    chat_id=target_chat_id,
-                                    text=message,
-                                    parse_mode='HTML'
-                                )
-                                logging.info(f"📢 [抽奖任务] 成功在 {target_chat_id} 发送获奖公告")
-                            except Exception as send_error:
-                                logging.error(f"❌ [抽奖任务] 发送获奖公告失败 ({target_chat_id}): {send_error}")
-                        
-            except Exception as e:
-                logging.error(f"❌ [抽奖任务] 处理抽奖 {lottery_id} 时出错: {e}")
-                logging.error(traceback.format_exc())
-                
-    except Exception as e:
-        logging.error(f"❌ [抽奖任务] run_lottery_draws 执行失败: {e}")
-        logging.error(traceback.format_exc())
+    from app.services.lottery_workflow import due_lotteries, draw_lottery, deliver_results
+    def _due():
+        with global_flask_app.app_context():
+            db.session.begin()
+            return due_lotteries()
+    resolver = lambda clone_id: _get_bot_for_clone(clone_id, context.bot)
+    for lid, clone_id in await asyncio.to_thread(_due):
+        try:
+            await draw_lottery(global_flask_app, lid, resolver(clone_id), automatic=True)
+        except Exception:
+            logging.exception('抽奖任务处理失败 id=%s', lid)
+    await deliver_results(global_flask_app, resolver)
 
 
 async def check_inactive_users(context):
@@ -12967,6 +12820,7 @@ async def run_bot(app_instance):
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
     # Callback query handler (catch-all – runs after audit_callback_handler)
+    app.add_handler(CallbackQueryHandler(handle_lottery_join, pattern=r'^lottery_join:[0-9]+:[0-9]+$'))
     app.add_handler(CallbackQueryHandler(handle_entry_verification_callback, pattern=r'^ev:'))
     app.add_handler(CallbackQueryHandler(pagination_callback)) 
     
@@ -13021,7 +12875,7 @@ async def run_bot(app_instance):
     app.job_queue.run_repeating(check_channel_subscriptions, interval=CHECK_INTERVAL_TICK_SECONDS, first=30)  # tick; per-group interval decides who runs
     app.job_queue.run_repeating(update_member_levels, interval=1800, first=40)  # 🆕 Update every 30 minutes
     app.job_queue.run_repeating(update_lottery_status, interval=60, first=45)  # 🆕 Update lottery status every minute
-    app.job_queue.run_repeating(run_lottery_draws, interval=300, first=50)  # 🆕 Check every 5 minutes
+    app.job_queue.run_repeating(run_lottery_draws, interval=60, first=50)  # 🆕 Check every 5 minutes
     app.job_queue.run_repeating(check_inactive_users, interval=CHECK_INTERVAL_TICK_SECONDS, first=60)  # tick; per-group interval decides who runs
     app.job_queue.run_repeating(check_auction_expiration, interval=300, first=70)  # 🆕 Check auction expiration every 5 minutes
     app.job_queue.run_repeating(check_redpacket_expiration, interval=300, first=80)  # 🆕 Check red packet expiration every 5 minutes
@@ -13144,6 +12998,7 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(MessageHandler(_media_filter & ~filters.COMMAND, on_non_text_message))
 
     # Callback query handler
+    app.add_handler(CallbackQueryHandler(handle_lottery_join, pattern=r'^lottery_join:[0-9]+:[0-9]+$'))
     app.add_handler(CallbackQueryHandler(handle_entry_verification_callback, pattern=r'^ev:'))
     app.add_handler(CallbackQueryHandler(pagination_callback))
     
@@ -14165,6 +14020,25 @@ async def handle_channel_pin(update: Update, context):
     except Exception as e:
         print(f"Error in handle_channel_pin: {e}")
 
+async def handle_lottery_join(update: Update, context):
+    query = update.callback_query
+    if not query or not query.from_user or query.from_user.is_bot:
+        return
+    try:
+        _, raw_id, raw_cost = query.data.split(':')
+        lottery_id, expected_cost = int(raw_id), int(raw_cost)
+    except (ValueError, AttributeError, IndexError):
+        await query.answer('无效的积分抽奖', show_alert=True)
+        return
+    if not global_flask_app or not query.message:
+        await query.answer('请在所属群组或公告频道报名', show_alert=True)
+        return
+    from app.services.lottery_workflow import join_points_lottery
+    text = await join_points_lottery(global_flask_app, context.bot, lottery_id,
+        context.application.bot_data.get('clone_id'), query.message.chat.id, query.from_user.id, expected_cost)
+    await query.answer(text, show_alert=True)
+
+
 async def cmd_lottery_draw(update: Update, context):
     """手动开奖命令 /lottery_draw <lottery_id>"""
     chat = update.effective_chat
@@ -14197,122 +14071,24 @@ async def cmd_lottery_draw(update: Update, context):
     if not global_flask_app:
         return
     
-    def _draw_lottery():
+    def _own_group_id():
         with global_flask_app.app_context():
-            try:
-                group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
-                if not group:
-                    return "error", "群组未找到"
-                
-                lottery = GroupLottery.query.filter_by(
-                    id=lottery_id,
-                    group_id=group.id
-                ).first()
-                
-                if not lottery:
-                    return "error", "抽奖不存在"
-                
-                if lottery.status == 'ended':
-                    return "error", "抽奖已经结束"
-                
-                if lottery.status != 'active':
-                    return "error", "抽奖未激活"
-                
-                # Perform the draw
-                winners = []
-                
-                if lottery.lottery_type == 'message_count':
-                    # Weighted random based on message count
-                    message_counts = LotteryMessageCount.query.filter_by(
-                        lottery_id=lottery.id
-                    ).filter(LotteryMessageCount.message_count > 0).order_by(
-                        LotteryMessageCount.message_count.desc()
-                    ).limit(MAX_LOTTERY_MESSAGE_COUNT_RECORDS).all()
-                    
-                    if message_counts:
-                        participants = [(mc.user_id, mc.message_count) for mc in message_counts]
-                        total_messages = sum(count for _, count in participants)
-                        
-                        if total_messages > 0:
-                            rand_val = random.uniform(0, total_messages)
-                            cumulative = 0
-                            for uid, count in participants:
-                                cumulative += count
-                                if cumulative >= rand_val:
-                                    winners = [uid]
-                                    break
-                    else:
-                        # Fallback to random group user
-                        eligible_users = GroupUser.query.filter_by(group_id=group.id).limit(MAX_LOTTERY_PARTICIPANTS).all()
-                        if eligible_users:
-                            winner = random.choice(eligible_users)
-                            winners = [winner.tg_id]
-                
-                elif lottery.lottery_type == 'message_rank':
-                    # Top N senders
-                    top_senders = LotteryMessageCount.query.filter_by(
-                        lottery_id=lottery.id
-                    ).order_by(LotteryMessageCount.message_count.desc()).limit(
-                        min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                    ).all()
-                    
-                    winners = [mc.user_id for mc in top_senders]
-                    
-                    if not winners:
-                        # Fallback
-                        top_users = GroupUser.query.filter_by(group_id=group.id).limit(
-                            min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                        ).all()
-                        winners = [u.tg_id for u in top_users]
-
-                elif lottery.lottery_type == 'random':
-                    from app.services.lottery_service import draw_random_winners, normalize_pool_source
-                    top_n = min(lottery.top_n_winners or 1, MAX_AUCTION_WINNERS)
-                    pool_source = normalize_pool_source(getattr(lottery, 'pool_source', None))
-                    bot_id = getattr(getattr(context, 'bot', None), 'id', None)
-                    from app.services.lottery_roster import LiveRosterError
-                    try:
-                        winners = draw_random_winners(
-                            group.id, pool_source, top_n,
-                            exclude_user_ids=[bot_id] if bot_id else None,
-                        )
-                    except LiveRosterError as error:
-                        lottery.draw_error = str(error)
-                        db.session.commit()
-                        return "error", str(error)
-                    lottery.draw_error = None
-                
-                # Update lottery
-                lottery.winner_ids = json.dumps(winners)
-                lottery.status = 'ended'
-                db.session.commit()
-                
-                return "success", winners, lottery.lottery_name, lottery.prize_description
-            
-            except Exception as e:
-                db.session.rollback()
-                print(f"Error drawing lottery: {e}")
-                traceback.print_exc()
-                return "error", f"开奖失败: {str(e)}"
-    
-    result = await asyncio.get_running_loop().run_in_executor(None, _draw_lottery)
-    
-    if result[0] == "error":
-        _sched_del(context, await update.message.reply_text(f"❌ {result[1]}"), 20)
+            db.session.begin()
+            group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
+            return group.id if group else None
+    gid = await asyncio.to_thread(_own_group_id)
+    if gid is None:
+        _sched_del(context, await update.message.reply_text('❌ 群组未找到'), 20)
+        return
+    from app.services.lottery_workflow import draw_lottery, deliver_results
+    result = await draw_lottery(global_flask_app, lottery_id, context.bot, group_id=gid)
+    if result['status'] in ('drawn', 'ended'):
+        await deliver_results(global_flask_app, lambda clone_id: (
+            context.bot if clone_id == context.application.bot_data.get('clone_id') else None), lottery_id)
+        if result['status'] == 'ended':
+            _sched_del(context, await update.message.reply_text('本期已结束，结果不会重新抽取；待发公告会继续重试。'), 20)
     else:
-        _, winners, lottery_name, prize_desc = result
-        
-        if winners:
-            winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winners]
-            message = f"🎉 <b>抽奖结束！</b>\n\n"
-            message += f"活动：{lottery_name}\n"
-            message += f"获奖者：{', '.join(winner_mentions)}\n"
-            if prize_desc:
-                message += f"奖品：{prize_desc}\n"
-            
-            _sched_del(context, await update.message.reply_text(message, parse_mode='HTML'), 300)
-        else:
-            _sched_del(context, await update.message.reply_text("⚠️ 开奖完成，但未找到符合条件的获奖者"), 300)
+        _sched_del(context, await update.message.reply_text('❌ ' + result.get('message', '开奖未完成')), 20)
 
 
 async def cmd_lottery_history(update: Update, context):
@@ -14331,6 +14107,7 @@ async def cmd_lottery_history(update: Update, context):
     
     def _get_lottery_history():
         with global_flask_app.app_context():
+            db.session.begin()
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
@@ -14354,7 +14131,7 @@ async def cmd_lottery_history(update: Update, context):
     
     for lottery in lotteries:
         message_lines.append(f"\n📌 {lottery.lottery_name}")
-        message_lines.append(f"   类型: {'消息数量抽奖' if lottery.lottery_type == 'message_count' else '消息排名抽奖'}")
+        message_lines.append(f"   类型: { {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖'}.get(lottery.lottery_type, '抽奖') }")
         if lottery.prize_description:
             message_lines.append(f"   奖品: {lottery.prize_description}")
         if lottery.end_time:
@@ -14364,14 +14141,16 @@ async def cmd_lottery_history(update: Update, context):
         try:
             winner_ids = json.loads(lottery.winner_ids or '[]')
             if winner_ids:
-                winner_mentions = [f"<a href='tg://user?id={uid}'>用户{uid}</a>" for uid in winner_ids[:5]]
+                winner_mentions = [f"用户{int(uid)}" for uid in winner_ids[:5]]
                 message_lines.append(f"   获奖者: {', '.join(winner_mentions)}")
                 if len(winner_ids) > 5:
                     message_lines.append(f"   （共{len(winner_ids)}位获奖者）")
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             print(f"Error parsing winner_ids for lottery history: {e}")
     
-    _sched_del(context, await update.message.reply_text("\n".join(message_lines), parse_mode='HTML'), 300)
+    history_text = "\n".join(message_lines)
+    for offset in range(0, len(history_text), 1500):
+        _sched_del(context, await update.message.reply_text(history_text[offset:offset+1500]), 300)
 
 
 async def cmd_lottery(update: Update, context):
@@ -14390,39 +14169,29 @@ async def cmd_lottery(update: Update, context):
     
     def _get_active_lotteries():
         with global_flask_app.app_context():
+            db.session.begin()
             group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
             if not group:
                 return []
             
-            # Get active lotteries
-            now = get_beijing_now()
-            lotteries = GroupLottery.query.filter_by(
-                group_id=group.id,
-                status='active'
-            ).order_by(GroupLottery.end_time).all()
-            
-            # Return lotteries with additional context
+            from app.services.lottery_workflow import current_lotteries
+            lotteries = current_lotteries(group.id)
             results = []
             for lottery in lotteries:
-                # Check if still within time window
-                if lottery.start_time and lottery.end_time:
-                    if lottery.start_time <= now <= lottery.end_time:
-                        # Get participant count
-                        participant_count = LotteryMessageCount.query.filter_by(
-                            lottery_id=lottery.id
-                        ).filter(LotteryMessageCount.message_count > 0).count()
-                        
-                        results.append({
-                            'id': lottery.id,
-                            'name': lottery.lottery_name,
-                            'type': lottery.lottery_type,
-                            'prize': lottery.prize_description,
-                            'end_time': lottery.end_time,
-                            'min_messages': lottery.min_messages,
-                            'top_n_winners': lottery.top_n_winners,
-                            'participant_count': participant_count
-                        })
-            
+                threshold = (lottery.min_messages or 10) if lottery.lottery_type == 'message_count' else 1
+                if lottery.lottery_type == 'points':
+                    from app.models import LotteryEntry
+                    participant_count = LotteryEntry.query.filter_by(lottery_id=lottery.id,state='paid').count()
+                else:
+                    participant_count = LotteryMessageCount.query.filter_by(lottery_id=lottery.id).filter(
+                        LotteryMessageCount.message_count >= threshold).count()
+                results.append({
+                    'id': lottery.id, 'name': lottery.lottery_name,
+                    'type': lottery.lottery_type, 'prize': lottery.prize_description,
+                    'end_time': lottery.end_time, 'min_messages': lottery.min_messages,
+                    'top_n_winners': lottery.top_n_winners, 'participant_count': participant_count,
+                    'points_cost': lottery.points_cost,
+                })
             return results
     
     lotteries = await asyncio.get_running_loop().run_in_executor(None, _get_active_lotteries)
@@ -14431,31 +14200,31 @@ async def cmd_lottery(update: Update, context):
         _sched_del(context, await update.message.reply_text("📭 当前没有进行中的抽奖活动"), 20)
         return
     
-    message_lines = ["🎰 进行中的抽奖活动\n"]
-    message_lines.append("━━━━━━━━━━━━━━━━")
-    
+    from app.services.lottery_workflow import LABELS
+    # Separate each activity to bound message size, then safely split plain text.
     for lottery in lotteries:
-        message_lines.append(f"\n🎁 #{lottery['id']} {lottery['name']}")
-        
+        lines = [f"🎰 #{lottery['id']} {lottery['name']}", f"类型：{LABELS.get(lottery['type'], '抽奖')}"]
         if lottery['type'] == 'message_count':
-            message_lines.append(f"   类型: 消息数量抽奖")
-            message_lines.append(f"   最少发言: {lottery['min_messages']}条")
+            lines.append(f"参与条件：本期发言至少 {lottery['min_messages']} 条；按发言数加权选1人")
+        elif lottery['type'] == 'message_rank':
+            lines.append(f"本期发言最多前 {lottery['top_n_winners']} 人获奖，同分按用户ID升序")
+        elif lottery['type'] == 'points':
+            lines.append(f"报名扣 {lottery['points_cost']} 积分，每人每期一次；随机抽 {lottery['top_n_winners']} 人，无需发言")
+            lines.append('正常开奖未中奖不退分；活动取消或开奖时已离群/封禁者原额退款。')
         else:
-            message_lines.append(f"   类型: 消息排名抽奖")
-            message_lines.append(f"   获奖人数: 前{lottery['top_n_winners']}名")
-        
+            lines.append(f"从本期发过言的不同用户中随机抽 {lottery['top_n_winners']} 人")
+        lines.append('不要求认证；开奖时须仍在群内且未被封禁。')
+        lines.append(f"开奖时间：{lottery['end_time'].strftime('%Y-%m-%d %H:%M:%S')}（北京时间）")
+        lines.append(f"已达到发言条件：{lottery['participant_count']} 人（开奖时复核资格）")
         if lottery['prize']:
-            message_lines.append(f"   奖品: {lottery['prize']}")
-        
-        if lottery['end_time']:
-            message_lines.append(f"   结束时间: {lottery['end_time'].strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        message_lines.append(f"   当前参与人数: {lottery['participant_count']}人")
-    
-    message_lines.append("\n━━━━━━━━━━━━━━━━")
-    message_lines.append("💡 提示: 在群内发言即可参与抽奖")
-    
-    _sched_del(context, await update.message.reply_text("\n".join(message_lines)), 300)
+            lines.append('奖品：' + lottery['prize'])
+        text = '\n'.join(lines)
+        for offset in range(0, len(text), 1500):
+            markup = None
+            if lottery['type'] == 'points' and offset+1500 >= len(text):
+                markup = InlineKeyboardMarkup([[InlineKeyboardButton(
+                    f"报名参加（扣 {lottery['points_cost']} 积分，仅一次）",callback_data=f"lottery_join:{lottery['id']}:{lottery['points_cost']}")]])
+            _sched_del(context, await update.message.reply_text(text[offset:offset+1500],reply_markup=markup), 300)
 
 
 async def check_auction_expiration(context):
@@ -15877,7 +15646,7 @@ async def apply_media_speech_engagement(update: Update, context):
     chat = update.effective_chat
     user = update.effective_user
     msg = update.effective_message
-    if not chat or not user or not msg:
+    if not chat or not user or not msg or user.is_bot:
         return
 
     def _db_work():
@@ -16079,6 +15848,16 @@ async def on_message(update: Update, context):
             # 🆕 Sync messages to other groups
             await handle_sync_group_messages(update, context)
         
+        if chat.type in ['group', 'supergroup'] and txt == '抽奖':
+            if user and not user.is_bot:
+                from app.services.group_engagement import increment_lottery_message_counts
+                with global_flask_app.app_context():
+                    own_group = BotGroup.query.filter_by(chat_id=str(chat.id), clone_id=context.application.bot_data.get('clone_id')).first()
+                    if own_group:
+                        increment_lottery_message_counts(own_group.id, user.id)
+            await cmd_lottery(update, context)
+            return
+
         # Check if this is a verification code from admin in private chat
         if chat.type == 'private':
             # 🆕 Handle forwarded messages - show detailed user info
@@ -16359,86 +16138,17 @@ async def on_message(update: Update, context):
                         ))
                         db.session.commit()
 
-            # 🆕 Track messages for active lotteries (optimized for large groups)
-            # ✅ Track ALL group members, not just verified users (unverified users can participate)
-            if chat.type in ['group', 'supergroup'] and is_plugin_enabled(group.id, 'lottery'):
-                # Track for both message_count and message_rank lotteries
-                # Support both pending and active status as long as within time window
-                # Limit to 10 concurrent lotteries to prevent performance issues in large groups
-                active_lotteries = GroupLottery.query.filter_by(
-                    group_id=group.id
-                ).filter(
-                    GroupLottery.status.in_(['pending', 'active']),
-                    GroupLottery.lottery_type.in_(['message_count', 'message_rank'])
-                ).limit(10).all()
-                
-                # Track for ALL users (verified and unverified)
-                if active_lotteries:
-                    logging.debug(f"🎲 [消息计数] 用户 {user.id} 在群组 {group.id} 发送消息，追踪 {len(active_lotteries)} 个活动抽奖")
-                    now = get_beijing_now()
-                    qualifications_to_notify = []  # lotteries where user just reached min_messages
-                    for lottery in active_lotteries:
-                        # Only track if lottery is still within its time window
-                        if lottery.start_time and lottery.end_time:
-                            if lottery.start_time <= now <= lottery.end_time:
-                                # Get or create message count record
-                                msg_count = LotteryMessageCount.query.filter_by(
-                                    lottery_id=lottery.id,
-                                    user_id=user.id
-                                ).first()
-                                
-                                if not msg_count:
-                                    msg_count = LotteryMessageCount(
-                                        lottery_id=lottery.id,
-                                        group_id=group.id,
-                                        user_id=user.id,
-                                        message_count=0
-                                    )
-                                    db.session.add(msg_count)
-                                    logging.debug(f"🎲 [消息计数] 为用户 {user.id} 创建抽奖 '{lottery.lottery_name}' (ID: {lottery.id}) 的消息计数记录")
-                                
-                                msg_count.message_count += 1
-                                msg_count.updated_at = now
-                                logging.debug(f"🎲 [消息计数] 用户 {user.id} 抽奖 '{lottery.lottery_name}' 消息计数: {msg_count.message_count}")
+            # Text/media/random all use the same guarded time-window counter.
+            if chat.type in ['group', 'supergroup'] and user and not user.is_bot:
+                from app.services.group_engagement import increment_lottery_message_counts
+                qualification_ids = increment_lottery_message_counts(group.id, user.id, return_qualifications=True)
+                for qid in qualification_ids:
+                    q = db.session.get(GroupLottery, qid)
+                    if q:
+                        notice = (f"✅ 用户 {user.id} 已达到抽奖「{q.lottery_name}」的发言条件（至少{q.min_messages}条）。"
+                                  "开奖时仍须在群内且未被封禁。")
+                        await context.bot.send_message(chat_id=chat.id, text=notice)
 
-                                # Check if user just reached the minimum messages threshold
-                                if (lottery.lottery_type == 'message_count' and
-                                        lottery.min_messages and
-                                        msg_count.message_count == lottery.min_messages):
-                                    qualifications_to_notify.append(lottery)
-                    
-                    # Batch commit all lottery tracking updates
-                    try:
-                        db.session.commit()
-                    except Exception as e:
-                        logging.error(f"❌ [消息计数] 提交抽奖追踪数据失败: {e}")
-                        db.session.rollback()
-                        qualifications_to_notify = []
-
-                    # Send qualification notifications after successful commit
-                    for q_lottery in qualifications_to_notify:
-                        try:
-                            qualified_count = LotteryMessageCount.query.filter_by(
-                                lottery_id=q_lottery.id
-                            ).filter(
-                                LotteryMessageCount.message_count >= q_lottery.min_messages
-                            ).count()
-                            lines = [f"✅ {user.mention_html()} 已成功参与抽奖「{q_lottery.lottery_name}」！"]
-                            lines.append(f"📊 已有 <b>{qualified_count}</b> 人满足参与条件（发言 ≥ {q_lottery.min_messages} 条）")
-                            if q_lottery.prize_description:
-                                lines.append(f"🎁 奖品：{q_lottery.prize_description}")
-                            if q_lottery.end_time:
-                                lines.append(f"📅 活动结束时间：{q_lottery.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                            lines.append("继续发言可提高中奖概率！")
-                            await context.bot.send_message(
-                                chat_id=chat.id,
-                                text="\n".join(lines),
-                                parse_mode='HTML'
-                            )
-                            logging.info(f"🎲 [消息计数] 已通知群组 {chat.id}：用户 {user.id} 参与抽奖 '{q_lottery.lottery_name}' 成功，共 {qualified_count} 人达标")
-                        except Exception as notify_err:
-                            logging.error(f"❌ [消息计数] 发送参与成功通知失败 (抽奖 '{q_lottery.lottery_name}'): {notify_err}")
-            
             # Authenticated-user perks: auto-like + Telegram nickname member tag
             if conf.get('auto_like') or conf.get('auto_member_tag', True):
                 db_user = GroupUser.query.filter_by(group_id=group.id, tg_id=user.id).first()

@@ -38,10 +38,10 @@
 {% call feature_description('group_lottery') %}
 <ul>
     <li>在群内创建限时抽奖活动，成员通过发言或随机方式参与。</li>
-    <li>支持 <strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（可选择从认证用户或全部群成员中抽取，默认认证用户）三种方式。</li>
+    <li>支持 <strong>积分抽奖</strong>（点击报名扣积分，每期一次，正常开奖未中奖不退款）、<strong>发言数量抽奖</strong>（发言越多中奖概率越高）、<strong>发言排行抽奖</strong>（发言最多的前N名获奖）和 <strong>随机抽奖</strong>（从本期活动期间发过言、开奖时仍在群内且未被封禁的用户中抽取，不要求认证）四种方式。</li>
     <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
     <li>创建好抽奖后，点击列表中的 <i class="fa-solid fa-bullhorn"></i> 按钮可立即将公告发送到 Telegram 群组。</li>
-    <li>开奖后系统自动公布中奖名单并发送恭喜消息。</li>
+    <li>开奖后自动结束本期活动；公告发送失败会保留原结果重试，网络超时可能导致当前消息分段重复。</li>
 </ul>
 {% endcall %}
 
@@ -69,15 +69,17 @@
                         <small class="text-muted list-text-preview" title="{{ (lottery.prize_description or '暂无奖品描述')|e }}">{{ lottery.prize_description or '暂无奖品描述' }}</small>
                     </td>
                     <td>
-                        {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else '随机抽奖') }}
+                        {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else ('积分抽奖' if lottery.lottery_type == 'points' else '随机抽奖')) }}
                     </td>
                     <td class="hide-mobile">
                         {% if lottery.lottery_type == 'message_count' %}
                         最少发言 {{ lottery.min_messages }}
                         {% elif lottery.lottery_type == 'message_rank' %}
-                        前{{ lottery.top_n_winners }}名
+                        前{{ lottery.top_n_winners }}名（同分按用户ID升序）
+                        {% elif lottery.lottery_type == 'points' %}
+                        报名 {{ lottery.points_cost }} 积分 · 抽{{ lottery.top_n_winners }}人
                         {% else %}
-                        {{ lottery.top_n_winners }}人 · {{ '全部成员' if lottery.pool_source == 'all_members' else '认证用户' }}
+                        {{ lottery.top_n_winners }}人 · 本期发言且开奖时仍在群内
                         {% endif %}
                     </td>
                     <td class="hide-mobile list-meta-stack">
@@ -86,16 +88,17 @@
                     </td>
                     <td>
                         <span class="badge {{ 'bg-warning' if lottery.status == 'pending' else ('bg-success' if lottery.status == 'active' else 'bg-secondary') }}">
-                            {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else '已结束') }}
+                            {{ '待开始' if lottery.status == 'pending' else ('进行中' if lottery.status == 'active' else ('开奖处理中' if lottery.status == 'drawing' else ('已取消' if lottery.status == 'cancelled' else '已结束'))) }}
                         </span>
-                        {% if lottery.draw_error %}<div class="text-danger small mt-1">未开奖：{{ lottery.draw_error }}（自动任务会重试，也可修复小号后手动开奖）</div>{% endif %}
+                        {% if lottery.id in delivery_status %}<div class="small text-muted">公告：{{ delivery_status[lottery.id] }}</div>{% endif %}
+                        {% if lottery.draw_error %}<div class="text-danger small mt-1">未开奖：{{ lottery.draw_error }}（恢复后自动重试；旧活动缺少时间需先补齐）</div>{% endif %}
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center justify-content-end">
-                            <button class="action-btn btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status == 'ended' %}disabled title="已结束"{% else %}title="发布公告"{% endif %}>
+                            <button class="action-btn btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status in ('ended', 'drawing', 'cancelled') %}disabled title="开奖中或已结束"{% else %}title="发布公告"{% endif %}>
                                 <i class="fa-solid fa-bullhorn"></i>
                             </button>
-                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editLottery({{ lottery.id }})">
+                            <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editLottery({{ lottery.id }})" {% if lottery.status in ('ended', 'drawing', 'cancelled') %}disabled{% endif %}>
                                 <i class="fa-solid fa-pen"></i>
                             </button>
                             <button class="action-btn btn btn-sm btn-danger" title="删除" onclick="deleteLottery({{ lottery.id }})">
@@ -129,7 +132,7 @@
                 <input type="hidden" id="lottery_id">
                 <div class="mb-3">
                     <label class="form-label">抽奖名称</label>
-                    <input type="text" class="form-control" id="lottery_name" placeholder="例如：周末抽奖">
+                    <input type="text" class="form-control" id="lottery_name" maxlength="255" placeholder="例如：周末抽奖">
                 </div>
                 <div class="mb-3">
                     <label class="form-label">抽奖类型</label>
@@ -137,7 +140,13 @@
                         <option value="message_count">💬 发言数量抽奖</option>
                         <option value="message_rank">🏆 发言排行抽奖</option>
                         <option value="random">🎲 随机抽奖</option>
+                        <option value="points">💎 积分抽奖</option>
                     </select>
+                </div>
+                <div class="mb-3" id="points_cost_field" style="display:none;">
+                    <label class="form-label">积分报名费用（每人每期仅一次）</label>
+                    <input type="number" class="form-control" id="points_cost" value="10" min="1" max="1000000">
+                    <div class="form-text">报名即时扣分；从有效报名者中随机开奖，无需发言。正常开奖未中奖不退款；取消活动或开奖时离群/封禁者原额退款。已有报名后规则锁定；删除未开奖活动将改为取消退款，保留流水。</div>
                 </div>
                 <div class="mb-3" id="min_messages_field">
                     <label class="form-label">最少发言数</label>
@@ -145,27 +154,20 @@
                 </div>
                 <div class="mb-3" id="top_n_winners_field" style="display:none;">
                     <label class="form-label">获奖人数（人）</label>
-                    <input type="number" class="form-control" id="top_n_winners" value="3" min="1">
+                    <input type="number" class="form-control" id="top_n_winners" value="3" min="1" max="100">
                 </div>
-                <div class="mb-3" id="pool_source_field" style="display:none;">
-                    <label class="form-label">随机抽奖奖池</label>
-                    <select class="form-control" id="pool_source">
-                        <option value="certified">认证用户（默认，与现网一致）</option>
-                        <option value="all_members">全部群成员（开奖现场拉取，排除机器人）</option>
-                    </select>
-                    <div class="form-text">「全部群成员」开奖时向 Telegram 现场拉取当前成员，需要小号已登录且在该群、有权查看完整名单。限时 20 秒、最多 2 万人；名单隐藏、不完整、限流或失败时不开奖，不使用旧成员表。</div>
-                </div>
+                <div class="alert alert-info small">所有方式均不要求认证。普通随机、发言抽奖仅统计本期时间窗内收到的群发言（含媒体，相册算一次）；开奖时核对当前成员身份。普通随机均匀抽取不同用户，排行同分按用户ID升序。积分抽奖无需发言，须点击按钮付积分报名。</div>
                 <div class="mb-3">
                     <label class="form-label">奖品描述</label>
-                    <textarea class="form-control" id="prize_description" rows="2" placeholder="奖品详细描述"></textarea>
+                    <textarea class="form-control" id="prize_description" rows="2" maxlength="10000" placeholder="奖品详细描述"></textarea>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">开始时间</label>
-                    <input type="datetime-local" class="form-control" id="start_time">
+                    <label class="form-label">开始时间（北京时间，必填）</label>
+                    <input type="datetime-local" class="form-control" id="start_time" required>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">结束时间</label>
-                    <input type="datetime-local" class="form-control" id="end_time">
+                    <label class="form-label">开奖时间（北京时间，必填）</label>
+                    <input type="datetime-local" class="form-control" id="end_time" required>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">公告频道ID <span class="text-muted">（可选）</span></label>
@@ -177,7 +179,6 @@
                     <select class="form-control" id="status">
                         <option value="pending">待开始</option>
                         <option value="active">进行中</option>
-                        <option value="ended">已结束</option>
                     </select>
                 </div>
             </div>
@@ -199,19 +200,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function toggleLotteryFields() {
     const type = document.getElementById('lottery_type').value;
+    document.getElementById('points_cost_field').style.display = type === 'points' ? 'block' : 'none';
     if (type === 'message_count') {
         document.getElementById('min_messages_field').style.display = 'block';
         document.getElementById('top_n_winners_field').style.display = 'none';
-        document.getElementById('pool_source_field').style.display = 'none';
     } else if (type === 'random') {
         document.getElementById('min_messages_field').style.display = 'none';
         document.getElementById('top_n_winners_field').style.display = 'block';
-        document.getElementById('pool_source_field').style.display = 'block';
     } else {
         // message_rank uses top_n_winners
         document.getElementById('min_messages_field').style.display = 'none';
         document.getElementById('top_n_winners_field').style.display = 'block';
-        document.getElementById('pool_source_field').style.display = 'none';
     }
 }
 
@@ -222,11 +221,11 @@ function showAddModal() {
     document.getElementById('lottery_type').value = 'message_count';
     document.getElementById('min_messages').value = '10';
     document.getElementById('top_n_winners').value = '3';
+    document.getElementById('points_cost').value = '10';
     document.getElementById('prize_description').value = '';
     document.getElementById('start_time').value = '';
     document.getElementById('end_time').value = '';
     document.getElementById('announce_channel_id').value = '';
-    document.getElementById('pool_source').value = 'certified';
     document.getElementById('status').value = 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -242,11 +241,11 @@ function editLottery(id) {
     document.getElementById('lottery_type').value = lottery.lottery_type || 'message_count';
     document.getElementById('min_messages').value = lottery.min_messages || 10;
     document.getElementById('top_n_winners').value = lottery.top_n_winners || 3;
+    document.getElementById('points_cost').value = lottery.points_cost || 10;
     document.getElementById('prize_description').value = lottery.prize_description || '';
     document.getElementById('start_time').value = lottery.start_time || '';
     document.getElementById('end_time').value = lottery.end_time || '';
     document.getElementById('announce_channel_id').value = lottery.announce_channel_id || '';
-    document.getElementById('pool_source').value = lottery.pool_source || 'certified';
     document.getElementById('status').value = lottery.status || 'pending';
     toggleLotteryFields();
     lotteryModal.show();
@@ -260,18 +259,27 @@ function saveLottery() {
         return;
     }
 
+    const start = document.getElementById('start_time').value;
+    const end = document.getElementById('end_time').value;
+    const minimum = Number(document.getElementById('min_messages').value);
+    const pointsCost = Number(document.getElementById('points_cost').value);
+    const winners = Number(document.getElementById('top_n_winners').value);
+    if (!Number.isInteger(pointsCost) || pointsCost < 1 || pointsCost > 1000000 || !start || !end || start >= end || !Number.isInteger(minimum) || minimum < 1 || minimum > 1000000 || !Number.isInteger(winners) || winners < 1 || winners > 100) {
+        showToast('请填写合法起止时间；开奖晚于开始，发言门槛1—1000000，获奖人数1—100', 'warning');
+        return;
+    }
     const data = {
         group_id: {{ group.id }},
         id: document.getElementById('lottery_id').value || null,
         lottery_name: lotteryName,
         lottery_type: document.getElementById('lottery_type').value,
-        min_messages: parseInt(document.getElementById('min_messages').value) || 10,
-        top_n_winners: parseInt(document.getElementById('top_n_winners').value) || 3,
+        min_messages: minimum,
+        top_n_winners: winners,
+        points_cost: pointsCost,
         prize_description: document.getElementById('prize_description').value,
         start_time: document.getElementById('start_time').value || null,
         end_time: document.getElementById('end_time').value || null,
         announce_channel_id: document.getElementById('announce_channel_id').value.trim(),
-        pool_source: document.getElementById('pool_source').value || 'certified',
         status: document.getElementById('status').value
     };
     
@@ -297,7 +305,7 @@ function saveLottery() {
 }
 
 function deleteLottery(id) {
-    showConfirm('确定要删除这个抽奖吗？', function () {
+    showConfirm('确定要删除这个抽奖吗？积分抽奖已有报名时将取消活动并原额退款，保留流水。', function () {
         fetch('/core/api/delete_group_lottery', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -306,7 +314,7 @@ function deleteLottery(id) {
         .then(res => res.json())
         .then(result => {
             if (result.status === 'ok') {
-                showToast('删除成功！', 'success');
+                showToast(result.msg || '删除成功！', 'success');
                 setTimeout(() => location.reload(), 800);
             } else {
                 showToast('删除失败: ' + (result.msg || '未知错误'), 'danger');
@@ -320,7 +328,7 @@ function deleteLottery(id) {
 }
 
 function publishLottery(id) {
-    showConfirm('确定要将抽奖公告发送到 Telegram 群组吗？未开始的抽奖状态将自动变为「进行中」。', function () {
+    showConfirm('确定要将抽奖公告发送到 Telegram 群组吗？已到开始时间的抽奖将变为「进行中」。', function () {
         fetch('/core/api/publish_group_lottery', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},

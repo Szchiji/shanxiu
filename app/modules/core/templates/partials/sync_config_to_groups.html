@@ -1,0 +1,235 @@
+{# One-time config copy modal. Count always comes from the API (all source
+   rows of this kind), never from the current page's search or pagination. #}
+<div class="modal fade" id="syncConfigToGroupsModal" tabindex="-1" aria-labelledby="syncConfigToGroupsTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="syncConfigToGroupsTitle">同步到其他群</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2" id="syncConfigSummary"></p>
+                <div class="alert alert-warning py-2 small mb-3" id="syncConfigWarning">
+                    同步后默认停用，请到目标群确认后启用。只新增，不会覆盖或修改目标群已有配置，也不会打开目标群的功能开关。相同内容再次同步会自动跳过。
+                </div>
+                <div class="mb-2">
+                    <input type="search" class="form-control form-control-sm" id="syncConfigTargetSearch" placeholder="搜索已添加的群" autocomplete="off">
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="syncConfigSelectVisible">
+                        <label class="form-check-label small" for="syncConfigSelectVisible">全选当前列表</label>
+                    </div>
+                    <span class="small text-muted" id="syncConfigSelectedCount">已选 0 个</span>
+                </div>
+                <div id="syncConfigTargetList" class="border rounded p-2" style="max-height: 260px; overflow-y: auto;"></div>
+                <div id="syncConfigEmpty" class="text-muted small py-3 text-center d-none">没有可同步的目标群（仅显示当前机器人已添加的其他群组，不含频道）。</div>
+                <div id="syncConfigResults" class="mt-3 d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="syncConfigConfirmBtn" onclick="confirmSyncToGroups()">
+                    开始同步
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const SYNC_GROUP_ID = {{ group.id|tojson }};
+    const SYNC_KIND = {{ sync_config_kind|tojson }};
+    const SYNC_KIND_LABEL = {{ sync_config_kind_label|tojson }};
+    let syncTargets = [];
+    let syncSourceCount = 0;
+    let syncInFlight = false;
+
+    function visibleTargets() {
+        const q = (document.getElementById('syncConfigTargetSearch').value || '').trim().toLowerCase();
+        if (!q) return syncTargets.slice();
+        return syncTargets.filter(t => (t.title || '').toLowerCase().includes(q) || String(t.id).includes(q));
+    }
+
+    function selectedIds() {
+        return [...document.querySelectorAll('.sync-config-target:checked')].map(el => parseInt(el.value, 10));
+    }
+
+    function renderTargetList() {
+        const box = document.getElementById('syncConfigTargetList');
+        const empty = document.getElementById('syncConfigEmpty');
+        box.innerHTML = '';
+        const rows = visibleTargets();
+        if (!syncTargets.length) {
+            empty.classList.remove('d-none');
+            box.classList.add('d-none');
+        } else {
+            empty.classList.add('d-none');
+            box.classList.remove('d-none');
+        }
+        rows.forEach(t => {
+            const label = document.createElement('label');
+            label.className = 'form-check d-flex align-items-center gap-2 py-1 mb-0';
+            const input = document.createElement('input');
+            input.className = 'form-check-input sync-config-target';
+            input.type = 'checkbox';
+            input.value = String(t.id);
+            input.addEventListener('change', updateSelectedCount);
+            const text = document.createElement('span');
+            text.className = 'small';
+            const title = t.title || ('群 #' + t.id);
+            const extra = t.is_active ? '' : '（已停用）';
+            text.textContent = title + extra;
+            label.appendChild(input);
+            label.appendChild(text);
+            box.appendChild(label);
+        });
+        if (syncTargets.length && !rows.length) {
+            const hint = document.createElement('div');
+            hint.className = 'text-muted small text-center py-2';
+            hint.textContent = '没有匹配的群';
+            box.appendChild(hint);
+        }
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        const n = selectedIds().length;
+        document.getElementById('syncConfigSelectedCount').textContent = '已选 ' + n + ' 个';
+        const btn = document.getElementById('syncConfigConfirmBtn');
+        btn.disabled = syncInFlight || syncSourceCount <= 0 || n <= 0;
+        const visibleBoxes = document.querySelectorAll('#syncConfigTargetList .sync-config-target');
+        const visibleChecked = document.querySelectorAll('#syncConfigTargetList .sync-config-target:checked');
+        const selectAll = document.getElementById('syncConfigSelectVisible');
+        selectAll.checked = visibleBoxes.length > 0 && visibleBoxes.length === visibleChecked.length;
+        selectAll.indeterminate = visibleChecked.length > 0 && visibleChecked.length < visibleBoxes.length;
+    }
+
+    function setSummary() {
+        const el = document.getElementById('syncConfigSummary');
+        el.textContent = '同步本群全部' + SYNC_KIND_LABEL + '（共 ' + syncSourceCount + ' 条）。列表搜索或分页不会改变同步范围。';
+    }
+
+    function showResults(payload) {
+        const box = document.getElementById('syncConfigResults');
+        box.classList.remove('d-none');
+        box.innerHTML = '';
+        const head = document.createElement('div');
+        head.className = 'fw-bold mb-2';
+        head.textContent = '同步结果';
+        box.appendChild(head);
+        (payload.results || []).forEach(row => {
+            const line = document.createElement('div');
+            line.className = 'small mb-1';
+            const name = document.createElement('strong');
+            name.textContent = row.title || ('目标 #' + (row.target_id || ''));
+            line.appendChild(name);
+            const detail = document.createElement('span');
+            if (row.error) {
+                detail.textContent = '：' + row.error;
+            } else {
+                detail.textContent = '：新增 ' + row.added + ' 条，跳过 ' + row.skipped + ' 条';
+            }
+            line.appendChild(detail);
+            box.appendChild(line);
+        });
+    }
+
+    window.openSyncToGroupsModal = async function openSyncToGroupsModal() {
+        if (syncInFlight) return;
+        const results = document.getElementById('syncConfigResults');
+        results.classList.add('d-none');
+        results.innerHTML = '';
+        document.getElementById('syncConfigTargetSearch').value = '';
+        document.getElementById('syncConfigSelectVisible').checked = false;
+        document.getElementById('syncConfigSummary').textContent = '正在加载…';
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('syncConfigToGroupsModal'));
+        modal.show();
+        try {
+            const res = await fetch('/core/api/config_sync_targets/' + encodeURIComponent(SYNC_GROUP_ID) + '?kind=' + encodeURIComponent(SYNC_KIND));
+            const data = await res.json();
+            if (!res.ok || data.status !== 'ok') {
+                document.getElementById('syncConfigSummary').textContent = data.msg || '加载失败';
+                syncTargets = [];
+                syncSourceCount = 0;
+                renderTargetList();
+                return;
+            }
+            syncTargets = data.targets || [];
+            syncSourceCount = data.source_count || 0;
+            setSummary();
+            renderTargetList();
+            if (syncSourceCount <= 0) {
+                document.getElementById('syncConfigConfirmBtn').disabled = true;
+            }
+        } catch (e) {
+            document.getElementById('syncConfigSummary').textContent = '加载失败，请重试';
+            syncTargets = [];
+            syncSourceCount = 0;
+            renderTargetList();
+        }
+    };
+
+    window.confirmSyncToGroups = function confirmSyncToGroups() {
+        const ids = selectedIds();
+        if (syncInFlight || !ids.length || syncSourceCount <= 0) return;
+        const message = '确定将本群全部 ' + syncSourceCount + ' 条' + SYNC_KIND_LABEL + '同步到已选的 ' + ids.length + ' 个群吗？同步后默认停用，请到目标群确认后启用。';
+        if (typeof showConfirm === 'function') {
+            showConfirm(message, function () { runSyncToGroups(ids); }, {
+                title: '同步到其他群',
+                isDanger: false,
+                confirmText: '开始同步'
+            });
+        } else {
+            runSyncToGroups(ids);
+        }
+    };
+
+    async function runSyncToGroups(ids) {
+        if (syncInFlight) return;
+        syncInFlight = true;
+        const btn = document.getElementById('syncConfigConfirmBtn');
+        btn.disabled = true;
+        btn.textContent = '同步中…';
+        try {
+            const res = await fetch('/core/api/sync_config_to_groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    source_group_id: SYNC_GROUP_ID,
+                    kind: SYNC_KIND,
+                    target_group_ids: ids
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || data.status !== 'ok') {
+                if (typeof showToast === 'function') showToast(data.msg || '同步失败', 'error');
+                else document.getElementById('syncConfigSummary').textContent = data.msg || '同步失败';
+                return;
+            }
+            showResults(data);
+            if (typeof showToast === 'function') showToast('同步完成', 'success');
+        } catch (e) {
+            if (typeof showToast === 'function') showToast('同步失败，请重试', 'error');
+        } finally {
+            syncInFlight = false;
+            btn.textContent = '开始同步';
+            updateSelectedCount();
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const search = document.getElementById('syncConfigTargetSearch');
+        if (search) search.addEventListener('input', renderTargetList);
+        const selectAll = document.getElementById('syncConfigSelectVisible');
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                document.querySelectorAll('#syncConfigTargetList .sync-config-target').forEach(el => {
+                    el.checked = selectAll.checked;
+                });
+                updateSelectedCount();
+            });
+        }
+    });
+})();
+</script>

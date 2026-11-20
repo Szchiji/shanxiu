@@ -51,6 +51,8 @@ def create_app():
     import sys as _sys
     from app.log_redaction import install_log_redaction
     install_log_redaction(wrap_std_streams='pytest' not in _sys.modules)
+    from app.send_audit import install_send_audit
+    install_send_audit()
 
     app = Flask(__name__)
     

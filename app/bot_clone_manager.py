@@ -72,6 +72,9 @@ async def start_clone_bot(clone_id: int, bot_token: str, webhook_url: Optional[s
         if handlers_setup_func:
             handlers_setup_func(app, flask_app, clone_id)
         
+        # Audit binding is metadata-only and never changes Telegram parameters.
+        from app.send_audit import register_bot
+        register_bot(app.bot, clone_id=clone_id)
         # Initialize and start
         await app.initialize()
         await app.start()

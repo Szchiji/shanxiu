@@ -160,28 +160,48 @@ def pack_html(fragments, limit=PART_LIMIT):
     return parts or ['']
 
 
-def user_mention_html(user_id, profile=None):
+def user_mention_html(user_id, profile=None, *, show_id=True):
+    """Clickable name/@username. Results also append a visible ID; join notices never do."""
     uid = int(user_id)
     profile = profile or {}
     name = normalize_display_name(profile.get('display_name'))
     username = normalize_username(profile.get('username'))
-    if name and username:
-        label, suffix = escape(name), ' @' + escape(username)
-    elif name:
-        label, suffix = escape(name), ''
+    if name:
+        label = escape(name)
+        suffix = ' @' + escape(username) if username else ''
     elif username:
         label, suffix = '@' + escape(username), ''
     else:
-        label, suffix = str(uid), ''
+        label, suffix = '一位成员', ''
+    if show_id:
+        suffix += f'（{uid}）'
     return f'<a href="tg://user?id={uid}">{label}</a>{suffix}'
+
+
+TYPE_EMOJI = {
+    'message_count': '💬',
+    'message_rank': '🏅',
+    'random': '🎲',
+    'points': '💎',
+}
+PRIZE_MARKS = ('🥇', '🥈', '🥉')
+
+
+def prize_mark(index):
+    return PRIZE_MARKS[index] if 0 <= index < len(PRIZE_MARKS) else '🎁'
+
+
+def type_line(lottery, labels):
+    kind = labels.get(lottery.lottery_type, '抽奖')
+    return f'{TYPE_EMOJI.get(lottery.lottery_type, "🎁")} {kind}'
 
 
 def _times(lottery):
     lines = []
     if lottery.start_time:
-        lines.append('开始  ' + lottery.start_time.strftime('%Y-%m-%d %H:%M'))
+        lines.append('🕒 开始  ' + lottery.start_time.strftime('%Y-%m-%d %H:%M'))
     if lottery.end_time:
-        lines.append('开奖  ' + lottery.end_time.strftime('%Y-%m-%d %H:%M') + '（北京时间）')
+        lines.append('⏰ 开奖  ' + lottery.end_time.strftime('%Y-%m-%d %H:%M') + '（北京时间）')
     return lines
 
 
@@ -204,11 +224,11 @@ def _rules(lottery, total):
 
 
 def _prize_block(prizes, total):
-    fragments = ['<b>奖品</b>']
-    for prize in prizes or []:
-        fragments += ['\n', escape(prize['name']) + f'  ×{int(prize["winner_count"])}']
+    fragments = ['🏆 <b>奖品</b>']
+    for index, prize in enumerate(prizes or []):
+        fragments += ['\n', f'{prize_mark(index)} ', *split_escaped(escape(prize['name'])), f'  ×{int(prize["winner_count"])}']
     if total:
-        fragments += ['\n', f'共 {total} 人']
+        fragments += ['\n', f'👥 共 {total} 人']
     return fragments
 
 
@@ -217,14 +237,12 @@ def format_activity_notice(lottery, *, participant_count=None, labels=None):
     labels = labels or LABELS
     prizes = prizes_of(lottery)
     total = sum(int(prize['winner_count']) for prize in prizes)
-    fragments = [*wrap_tag('b', escape(lottery.lottery_name))]
-    fragments += ['\n', escape(labels.get(lottery.lottery_type, '抽奖')), '\n\n']
+    fragments = ['🎁 ', *wrap_tag('b', escape(lottery.lottery_name))]
+    fragments += ['\n', escape(type_line(lottery, labels)), '\n\n']
     fragments += _prize_block(prizes, total)
-    fragments.append('\n\n')
-    for index, line in enumerate(_rules(lottery, total)):
-        if index:
-            fragments.append('\n')
-        fragments.extend(split_escaped(escape(line)))
+    fragments += ['\n\n', '📋 <b>规则</b>']
+    for line in _rules(lottery, total):
+        fragments += ['\n', *split_escaped(escape(line))]
     times = _times(lottery)
     if times:
         fragments.append('\n\n')
@@ -234,9 +252,9 @@ def format_activity_notice(lottery, *, participant_count=None, labels=None):
             fragments.append(escape(line))
     if participant_count is not None:
         if lottery.lottery_type == 'points':
-            fragments += ['\n\n', escape(f'已报名 {int(participant_count)} 人')]
+            fragments += ['\n\n', escape(f'✅ 已报名 {int(participant_count)} 人')]
         else:
-            fragments += ['\n\n', escape(f'已达到发言条件 {int(participant_count)} 人')]
+            fragments += ['\n\n', escape(f'✅ 已达到发言条件 {int(participant_count)} 人')]
     return pack_html(fragments)
 
 
@@ -249,8 +267,8 @@ def format_result_notice(lottery, winners=None, awards=None, *, profiles=None, l
     if awards is None:
         awards = awards_of(lottery)
     profiles = profiles or {}
-    fragments = ['<b>开奖结果</b>\n', *wrap_tag('b', escape(lottery.lottery_name))]
-    fragments += ['\n', escape(labels.get(lottery.lottery_type, '抽奖'))]
+    fragments = ['🎉 <b>开奖结果</b>\n🎁 ', *wrap_tag('b', escape(lottery.lottery_name))]
+    fragments += ['\n', escape(type_line(lottery, labels))]
     times = _times(lottery)
     if times:
         fragments.append('\n')
@@ -279,25 +297,32 @@ def format_result_notice(lottery, winners=None, awards=None, *, profiles=None, l
             grouped.setdefault(index, []).append(item)
             taken[index] = taken.get(index, 0) + 1
         for index, prize in enumerate(prizes):
-            fragments += ['\n\n', *wrap_tag('b', escape(prize['name']))]
+            fragments += ['\n\n', f'{prize_mark(index)} ', *wrap_tag('b', escape(prize['name']))]
             for item in grouped.get(index, []):
                 fragments += ['\n', mention(item)]
             missing = int(prize['winner_count']) - taken.get(index, 0)
             if missing > 0:
-                fragments += ['\n', escape(f'还缺 {missing} 人')]
+                fragments += ['\n', escape(f'📭 还缺 {missing} 人')]
         leftover_rows = unfilled_prizes(prizes, awards)
         if not prizes and leftover_rows:
-            fragments += ['\n\n', escape('还缺：' + '；'.join(f'{name} {count} 人' for name, count in leftover_rows))]
+            fragments += ['\n\n', escape('📭 还缺：' + '；'.join(f'{name} {count} 人' for name, count in leftover_rows))]
     elif winners:
-        fragments += ['\n\n', '<b>获奖者</b>']
+        fragments += ['\n\n', '🏅 <b>获奖者</b>']
         for uid in winners:
             fragments += ['\n', mention(uid)]
         if lottery.prize_description:
-            fragments += ['\n\n', '<b>奖品</b>\n', *split_escaped(escape(lottery.prize_description))]
+            fragments += ['\n\n', '🏆 <b>奖品</b>\n', *split_escaped(escape(lottery.prize_description))]
     else:
-        fragments += ['\n\n', escape('无人符合条件，本期已经结束。')]
+        fragments += ['\n\n', escape('📭 无人符合条件，本期已经结束。')]
         if prizes:
             fragments += ['\n\n', *_prize_block(prizes, sum(int(p['winner_count']) for p in prizes))]
     if lottery.lottery_type == 'points':
-        fragments += ['\n\n', escape('未中奖不退分。已确认离群或封禁的报名积分已原额退还。')]
+        fragments += ['\n\n', escape('💎 未中奖不退分。已确认离群或封禁的报名积分已原额退还。')]
     return pack_html(fragments)
+
+
+def format_join_success_notice(lottery_name, cost, user_id, profile=None):
+    """Public, short join notice. Never shows a numeric user ID in visible text."""
+    mention = user_mention_html(user_id, profile, show_id=False)
+    title = ''.join(wrap_tag('b', escape(lottery_name or '抽奖')))
+    return f'✅ {mention} 已报名参加 {title}，已扣 {int(cost)} 积分。'

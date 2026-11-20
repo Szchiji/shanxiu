@@ -589,7 +589,15 @@ def _pay_entry(lottery_id, clone_id, source_chat_id, user_id, expected_cost):
     return f'报名成功，已扣 {cost} 积分，剩余 {balance} 积分。未中奖不退分。'
 
 
-async def join_points_lottery(app, bot, lottery_id, clone_id, source_chat_id, user_id, expected_cost=None):
+class JoinReply(str):
+    """Callback alert text; `.notice` is the public HTML only after a first successful debit."""
+    def __new__(cls, alert, notice=None):
+        obj = super().__new__(cls, alert)
+        obj.notice = notice
+        return obj
+
+
+async def join_points_lottery(app, bot, lottery_id, clone_id, source_chat_id, user_id, expected_cost=None, profile=None):
     def context():
         with app.app_context():
             db.session.begin()
@@ -599,17 +607,24 @@ async def join_points_lottery(app, bot, lottery_id, clone_id, source_chat_id, us
                 raise ValueError('报名未开始或已截止，本次未扣分')
             if expected_cost is not None and l.points_cost != expected_cost:
                 raise ValueError('报名费用已变化，请刷新活动后重试，本次未扣分')
-            return g.chat_id, l.points_cost
+            return g.chat_id, l.points_cost, l.lottery_name, g.id
     try:
-        chat_id,cost = await asyncio.to_thread(context)
+        chat_id,cost,lottery_name,group_id = await asyncio.to_thread(context)
         members = await asyncio.wait_for(_eligible(bot,chat_id,[(user_id,1)]),10)
         if not members:
-            return '须是当前群成员才能报名，本次未扣分'
+            return JoinReply('须是当前群成员才能报名，本次未扣分')
+        live = members[0][2] if len(members[0]) > 2 and isinstance(members[0][2], dict) else {}
         def pay():
             with app.app_context():
-                return _pay_entry(lottery_id,clone_id,source_chat_id,user_id,cost)
+                from app.services.lottery_format import format_join_success_notice, local_profiles, merge_profiles
+                alert = _pay_entry(lottery_id,clone_id,source_chat_id,user_id,cost)
+                if not str(alert).startswith('报名成功'):
+                    return JoinReply(alert)
+                local = local_profiles(group_id, [user_id]).get(int(user_id))
+                merged = merge_profiles(profile, live, local)
+                return JoinReply(alert, format_join_success_notice(lottery_name, cost, user_id, merged))
         return await asyncio.to_thread(pay)
     except ValueError as error:
-        return str(error)
+        return JoinReply(str(error))
     except Exception:
-        return '无法确认报名状态，本次操作未确认；请查看积分记录或再次点击，系统不会重复扣分'
+        return JoinReply('无法确认报名状态，本次操作未确认；请查看积分记录或再次点击，系统不会重复扣分')

@@ -304,8 +304,10 @@ def fix_database_schema(app):
         # ownership fields, TEXT fault_time).  Does not backfill owner_known.
         from app.modules.report.service import ensure_user_report_schema
         from app.modules.report.web_service import ensure_report_web_schema
+        from app.models import ensure_points_exchange_record_schema
         ensure_user_report_schema(db)
         ensure_report_web_schema(db)
+        ensure_points_exchange_record_schema(db)
 
         print("✅ 数据库结构检查完成", flush=True)
 

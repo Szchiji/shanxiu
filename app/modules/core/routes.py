@@ -68,6 +68,7 @@ from io import BytesIO
 from functools import wraps
 from types import SimpleNamespace
 from urllib.parse import urlencode
+import html
 
 core_bp = Blueprint('core', __name__, url_prefix='/core', template_folder='templates')
 
@@ -1834,10 +1835,8 @@ def page_points_shop(gid):
     conf = get_group_conf(group)
     # Exchange data
     items = PointsExchangeItem.query.filter_by(group_id=gid).order_by(PointsExchangeItem.created_at.desc()).all()
-    records = (PointsExchangeRecord.query
-               .filter_by(group_id=gid)
-               .order_by(PointsExchangeRecord.created_at.desc())
-               .limit(100).all())
+    records_q = (request.args.get('q') or '').strip()
+    record_rows = _load_exchange_records_for_shop(gid, records_q)
     # Auction data
     auctions = PointsAuction.query.filter_by(group_id=gid).order_by(PointsAuction.created_at.desc()).all()
     auctions_json = [
@@ -1854,7 +1853,8 @@ def page_points_shop(gid):
     # Determine which tab to open based on the 'tab' query param (used by server-side redirects)
     active_tab = request.args.get('tab', '')
     return render_template('points_shop.html', page='points_shop', group=group,
-                           conf=conf, items=items, records=records,
+                           conf=conf, items=items, records=record_rows,
+                           records_q=records_q,
                            auctions=auctions, auctions_json=auctions_json,
                            active_tab=active_tab)
 
@@ -4971,7 +4971,273 @@ def api_create_admin_red_packet():
 
 # --- Exchange Catalog Helpers ---
 
-def _build_exchange_catalog_sync(group_id):
+def _exchange_bot_username(bot_or_app) -> str:
+    """Return a cached bot username without leading @, or an empty string."""
+    if not bot_or_app:
+        return ''
+    bot = getattr(bot_or_app, 'bot', bot_or_app)
+    username = getattr(bot, 'username', None) or ''
+    return str(username).lstrip('@').strip()
+
+
+async def _resolve_bot_username(bot_or_app) -> str:
+    """Prefer the cached username; fall back to get_me() when missing."""
+    username = _exchange_bot_username(bot_or_app)
+    if username:
+        return username
+    bot = getattr(bot_or_app, 'bot', bot_or_app) if bot_or_app else None
+    if bot is None or not hasattr(bot, 'get_me'):
+        return ''
+    try:
+        me = await bot.get_me()
+        return (getattr(me, 'username', None) or '').lstrip('@').strip()
+    except Exception as exc:
+        logging.warning("could not resolve bot username for exchange buttons: %s", exc)
+        return ''
+
+
+def _exchange_start_url(bot_username, group_id, item_id) -> str:
+    return f"https://t.me/{bot_username}?start=exchange_{group_id}_{item_id}"
+
+
+def _exchange_item_button(text, group_id, item_id, bot_username=None):
+    """Deep-link into the bot to complete redemption; fall back to callback_data."""
+    username = (bot_username or '').lstrip('@').strip()
+    if username:
+        return InlineKeyboardButton(text, url=_exchange_start_url(username, group_id, item_id))
+    return InlineKeyboardButton(text, callback_data=f"exchange_redeem_{item_id}_{group_id}")
+
+
+def _snapshot_exchange_user(tg_user):
+    """Return (username_without_at, display_name), either may be None."""
+    username = (getattr(tg_user, 'username', None) or '').strip() or None
+    if username and username.startswith('@'):
+        username = username[1:] or None
+    first = (getattr(tg_user, 'first_name', None) or '').strip()
+    last = (getattr(tg_user, 'last_name', None) or '').strip()
+    display = (f"{first} {last}".strip() if last else first) or None
+    return username, display
+
+
+def _resolve_redemption_info(item, conf) -> str:
+    info = (getattr(item, 'redemption_info', None) or '').strip()
+    if info:
+        return info
+    return ((conf or {}).get('exchange_default_redemption_info') or '').strip()
+
+
+def _try_redeem_exchange_item(group_id, item_id, user, group=None, conf=None):
+    """Deduct points and write an exchange record. Must run in a Flask app context.
+
+    Returns ``(result_dict, error_html_or_None)``.
+    """
+    group = group or BotGroup.query.get(group_id)
+    if conf is None:
+        conf = get_group_conf(group) if group else {}
+    if group and not conf.get('points_shop_enabled', True):
+        return None, "❌ 积分商城已关闭"
+    item = PointsExchangeItem.query.filter_by(
+        id=item_id, group_id=group_id, is_active=True
+    ).first()
+    if not item:
+        return None, "❌ 商品不存在或已下架。"
+    if item.stock is not None and item.stock <= 0:
+        return None, "❌ 该商品库存已用完。"
+    user_pts = UserPoints.query.filter_by(group_id=group_id, user_id=user.id).first()
+    balance = user_pts.points_balance if user_pts else 0
+    if balance < item.points_cost:
+        return None, (
+            f"❌ 积分不足。兑换 <b>{html.escape(item.item_name or '')}</b> 需要 "
+            f"<b>{item.points_cost}</b> 积分，您当前积分为 <b>{balance}</b>。"
+        )
+    if not user_pts:
+        user_pts = UserPoints(group_id=group_id, user_id=user.id, points_balance=0)
+        db.session.add(user_pts)
+    user_pts.points_balance -= item.points_cost
+    item_deactivated = False
+    if item.stock is not None:
+        item.stock -= 1
+        if item.stock <= 0:
+            item.is_active = False
+            item_deactivated = True
+    announcement_msg_id = item.announcement_msg_id
+    channel_id = (conf.get('exchange_channel_id') or '').strip() if conf else ''
+    username, display_name = _snapshot_exchange_user(user)
+    now = get_beijing_now()
+    db.session.add(PointsExchangeRecord(
+        group_id=group_id,
+        user_id=user.id,
+        item_id=item.id,
+        points_spent=item.points_cost,
+        user_username=username,
+        user_display_name=display_name,
+        item_name_snapshot=item.item_name,
+        created_at=now,
+    ))
+    db.session.add(PointsLog(
+        group_id=group_id,
+        user_id=user.id,
+        points_change=-item.points_cost,
+        reason=f"兑换商品: {item.item_name}",
+        balance_after=user_pts.points_balance,
+    ))
+    db.session.commit()
+    return {
+        'item_name': item.item_name,
+        'points_cost': item.points_cost,
+        'balance': user_pts.points_balance,
+        'redemption_info': _resolve_redemption_info(item, conf),
+        'item_deactivated': item_deactivated,
+        'announcement_msg_id': announcement_msg_id,
+        'channel_id': channel_id,
+        'user_id': user.id,
+        'user_username': username,
+        'user_display_name': display_name,
+        'group_title': (group.title if group else '') or '',
+        'created_at': now,
+        'redeemer_display': _format_tg_user_display(user),
+    }, None
+
+
+def _format_exchange_redeemer_html(user_id, display_name, username) -> str:
+    parts = []
+    if display_name:
+        parts.append(html.escape(display_name))
+    if username:
+        parts.append('@' + html.escape(str(username).lstrip('@')))
+    if user_id is not None:
+        parts.append(f"ID: <code>{int(user_id)}</code>")
+    return ' / '.join(parts) if parts else '用户'
+
+
+def _build_exchange_success_reply(result) -> str:
+    """Group-chat success message (HTML)."""
+    lines = [
+        "✅ <b>兑换成功！</b>",
+        f"👤 兑换人：{html.escape(result.get('redeemer_display') or '')}",
+        f"🎁 商品：<b>{html.escape(result.get('item_name') or '')}</b>",
+        f"💰 消耗积分：<b>{result['points_cost']}</b>  |  剩余积分：<b>{result['balance']}</b>",
+    ]
+    info = (result.get('redemption_info') or '').strip()
+    if info:
+        lines.append(f"\n📋 领取说明：\n{html.escape(info)}")
+    return "\n".join(lines)
+
+
+def _build_exchange_private_receipt(result) -> str:
+    """Private-chat redemption receipt (HTML). Never auto-deleted."""
+    created = result.get('created_at') or get_beijing_now()
+    time_str = created.strftime('%Y-%m-%d %H:%M:%S') if hasattr(created, 'strftime') else str(created)
+    lines = [
+        "✅ <b>兑换成功！</b>",
+        f"🏷 群组：{html.escape(result.get('group_title') or '')}",
+        f"👤 兑换人：{_format_exchange_redeemer_html(result.get('user_id'), result.get('user_display_name'), result.get('user_username'))}",
+        f"🎁 商品：<b>{html.escape(result.get('item_name') or '')}</b>",
+        f"💰 消耗积分：<b>{result['points_cost']}</b>  |  剩余积分：<b>{result['balance']}</b>",
+        f"🕒 兑换时间：{time_str}",
+    ]
+    info = (result.get('redemption_info') or '').strip()
+    if info:
+        lines.append(f"\n📋 领取说明：\n{html.escape(info)}")
+    return "\n".join(lines)
+
+
+def _build_exchange_callback_alert(result) -> str:
+    """Legacy channel-button alert; Telegram show_alert limit is 200 characters."""
+    item_name = result.get('item_name') or ''
+    prefix = "✅ 兑换成功！\n"
+    mid_tmpl = "🎁 商品：{name}\n💰 消耗：{cost}  |  剩余：{balance}\n"
+    suffix = "📩 凭证已私发（若未收到请截图保存）"
+    mid_empty = mid_tmpl.format(name='', cost=result['points_cost'], balance=result['balance'])
+    budget = 200 - len(prefix) - len(mid_empty) - len(suffix)
+    name = item_name
+    if budget <= 0:
+        return (prefix + mid_tmpl.format(name='', cost=result['points_cost'], balance=result['balance']) + suffix)[:200]
+    if len(name) > budget:
+        name = (name[: budget - 1] + '…') if budget > 1 else name[:budget]
+    text = prefix + mid_tmpl.format(name=name, cost=result['points_cost'], balance=result['balance']) + suffix
+    return text[:200]
+
+
+def _member_full_name(member) -> str:
+    first = (getattr(member, 'first_name', None) or '').strip()
+    last = (getattr(member, 'last_name', None) or '').strip()
+    return (f"{first} {last}".strip() if last else first)
+
+
+def _exchange_record_view(record, member=None):
+    display = (record.user_display_name or '').strip()
+    username = (record.user_username or '').strip()
+    if member:
+        if not display:
+            display = _member_full_name(member)
+        if not username:
+            username = (member.username or '').strip()
+    if username.startswith('@'):
+        username = username[1:]
+    item_name = (record.item_name_snapshot or '').strip()
+    if not item_name:
+        item_name = record.item.item_name if record.item else '(已删除)'
+    return {
+        'user_id': record.user_id,
+        'display_name': display,
+        'username': username,
+        'item_name': item_name,
+        'points_spent': record.points_spent,
+        'created_at': record.created_at,
+    }
+
+
+def _load_exchange_records_for_shop(gid, q=''):
+    """Recent records for the admin shop page, with optional keyword search."""
+    q = (q or '').strip()
+    query = (
+        PointsExchangeRecord.query
+        .options(joinedload(PointsExchangeRecord.item))
+        .filter(PointsExchangeRecord.group_id == gid)
+    )
+    if q:
+        like = f'%{q}%'
+        clauses = [
+            PointsExchangeRecord.user_display_name.ilike(like),
+            PointsExchangeRecord.user_username.ilike(like),
+            PointsExchangeRecord.item_name_snapshot.ilike(like),
+            cast(PointsExchangeRecord.user_id, String).like(like),
+        ]
+        item_name_match = db.session.query(PointsExchangeItem.id).filter(
+            PointsExchangeItem.id == PointsExchangeRecord.item_id,
+            PointsExchangeItem.item_name.ilike(like),
+        ).exists()
+        clauses.append(item_name_match)
+        member_match = db.session.query(GroupMember.id).filter(
+            GroupMember.group_id == PointsExchangeRecord.group_id,
+            GroupMember.user_id == PointsExchangeRecord.user_id,
+            or_(
+                GroupMember.username.ilike(like),
+                GroupMember.first_name.ilike(like),
+                GroupMember.last_name.ilike(like),
+            ),
+        ).exists()
+        clauses.append(member_match)
+        if q.isdigit():
+            clauses.append(PointsExchangeRecord.user_id == int(q))
+        query = query.filter(or_(*clauses))
+    records = query.order_by(PointsExchangeRecord.created_at.desc()).limit(200).all()
+    missing_ids = {
+        r.user_id for r in records
+        if not (r.user_display_name or '').strip() and not (r.user_username or '').strip()
+    }
+    member_map = {}
+    if missing_ids:
+        members = GroupMember.query.filter(
+            GroupMember.group_id == gid,
+            GroupMember.user_id.in_(missing_ids),
+        ).all()
+        member_map = {m.user_id: m for m in members}
+    return [_exchange_record_view(r, member_map.get(r.user_id)) for r in records]
+
+
+def _build_exchange_catalog_sync(group_id, bot_username=None):
     """同步构建兑换商品目录消息内容（在数据库上下文中调用）。
     返回 (text, buttons_list)，buttons_list 是 InlineKeyboardButton 行列表。
     """
@@ -5000,13 +5266,13 @@ def _build_exchange_catalog_sync(group_id):
             block.append(f"   📝 {it.item_description}")
         lines.extend(block)
         lines.append("")
-        buttons.append([InlineKeyboardButton(
+        buttons.append([_exchange_item_button(
             f"🛒 {idx}. {it.item_name}（{it.points_cost} 积分）",
-            callback_data=f"exchange_redeem_{it.id}_{group_id}"
+            group_id, it.id, bot_username,
         )])
 
     lines.append("━━━━━━━━━━━━━━━━")
-    lines.append("👇 点击下方按钮一键兑换，积分不足将提示余额。")
+    lines.append("👇 点击下方按钮打开机器人，完成兑换后会在私聊收到凭证。")
     return "\n".join(lines), buttons
 
 
@@ -5014,6 +5280,8 @@ async def _update_exchange_catalog_async(group_id, ptb_app):
     """在管理员指定的频道中发布或更新兑换商品目录消息。"""
     if not global_flask_app:
         return
+
+    bot_username = await _resolve_bot_username(ptb_app)
 
     def _load_data():
         with global_flask_app.app_context():
@@ -5023,7 +5291,7 @@ async def _update_exchange_catalog_async(group_id, ptb_app):
             conf = get_group_conf(group)
             channel_id = conf.get('exchange_channel_id', '').strip()
             msg_id = conf.get('exchange_catalog_msg_id')
-            text, buttons = _build_exchange_catalog_sync(group_id)
+            text, buttons = _build_exchange_catalog_sync(group_id, bot_username=bot_username)
             return {'conf': conf, 'channel_id': channel_id, 'msg_id': msg_id,
                     'text': text, 'buttons': buttons}
 
@@ -5135,7 +5403,7 @@ def _format_item_announcement_text(item):
         lines.append(f"📝 {item.item_description}")
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━")
-    lines.append("👇 点击下方按钮立即兑换！")
+    lines.append("👇 点击下方按钮打开机器人完成兑换。")
     return "\n".join(lines)
 
 
@@ -5161,10 +5429,11 @@ async def _send_item_announcement_async(group_id, item_id, ptb_app):
     if not data or not data['channel_id']:
         return
 
+    bot_username = await _resolve_bot_username(ptb_app)
     button = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
+        _exchange_item_button(
             f"🛍️ 兑换「{data['item_name']}」({data['points_cost']}积分)",
-            callback_data=f"exchange_redeem_{item_id}_{group_id}"
+            group_id, item_id, bot_username,
         )
     ]])
     try:
@@ -5217,10 +5486,11 @@ async def _edit_item_announcement_async(group_id, item_id, ptb_app):
     if not data:
         return
 
+    bot_username = await _resolve_bot_username(ptb_app)
     button = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
+        _exchange_item_button(
             f"🛍️ 兑换「{data['item_name']}」({data['points_cost']}积分)",
-            callback_data=f"exchange_redeem_{item_id}_{group_id}"
+            group_id, item_id, bot_username,
         )
     ]])
     try:
@@ -5377,6 +5647,8 @@ def api_save_exchange_channel():
         conf['exchange_channel_id'] = new_channel
         if 'exchange_command_word' in d:
             conf['exchange_command_word'] = (d['exchange_command_word'] or '兑换').strip()
+        if 'exchange_default_redemption_info' in d:
+            conf['exchange_default_redemption_info'] = (d.get('exchange_default_redemption_info') or '').strip()
         group.config = json.dumps(conf, ensure_ascii=False)
         db.session.commit()
         if new_channel:
@@ -14848,6 +15120,60 @@ async def _send_start_message_payload(update, start_msg_data, fallback_content=N
             return False
 
 
+async def _handle_exchange_start(update: Update, context, start_param: str) -> bool:
+    """Handle ``/start exchange_{group_id}_{item_id}``.
+
+    Returns True when the payload was consumed (success or a user-facing error),
+    so cmd_start must not send the generic welcome.  Returns False if the
+    payload is malformed and normal /start handling should continue.
+    """
+    parts = (start_param or '').split('_')
+    if len(parts) != 3 or parts[0] != 'exchange':
+        return False
+    try:
+        group_id = int(parts[1])
+        item_id = int(parts[2])
+    except (TypeError, ValueError):
+        return False
+
+    user = update.effective_user
+    if not user or not update.message:
+        return False
+
+    current_clone_id = context.application.bot_data.get('clone_id') if context.application else None
+
+    if not global_flask_app:
+        await update.message.reply_html("❌ 系统繁忙，请稍后重试。")
+        return True
+
+    def _do():
+        with global_flask_app.app_context():
+            group = BotGroup.query.get(group_id)
+            if not group:
+                return None, "❌ 商品不存在或已下架。"
+            if group.clone_id != current_clone_id:
+                return None, "❌ 此兑换链接不属于本机器人，请从对应群的兑换入口进入。"
+            conf = get_group_conf(group)
+            return _try_redeem_exchange_item(
+                group_id, item_id, user, group=group, conf=conf
+            )
+
+    result, error = await asyncio.get_running_loop().run_in_executor(None, _do)
+    if error:
+        await update.message.reply_html(error)
+        return True
+
+    await update.message.reply_html(_build_exchange_private_receipt(result))
+
+    if result.get('item_deactivated'):
+        await _delete_item_announcement_async(
+            result.get('channel_id'), result.get('announcement_msg_id'),
+            context.application,
+        )
+    await _update_exchange_catalog_async(group_id, context.application)
+    return True
+
+
 async def cmd_start(update: Update, context):
     print(f"✅ /start 命令被触发，用户 ID: {update.effective_user.id}")
     user_id = update.effective_user.id
@@ -14867,8 +15193,15 @@ async def cmd_start(update: Update, context):
         print(f"⚠️ /start 调试: 在群组中使用 /start 命令，忽略")
         return
 
-    # Handle invitation deep link: /start inv_{inviter_id}_{group_db_id}
     start_param = context.args[0] if context.args else ''
+
+    # Handle exchange deep link first so it never falls through to the
+    # generic admin/user welcome (and the receipt is never auto-deleted).
+    if start_param.startswith('exchange_'):
+        if await _handle_exchange_start(update, context, start_param):
+            return
+
+    # Handle invitation deep link: /start inv_{inviter_id}_{group_db_id}
     if start_param.startswith('inv_'):
         parts = start_param.split('_')
         if len(parts) == 3:
@@ -16075,7 +16408,9 @@ async def on_message(update: Update, context):
                     return
                 if conf.get('points_shop_enabled', True) and _is_exchange_list:
                     # Show available exchange items with inline buttons (reuse catalog builder)
-                    catalog_text, catalog_buttons = _build_exchange_catalog_sync(group.id)
+                    catalog_text, catalog_buttons = _build_exchange_catalog_sync(
+                        group.id, bot_username=_exchange_bot_username(context.bot) or _exchange_bot_username(context.application)
+                    )
                     if catalog_buttons:
                         await msg.reply_html(
                             catalog_text,
@@ -16088,75 +16423,18 @@ async def on_message(update: Update, context):
                 if conf.get('points_shop_enabled', True) and _is_exchange_item:
                     item_id_str = txt[3:].strip()
                     if item_id_str.isdigit():
-                        item_id = int(item_id_str)
-                        item = PointsExchangeItem.query.filter_by(id=item_id, group_id=group.id, is_active=True).first()
-                        if not item:
-                            await msg.reply_html("❌ 商品不存在或已下架。")
-                            return
-                        # Check stock
-                        if item.stock is not None and item.stock <= 0:
-                            await msg.reply_html("❌ 该商品库存已用完。")
-                            return
-                        # Check user points
-                        user_points = UserPoints.query.filter_by(group_id=group.id, user_id=user.id).first()
-                        balance = user_points.points_balance if user_points else 0
-                        if balance < item.points_cost:
-                            await msg.reply_html(
-                                f"❌ 积分不足。兑换 <b>{item.item_name}</b> 需要 <b>{item.points_cost}</b> 积分，"
-                                f"您当前积分为 <b>{balance}</b>。"
-                            )
-                            return
-                        # Deduct points
-                        if not user_points:
-                            user_points = UserPoints(group_id=group.id, user_id=user.id, points_balance=0)
-                            db.session.add(user_points)
-                        user_points.points_balance -= item.points_cost
-                        # Reduce stock and auto-deactivate when sold out
-                        item_deactivated = False
-                        if item.stock is not None:
-                            item.stock -= 1
-                            if item.stock <= 0:
-                                item.is_active = False
-                                item_deactivated = True
-                        # Snapshot before commit
-                        item_announcement_msg_id = item.announcement_msg_id
-                        # Record
-                        record = PointsExchangeRecord(
-                            group_id=group.id,
-                            user_id=user.id,
-                            item_id=item.id,
-                            points_spent=item.points_cost
+                        result, error = _try_redeem_exchange_item(
+                            group.id, int(item_id_str), user, group=group, conf=conf
                         )
-                        db.session.add(record)
-                        # Log
-                        points_log = PointsLog(
-                            group_id=group.id,
-                            user_id=user.id,
-                            points_change=-item.points_cost,
-                            reason=f"兑换商品: {item.item_name}",
-                            balance_after=user_points.points_balance
-                        )
-                        db.session.add(points_log)
-                        db.session.commit()
-                        # Build redeemer display string
-                        redeemer_display = _format_tg_user_display(update.effective_user)
-                        # Notify user
-                        reply_lines = [
-                            f"✅ <b>兑换成功！</b>",
-                            f"👤 兑换人：{redeemer_display}",
-                            f"🎁 商品：<b>{item.item_name}</b>",
-                            f"💰 消耗积分：<b>{item.points_cost}</b>  |  剩余积分：<b>{user_points.points_balance}</b>",
-                        ]
-                        if item.redemption_info:
-                            reply_lines.append(f"\n📋 兑换信息：\n{item.redemption_info}")
-                        await msg.reply_html("\n".join(reply_lines))
-                        # 如商品售罄，删除单条公告并停用
-                        if item_deactivated:
-                            _exch_channel = conf.get('exchange_channel_id', '').strip()
+                        if error:
+                            await msg.reply_html(error)
+                            return
+                        await msg.reply_html(_build_exchange_success_reply(result))
+                        if result.get('item_deactivated'):
                             await _delete_item_announcement_async(
-                                _exch_channel, item_announcement_msg_id, context.application
+                                result.get('channel_id'), result.get('announcement_msg_id'),
+                                context.application
                             )
-                        # 兑换成功后自动更新频道商品目录
                         await _update_exchange_catalog_async(group.id, context.application)
                         return
 
@@ -16488,7 +16766,12 @@ async def do_query_page(chat_id, group_id, conf, fields, kw=None, page=1):
     return await asyncio.get_running_loop().run_in_executor(None, _sync_query)
 
 async def exchange_item_callback(update: Update, context):
-    """处理兑换商品内联按钮点击（来自频道商品目录）"""
+    """Legacy channel-button callback (older posts still use callback_data).
+
+    Telegram does not allow answerCallbackQuery(url='https://t.me/...') so we
+    keep redeeming here: a short alert plus a best-effort private voucher.
+    New catalog / announcement posts use a deep-link URL button instead.
+    """
     query = update.callback_query
     user = update.effective_user
 
@@ -16507,94 +16790,32 @@ async def exchange_item_callback(update: Update, context):
 
     def _do_exchange():
         with global_flask_app.app_context():
-            grp = BotGroup.query.get(group_id)
-            if grp and not get_group_conf(grp).get('points_shop_enabled', True):
-                return None, "❌ 积分商城已关闭"
-
-            item = PointsExchangeItem.query.filter_by(
-                id=item_id, group_id=group_id, is_active=True
-            ).first()
-            if not item:
-                return None, "❌ 商品不存在或已下架"
-
-            if item.stock is not None and item.stock <= 0:
-                return None, "❌ 该商品库存已用完"
-
-            user_pts = UserPoints.query.filter_by(
-                group_id=group_id, user_id=user.id
-            ).first()
-            balance = user_pts.points_balance if user_pts else 0
-
-            if balance < item.points_cost:
-                return None, (
-                    f"❌ 积分不足。\n"
-                    f"需要 {item.points_cost} 积分，当前余额 {balance} 积分"
-                )
-
-            if not user_pts:
-                user_pts = UserPoints(
-                    group_id=group_id, user_id=user.id, points_balance=0
-                )
-                db.session.add(user_pts)
-
-            user_pts.points_balance -= item.points_cost
-            item_deactivated = False
-            if item.stock is not None:
-                item.stock -= 1
-                if item.stock <= 0:
-                    item.is_active = False
-                    item_deactivated = True
-
-            # Snapshot announcement info and channel before commit
-            announcement_msg_id = item.announcement_msg_id
-            channel_id = get_group_conf(grp).get('exchange_channel_id', '').strip() if grp else ''
-
-            db.session.add(PointsExchangeRecord(
-                group_id=group_id,
-                user_id=user.id,
-                item_id=item.id,
-                points_spent=item.points_cost
-            ))
-            db.session.add(PointsLog(
-                group_id=group_id,
-                user_id=user.id,
-                points_change=-item.points_cost,
-                reason=f"兑换商品: {item.item_name}",
-                balance_after=user_pts.points_balance
-            ))
-            db.session.commit()
-
-            return {
-                'item_name': item.item_name,
-                'points_cost': item.points_cost,
-                'balance': user_pts.points_balance,
-                'redemption_info': item.redemption_info or '',
-                'item_deactivated': item_deactivated,
-                'announcement_msg_id': announcement_msg_id,
-                'channel_id': channel_id,
-            }, None
+            return _try_redeem_exchange_item(group_id, item_id, user)
 
     result, error = await asyncio.get_running_loop().run_in_executor(None, _do_exchange)
 
     if error:
-        await query.answer(error, show_alert=True)
+        # show_alert is plain text; strip simple HTML tags from shared errors
+        alert = error.replace('<b>', '').replace('</b>', '')
+        if len(alert) > 200:
+            alert = alert[:200]
+        await query.answer(alert, show_alert=True)
         return
 
-    alert = (
-        f"✅ 兑换成功！\n"
-        f"👤 兑换人：{_format_tg_user_display(user)}\n"
-        f"🎁 商品：{result['item_name']}\n"
-        f"💰 消耗积分：{result['points_cost']}  |  剩余积分：{result['balance']}"
-    )
-    if result['redemption_info']:
-        alert += f"\n\n📋 兑换信息：\n{result['redemption_info']}"
+    await query.answer(_build_exchange_callback_alert(result), show_alert=True)
 
-    await query.answer(alert, show_alert=True)
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=_build_exchange_private_receipt(result),
+            parse_mode='HTML',
+        )
+    except Exception as exc:
+        logging.warning("exchange voucher DM failed for user %s: %s", getattr(user, 'id', None), exc)
 
-    # If item sold out, delete its individual announcement and update catalog
     if result.get('item_deactivated'):
         await _delete_item_announcement_async(
-            result['channel_id'], result['announcement_msg_id'], context.application
+            result.get('channel_id'), result.get('announcement_msg_id'), context.application
         )
     await _update_exchange_catalog_async(group_id, context.application)
 

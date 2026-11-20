@@ -510,6 +510,9 @@ class PointsExchangeRecord(db.Model):
     item_id = db.Column(db.Integer, db.ForeignKey('points_exchange_items.id'), index=True)
     points_spent = db.Column(db.Integer, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
+    user_username = db.Column(db.String(255), nullable=True)  # Telegram @username without leading @
+    user_display_name = db.Column(db.String(255), nullable=True)  # Telegram display name snapshot
+    item_name_snapshot = db.Column(db.String(255), nullable=True)  # item name at redemption time
 
     group = db.relationship('BotGroup', backref='exchange_records', lazy=True)
     item = db.relationship('PointsExchangeItem', backref='records', lazy=True)
@@ -1401,6 +1404,7 @@ DEFAULT_SYSTEM = {
     "exchange_channel_id": "",       # 展示商品列表的频道ID
     "exchange_catalog_msg_id": None, # 已发布的商品目录消息ID（用于编辑更新）
     "exchange_command_word": "兑换",  # 群内触发兑换商城的命令词
+    "exchange_default_redemption_info": "",  # 商品未单独填写领取信息时的默认说明
     # 积分竞拍频道
     "auction_channel_id": "",        # 竞拍通知推送频道ID
     "auction_command_word": "竞拍",   # 群内触发查看竞拍的命令词
@@ -1416,3 +1420,47 @@ DEFAULT_SYSTEM = {
     "warn_action": "mute",           # mute, kick, ban
     "warn_mute_minutes": 60,
 }
+
+def ensure_points_exchange_record_schema(db) -> list:
+    """Add snapshot columns to points_exchange_records if missing.
+
+    Idempotent and compatible with PostgreSQL and SQLite.  Uses
+    ``inspect(...).get_columns`` and plain ``ALTER TABLE ... ADD COLUMN``
+    (no MySQL-only syntax, no IF NOT EXISTS).
+    """
+    import logging
+    import re
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+
+    logger = logging.getLogger(__name__)
+    applied = []
+    try:
+        inspector = sa_inspect(db.engine)
+        if not inspector.has_table('points_exchange_records'):
+            return applied
+        existing = {col['name'] for col in inspector.get_columns('points_exchange_records')}
+    except Exception as exc:
+        logger.warning("points_exchange_records schema inspect failed: %s", exc)
+        return applied
+
+    columns_to_add = (
+        ('user_username', 'VARCHAR(255)'),
+        ('user_display_name', 'VARCHAR(255)'),
+        ('item_name_snapshot', 'VARCHAR(255)'),
+    )
+    for name, typ in columns_to_add:
+        if name in existing:
+            continue
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name):
+            logger.warning("points_exchange_records: skipping unsafe column name %r", name)
+            continue
+        stmt = f'ALTER TABLE points_exchange_records ADD COLUMN "{name}" {typ}'
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(sa_text(stmt))
+                conn.commit()
+            applied.append(stmt)
+            logger.info("points_exchange_records: added column %s", name)
+        except Exception as exc:
+            logger.warning("points_exchange_records: could not add column %s: %s", name, exc)
+    return applied

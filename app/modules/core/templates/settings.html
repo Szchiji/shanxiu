@@ -404,6 +404,7 @@
                         <input class="form-check-input" type="checkbox" id="scheduled_msg_open" {{ 'checked' if conf.get('scheduled_msg_open', True) }}>
                         <label class="fw-bold">定时消息模块</label>
                     </div>
+                    <div class="form-text mt-2" style="font-size: 11px;">本群自己的功能总开关，由本群单独控制。从其他群同步过来的规则会跟随源群的开启和停止，但不会改动这里的总开关；总开关关闭时，即使跟随规则是启用状态也不会生效。</div>
                 </div>
 
                 <!-- 4. 其他设置 -->

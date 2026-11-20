@@ -1,10 +1,10 @@
-"""One-time copy of auto-reply / scheduled-message config to other groups.
+"""Copy auto-reply / scheduled-message config to other groups, with status follow.
 
-This is a configuration copy, not live message forwarding and not an ongoing
-link.  Copies are always inserted as new disabled rows; existing target rows
-are never updated or deleted.  Dedup uses a content fingerprint so repeating
-the same sync, or a target that already has the same config, is skipped.
-Keywords are not treated as a unique key.
+This is a unidirectional source→target link, not live message forwarding.
+First sync creates target rows and mapping records.  Later syncs update the
+already-linked rows instead of inserting duplicates.  Enable/pause of a source
+rule (and the source group's module switch) is propagated only to linked
+target rows; the target group's own module switch and native rules stay local.
 """
 
 from __future__ import annotations
@@ -15,8 +15,10 @@ import threading
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
+from sqlalchemy import or_
+
 from app import db
-from app.models import AutoReply, BotGroup, ScheduledMessage
+from app.models import AutoReply, BotGroup, ConfigSyncLink, ScheduledMessage, DEFAULT_SYSTEM
 
 KIND_AUTO_REPLIES = 'auto_replies'
 KIND_SCHEDULED_MESSAGES = 'scheduled_messages'
@@ -27,11 +29,13 @@ KIND_LABELS = {
 }
 TARGET_GROUP_TYPES = ('group', 'supergroup')
 MAX_SYNC_TARGETS = 50
+SOURCE_IS_FOLLOWER_MSG = '本群已有跟随其他群的规则，不能再作为源同步到其他群'
+TARGET_IS_SOURCE_MSG = '目标群已作为源同步到其他群，不能再接收跟随'
+FOLLOWED_TOGGLE_MSG = '该规则跟随源群开启和停止，请到源群修改'
+_BUSY_MSG = '同步正在进行，请稍后再试'
 
-# Serialize overlapping syncs in the same process (double-click / repeated POST).
 _SYNC_LOCKS_GUARD = threading.Lock()
 _SYNC_LOCKS: dict[str, threading.Lock] = {}
-_BUSY_MSG = '同步正在进行，请稍后再试'
 
 
 def kind_label(kind: str) -> str:
@@ -81,17 +85,38 @@ def list_eligible_targets(source: BotGroup) -> list[BotGroup]:
     )
 
 
-def serialize_target(group: BotGroup) -> dict:
+def serialize_target(group: BotGroup, *, kind: str) -> dict:
+    blocked = group_is_source_of_links(group.id, kind)
     return {
         'id': group.id,
         'title': group.title or '',
         'type': group.type,
         'is_active': bool(group.is_active),
+        'can_receive': not blocked,
+        'block_reason': TARGET_IS_SOURCE_MSG if blocked else '',
     }
 
 
+def group_is_follower(group_id: int, kind: str) -> bool:
+    return db.session.query(ConfigSyncLink.id).filter_by(
+        kind=kind, target_group_id=group_id
+    ).first() is not None
+
+
+def group_is_source_of_links(group_id: int, kind: str) -> bool:
+    return db.session.query(ConfigSyncLink.id).filter_by(
+        kind=kind, source_group_id=group_id
+    ).first() is not None
+
+
+def source_block_reason(group_id: int, kind: str) -> Optional[str]:
+    if group_is_follower(group_id, kind):
+        return SOURCE_IS_FOLLOWER_MSG
+    return None
+
+
 # ---------------------------------------------------------------------------
-# Fingerprints
+# Fingerprints / snapshots
 # ---------------------------------------------------------------------------
 
 def _dump(value: Any) -> str:
@@ -179,6 +204,8 @@ def item_fingerprint(item, kind: str) -> str:
 
 def snapshot_auto_reply(item: AutoReply) -> dict:
     return {
+        'source_item_id': item.id,
+        'source_is_active': bool(item.is_active),
         'fingerprint': auto_reply_fingerprint(item),
         'trigger_keyword': item.trigger_keyword,
         'media_type': item.media_type or 'text',
@@ -193,6 +220,8 @@ def snapshot_auto_reply(item: AutoReply) -> dict:
 
 def snapshot_scheduled_message(item: ScheduledMessage) -> dict:
     return {
+        'source_item_id': item.id,
+        'source_is_active': bool(item.is_active),
         'fingerprint': scheduled_message_fingerprint(item),
         'media_type': item.media_type or 'text',
         'media_url': item.media_url,
@@ -216,35 +245,40 @@ def snapshot_source_items(group_id: int, kind: str) -> list[dict]:
     return [snapshot_scheduled_message(row) for row in rows]
 
 
+def _apply_auto_reply_fields(item: AutoReply, snap: dict) -> None:
+    item.trigger_keyword = snap['trigger_keyword']
+    item.media_type = snap['media_type']
+    item.media_url = snap['media_url']
+    item.media_urls = snap['media_urls']
+    item.content = snap['content']
+    item.links = snap['links']
+    item.delete_after = snap['delete_after']
+    item.remark = snap['remark']
+
+
+def _apply_scheduled_fields(item: ScheduledMessage, snap: dict) -> None:
+    item.media_type = snap['media_type']
+    item.media_url = snap['media_url']
+    item.media_urls = snap['media_urls']
+    item.content = snap['content']
+    item.links = snap['links']
+    item.repeat_interval = snap['repeat_interval']
+    item.delete_previous = snap['delete_previous']
+    item.start_time = snap['start_time']
+    item.stop_time = snap['stop_time']
+    item.remark = snap['remark']
+    item.auto_pin = snap['auto_pin']
+
+
 def _build_auto_reply(target_id: int, snap: dict) -> AutoReply:
-    return AutoReply(
-        group_id=target_id,
-        trigger_keyword=snap['trigger_keyword'],
-        media_type=snap['media_type'],
-        media_url=snap['media_url'],
-        media_urls=snap['media_urls'],
-        content=snap['content'],
-        links=snap['links'],
-        delete_after=snap['delete_after'],
-        remark=snap['remark'],
-        is_active=False,
-    )
+    item = AutoReply(group_id=target_id, is_active=False)
+    _apply_auto_reply_fields(item, snap)
+    return item
 
 
 def _build_scheduled_message(target_id: int, snap: dict) -> ScheduledMessage:
-    return ScheduledMessage(
+    item = ScheduledMessage(
         group_id=target_id,
-        media_type=snap['media_type'],
-        media_url=snap['media_url'],
-        media_urls=snap['media_urls'],
-        content=snap['content'],
-        links=snap['links'],
-        repeat_interval=snap['repeat_interval'],
-        delete_previous=snap['delete_previous'],
-        start_time=snap['start_time'],
-        stop_time=snap['stop_time'],
-        remark=snap['remark'],
-        auto_pin=snap['auto_pin'],
         is_active=False,
         message_thread_id=None,
         target_type='group',
@@ -255,35 +289,100 @@ def _build_scheduled_message(target_id: int, snap: dict) -> ScheduledMessage:
         next_send_at=None,
         fail_count=0,
     )
+    _apply_scheduled_fields(item, snap)
+    return item
 
 
-def copy_snapshots_to_target(kind: str, target_id: int, snapshots: Iterable[dict]) -> tuple[int, int]:
-    """Insert missing configs into one target. Returns (added, skipped).
+def _master_switch_key(kind: str) -> str:
+    if kind == KIND_AUTO_REPLIES:
+        return 'auto_reply_open'
+    return 'scheduled_msg_open'
 
-    Existing rows are locked when the database supports it, so concurrent
-    identical syncs cannot both insert the same fingerprint.
-    """
+
+def master_switch_open(group: Optional[BotGroup], kind: str) -> bool:
+    if not group:
+        return True
+    conf = dict(DEFAULT_SYSTEM)
+    if group.config:
+        try:
+            parsed = json.loads(group.config)
+            if isinstance(parsed, dict):
+                if 'config' in parsed and isinstance(parsed['config'], dict):
+                    parsed = parsed['config']
+                conf.update(parsed)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return bool(conf.get(_master_switch_key(kind), True))
+
+
+def followed_is_active(source_item_active: bool, source_group: Optional[BotGroup], kind: str) -> bool:
+    return bool(source_item_active) and master_switch_open(source_group, kind)
+
+
+def _set_followed_status(kind: str, item, want_active: bool, now) -> None:
+    """Apply followed enable/pause. Never sends a message."""
+    if kind == KIND_SCHEDULED_MESSAGES and want_active:
+        # Align next_send_at so enabling does not immediately backfill missed slots.
+        from app.modules.core.routes import prepare_scheduled_message_enable
+        item.is_active = True
+        prepare_scheduled_message_enable(item, now)
+        return
+    item.is_active = bool(want_active)
+
+
+def _now():
+    from app.utils import get_beijing_now
+    return get_beijing_now()
+
+
+def upsert_linked_copies(kind: str, source: BotGroup, target: BotGroup, snapshots: Iterable[dict]) -> tuple[int, int]:
+    """Create or update linked copies in one target. Returns (added, updated)."""
     model = _model_for_kind(kind)
-    existing = (
-        model.query.filter_by(group_id=target_id)
+    # Lock existing target rows / links to avoid concurrent duplicate inserts.
+    model.query.filter_by(group_id=target.id).with_for_update().all()
+    links = (
+        ConfigSyncLink.query.filter_by(
+            kind=kind, source_group_id=source.id, target_group_id=target.id
+        )
         .with_for_update()
         .all()
     )
-    seen = {item_fingerprint(row, kind) for row in existing}
+    by_source = {link.source_item_id: link for link in links}
     added = 0
-    skipped = 0
+    updated = 0
+    now = _now()
     for snap in snapshots:
-        fp = snap['fingerprint']
-        if fp in seen:
-            skipped += 1
+        want = followed_is_active(snap['source_is_active'], source, kind)
+        link = by_source.get(snap['source_item_id'])
+        if link:
+            item = db.session.get(model, link.target_item_id)
+            if item is None:
+                item = _build_auto_reply(target.id, snap) if kind == KIND_AUTO_REPLIES else _build_scheduled_message(target.id, snap)
+                db.session.add(item)
+                db.session.flush()
+                link.target_item_id = item.id
+                added += 1
+            else:
+                if kind == KIND_AUTO_REPLIES:
+                    _apply_auto_reply_fields(item, snap)
+                else:
+                    _apply_scheduled_fields(item, snap)
+                updated += 1
+            _set_followed_status(kind, item, want, now)
             continue
-        if kind == KIND_AUTO_REPLIES:
-            db.session.add(_build_auto_reply(target_id, snap))
-        else:
-            db.session.add(_build_scheduled_message(target_id, snap))
-        seen.add(fp)
+        item = _build_auto_reply(target.id, snap) if kind == KIND_AUTO_REPLIES else _build_scheduled_message(target.id, snap)
+        db.session.add(item)
+        db.session.flush()
+        _set_followed_status(kind, item, want, now)
+        db.session.add(ConfigSyncLink(
+            kind=kind,
+            source_group_id=source.id,
+            source_item_id=snap['source_item_id'],
+            target_group_id=target.id,
+            target_item_id=item.id,
+        ))
         added += 1
-    return added, skipped
+    return added, updated
 
 
 def classify_target(
@@ -291,6 +390,7 @@ def classify_target(
     target_id: Any,
     *,
     session_clone_id,
+    kind: str,
 ) -> tuple[Optional[BotGroup], Optional[str]]:
     """Return (target, error). error is a safe, generic message when denied."""
     try:
@@ -302,11 +402,123 @@ def classify_target(
     target = db.session.get(BotGroup, tid)
     if target is None:
         return None, '无权或不存在'
-    # Same-bot only; also honor the logged-in clone session.
     if target.clone_id != source.clone_id:
         return None, '无权或不存在'
     if session_clone_id is not None and target.clone_id != session_clone_id:
         return None, '无权或不存在'
     if target.type not in TARGET_GROUP_TYPES:
         return None, '只能同步到已添加的群组'
+    if group_is_source_of_links(target.id, kind):
+        return None, TARGET_IS_SOURCE_MSG
     return target, None
+
+
+# ---------------------------------------------------------------------------
+# Status follow / annotations
+# ---------------------------------------------------------------------------
+
+def link_for_target_item(kind: str, item_id: int) -> Optional[ConfigSyncLink]:
+    return ConfigSyncLink.query.filter_by(kind=kind, target_item_id=item_id).first()
+
+
+def followed_target_ids(kind: str, item_ids: Iterable[int]) -> set[int]:
+    ids = [int(i) for i in item_ids if i is not None]
+    if not ids:
+        return set()
+    rows = ConfigSyncLink.query.filter(
+        ConfigSyncLink.kind == kind,
+        ConfigSyncLink.target_item_id.in_(ids),
+    ).all()
+    return {row.target_item_id for row in rows}
+
+
+def detach_links_for_item(kind: str, item_id: int) -> int:
+    """Drop mappings when a source or target row is deleted; keep the other row."""
+    q = ConfigSyncLink.query.filter(
+        ConfigSyncLink.kind == kind,
+        or_(
+            ConfigSyncLink.source_item_id == item_id,
+            ConfigSyncLink.target_item_id == item_id,
+        ),
+    )
+    count = q.count()
+    q.delete(synchronize_session=False)
+    return count
+
+
+def detach_links_for_group(group_id: int) -> None:
+    ConfigSyncLink.query.filter(
+        or_(
+            ConfigSyncLink.source_group_id == group_id,
+            ConfigSyncLink.target_group_id == group_id,
+        )
+    ).delete(synchronize_session=False)
+
+
+def propagate_source_item_status(kind: str, source_item) -> int:
+    """Copy enable/pause of one source item to all linked targets. No sends."""
+    if source_item is None:
+        return 0
+    source_group = db.session.get(BotGroup, source_item.group_id)
+    want = followed_is_active(bool(source_item.is_active), source_group, kind)
+    now = _now()
+    model = _model_for_kind(kind)
+    updated = 0
+    links = ConfigSyncLink.query.filter_by(kind=kind, source_item_id=source_item.id).all()
+    for link in links:
+        item = db.session.get(model, link.target_item_id)
+        if item is None:
+            continue
+        _set_followed_status(kind, item, want, now)
+        updated += 1
+    return updated
+
+
+def propagate_source_group_master(kind: str, source_group: BotGroup) -> int:
+    """Source module switch only changes linked target *rules*, never the target switch."""
+    model = _model_for_kind(kind)
+    now = _now()
+    updated = 0
+    links = ConfigSyncLink.query.filter_by(kind=kind, source_group_id=source_group.id).all()
+    if not links:
+        return 0
+    source_ids = {link.source_item_id for link in links}
+    sources = {row.id: row for row in model.query.filter(model.id.in_(source_ids)).all()}
+    for link in links:
+        src = sources.get(link.source_item_id)
+        if src is None:
+            continue
+        item = db.session.get(model, link.target_item_id)
+        if item is None:
+            continue
+        want = followed_is_active(bool(src.is_active), source_group, kind)
+        _set_followed_status(kind, item, want, now)
+        updated += 1
+    return updated
+
+
+def annotations_for_group(group_id: int, kind: str) -> dict[int, dict]:
+    """Map local item id → {role, source_title, source_group_id, target_count}."""
+    outgoing = ConfigSyncLink.query.filter_by(kind=kind, source_group_id=group_id).all()
+    incoming = ConfigSyncLink.query.filter_by(kind=kind, target_group_id=group_id).all()
+    result: dict[int, dict] = {}
+    if outgoing:
+        counts: dict[int, int] = {}
+        for link in outgoing:
+            counts[link.source_item_id] = counts.get(link.source_item_id, 0) + 1
+        for item_id, count in counts.items():
+            result[item_id] = {'role': 'source', 'target_count': count, 'source_title': '', 'source_group_id': None}
+    if incoming:
+        source_ids = {link.source_group_id for link in incoming}
+        titles = {
+            g.id: (g.title or '')
+            for g in BotGroup.query.filter(BotGroup.id.in_(source_ids)).all()
+        }
+        for link in incoming:
+            result[link.target_item_id] = {
+                'role': 'target',
+                'target_count': 0,
+                'source_title': titles.get(link.source_group_id, ''),
+                'source_group_id': link.source_group_id,
+            }
+    return result

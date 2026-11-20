@@ -203,7 +203,30 @@ class ScheduledMessage(db.Model):
         return []
 
 
+
+class ConfigSyncLink(db.Model):
+    """Unidirectional auto-reply / scheduled-message sync link (source → target).
+
+    A target row is controlled only if it was created (or later updated) through
+    this mapping.  Native rules in the target group are never claimed automatically.
+    """
+    __tablename__ = 'config_sync_links'
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(32), nullable=False, index=True)
+    source_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    source_item_id = db.Column(db.Integer, nullable=False, index=True)
+    target_group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    target_item_id = db.Column(db.Integer, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    __table_args__ = (
+        db.UniqueConstraint('kind', 'source_item_id', 'target_group_id', name='_config_sync_source_item_target_uc'),
+        db.UniqueConstraint('kind', 'target_item_id', name='_config_sync_target_item_uc'),
+    )
+
+
 class StartMessage(db.Model):
+
     """自定义 /start 消息"""
     __tablename__ = 'start_messages'
     id = db.Column(db.Integer, primary_key=True)

@@ -96,7 +96,7 @@
                     </td>
                     <td class="pe-3 pe-md-4">
                         <div class="d-flex gap-1 align-items-center justify-content-end">
-                            <button class="action-btn btn btn-sm btn-success" onclick="publishLottery({{ lottery.id }})" {% if lottery.status in ('ended', 'drawing', 'cancelled') %}disabled title="开奖中或已结束"{% else %}title="发布公告"{% endif %}>
+                            <button class="action-btn btn btn-sm btn-success" data-publication-id="{{ lottery.id }}" onclick="publishLottery({{ lottery.id }}, this)" {% if lottery.status in ('ended', 'drawing', 'cancelled') %}disabled title="开奖中或已结束"{% else %}title="发布公告"{% endif %}>
                                 <i class="fa-solid fa-bullhorn"></i>
                             </button>
                             <button class="action-btn btn btn-sm btn-primary" title="编辑" onclick="editLottery({{ lottery.id }})" {% if lottery.status in ('ended', 'drawing', 'cancelled') %}disabled{% endif %}>
@@ -388,27 +388,60 @@ function deleteLottery(id) {
     }, { title: '删除抽奖', isDanger: true, confirmText: '删除' });
 }
 
-function publishLottery(id) {
-    showConfirm('确定要将抽奖公告发送到 Telegram 群组吗？已到开始时间的抽奖将变为「进行中」。', function () {
-        fetch('/core/api/publish_group_lottery', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id: id})
-        })
-        .then(res => res.json())
-        .then(result => {
-            if (result.status === 'ok') {
-                showToast('抽奖公告已成功发送到群组！', 'success');
-                setTimeout(() => location.reload(), 800);
-            } else {
-                showToast('发送失败: ' + (result.msg || '未知错误'), 'danger');
-            }
-        })
-        .catch(err => {
-            console.error('操作失败:', err);
-            showToast('网络错误，请重试', 'danger');
-        });
-    }, { title: '发布抽奖公告到群', confirmText: '发布' });
+const publicationTimers = new Map();
+const publicationLabels = {idle: '发布公告', pending: '发送中…', sending: '发送中…',
+    sent: '已发布', failed: '发送失败，可重试', unknown: '送达不明，请核对群消息'};
+function publicationState(id, button, result) {
+    button.textContent = publicationLabels[result.state] || '查询失败，请刷新';
+    button.title = result.msg || button.textContent;
+    button.disabled = !['idle', 'failed'].includes(result.state);
+    button.dataset.busy = button.disabled ? '1' : '';
+    if (['pending', 'sending'].includes(result.state)) {
+        clearTimeout(publicationTimers.get(id));
+        publicationTimers.set(id, setTimeout(() => queryPublication(id, button), 1500));
+    }
 }
+async function queryPublication(id, button) {
+    try {
+        const response = await fetch(`/core/api/lottery_publication_status/${id}`);
+        const result = await response.json();
+        if (!response.ok || result.status !== 'ok') throw new Error('查询失败');
+        publicationState(id, button, result);
+    } catch (_) {
+        button.disabled = true;
+        button.textContent = '状态查询失败，请刷新';
+        button.title = '不能确认是否已发送，请刷新查询，勿重复发布';
+    }
+}
+function publishLottery(id, button) {
+    if (button.dataset.busy) return;
+    showConfirm('将公告提交后台发送，完成后显示结果。送达不明时请先核对群消息，不要重复发送。', async function () {
+        if (button.dataset.busy) return;
+        button.dataset.busy = '1';
+        button.disabled = true;
+        button.textContent = '提交中…';
+        try {
+            const response = await fetch('/core/api/publish_group_lottery', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id})
+            });
+            const result = await response.json();
+            if (!response.ok || result.status !== 'ok') {
+                showToast(result.msg || '未能提交', 'danger');
+                await queryPublication(id, button);
+                return;
+            }
+            publicationState(id, button, result);
+            showToast(result.msg, result.state === 'sent' ? 'success' : 'info');
+        } catch (_) {
+            // The submission itself may have succeeded. Query; NEVER re-POST.
+            await queryPublication(id, button);
+        }
+    }, {title: '发布抽奖公告到群', confirmText: '发布'});
+}
+document.querySelectorAll('[data-publication-id]').forEach(button => {
+    if (button.disabled) return;
+    button.disabled = true;
+    queryPublication(Number(button.dataset.publicationId), button);
+});
 </script>
 {% endblock %}

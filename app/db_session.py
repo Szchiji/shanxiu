@@ -121,7 +121,24 @@ class ReleasingSession(FSASession):
             and not had_pending_writes
             and _is_auto_releasable_select(statement)
         ):
-            release_idle_db_session(self)
+            # ORM results may lazily fetch rows from a psycopg cursor. COMMIT
+            # closes that cursor: buffer first, then return a replayable Result.
+            # Streaming callers own the transaction until they consume/close it.
+            options = dict(getattr(statement, 'get_execution_options', lambda: {})())
+            options.update(kwargs.get('execution_options', {}))
+            orm_options = options.get('_sa_orm_load_options')
+            streaming = (options.get('stream_results') or options.get('yield_per')
+                         or getattr(orm_options, '_yield_per', None))
+            if not streaming:
+                result = result.freeze()()
+                # The rows are now ORM instances. Expiring them here can erase
+                # values still being populated by a deferred attribute loader.
+                expires = self.expire_on_commit
+                self.expire_on_commit = False
+                try:
+                    release_idle_db_session(self)
+                finally:
+                    self.expire_on_commit = expires
         return result
 
 

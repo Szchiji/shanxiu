@@ -3372,7 +3372,9 @@ def api_save_auto_reply():
         item.links = d.get('links', '[]')
         item.delete_after = safe_int(d.get('delete_after'), 0)
         item.remark = d.get('remark', '').strip() or None
-        
+
+        from app.services.config_sync_service import KIND_AUTO_REPLIES, propagate_source_item_fields
+        propagate_source_item_fields(KIND_AUTO_REPLIES, item)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3599,7 +3601,9 @@ def api_save_scheduled_message():
             # 新增消息
             item = ScheduledMessage(group_id=group_id)
             db.session.add(item)
-        
+
+        old_schedule = (item.repeat_interval, item.start_time, item.stop_time)
+
         apply_scheduled_media_fields(item, d)
         item.content = d.get('content', '').strip() or None
         if not scheduled_message_has_payload(item.media_type, item.get_media_url_list(), item.content):
@@ -3650,6 +3654,13 @@ def api_save_scheduled_message():
         if item.target_type == 'channel':
             item.message_thread_id = None
 
+        schedule_changed = old_schedule != (item.repeat_interval, item.start_time, item.stop_time)
+        from app.services.config_sync_service import KIND_SCHEDULED_MESSAGES, propagate_source_item_fields
+        propagate_source_item_fields(
+            KIND_SCHEDULED_MESSAGES,
+            item,
+            reset_schedule=schedule_changed,
+        )
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

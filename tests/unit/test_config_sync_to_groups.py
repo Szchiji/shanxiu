@@ -200,10 +200,10 @@ class TestAutoReplySync:
         assert first.delete_after == 15
         assert first.remark == '备注A'
         assert first.id != AutoReply.query.filter_by(group_id=source.id).first().id
-        # Target master switch stays off; source rows stay as they were.
+        # Sync enables the target master switch so the copied rule is usable.
         db.session.refresh(dest)
         db.session.refresh(source)
-        assert _conf(dest)['auto_reply_open'] is False
+        assert _conf(dest)['auto_reply_open'] is True
         assert _conf(source)['auto_reply_open'] is True
         assert AutoReply.query.filter_by(group_id=source.id, is_active=True).count() == 1
         assert ConfigSyncLink.query.filter_by(
@@ -236,6 +236,30 @@ class TestAutoReplySync:
         assert auto_reply_fingerprint(native) == auto_reply_fingerprint(
             AutoReply.query.filter_by(group_id=source.id, content='源文案').one()
         )
+
+    def test_editing_source_updates_linked_target_content(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        dest = _group(db, title='目标', config={'auto_reply_open': True})
+        src = _reply(db, source.id, trigger_keyword='旧关键词', content='旧文案')
+        assert _sync(admin, source.id, 'auto_replies', [dest.id]).get_json()['status'] == 'ok'
+
+        response = admin.post('/core/api/save_auto_reply', json={
+            'id': src.id,
+            'group_id': source.id,
+            'trigger_keyword': '新关键词',
+            'media_type': 'text',
+            'media_urls': [],
+            'content': '新文案',
+            'links': '[]',
+            'delete_after': 8,
+            'remark': '已更新',
+        })
+        assert response.get_json()['status'] == 'ok'
+        copied = AutoReply.query.filter_by(group_id=dest.id).one()
+        assert copied.trigger_keyword == '新关键词'
+        assert copied.content == '新文案'
+        assert copied.delete_after == 8
+        assert copied.remark == '已更新'
 
 
 @pytest.mark.usefixtures('db')
@@ -292,7 +316,7 @@ class TestScheduledSync:
         assert copied.id != src.id
         db.session.refresh(dest)
         db.session.refresh(src)
-        assert _conf(dest)['scheduled_msg_open'] is False
+        assert _conf(dest)['scheduled_msg_open'] is True
         assert src.is_active is True
         assert src.message_thread_id == 99
         assert src.last_message_id == 555
@@ -328,11 +352,36 @@ class TestScheduledSync:
         data = _sync(admin, source.id, 'scheduled_messages', [dest.id]).get_json()
         assert data['status'] == 'ok'
         assert sent['called'] is False
+
+    def test_editing_source_updates_linked_target_content(self, db, admin):
+        source = _group(db, title='源', config={'scheduled_msg_open': True})
+        dest = _group(db, title='目标', config={'scheduled_msg_open': True})
+        src = _sched(db, source.id, content='旧公告', repeat_interval=60)
+        assert _sync(admin, source.id, 'scheduled_messages', [dest.id]).get_json()['status'] == 'ok'
         copied = ScheduledMessage.query.filter_by(group_id=dest.id).one()
-        assert copied.is_active is True
-        assert routes.scheduled_should_send(
-            copied.last_sent_at, copied.next_send_at, copied.repeat_interval, get_beijing_now()
-        ) is False
+        copied.last_sent_at = BASE_NOW
+        copied.next_send_at = BASE_NOW.replace(hour=13)
+        db.session.commit()
+
+        response = admin.post('/core/api/save_scheduled_message', json={
+            'id': src.id,
+            'group_id': source.id,
+            'media_type': 'text',
+            'media_urls': [],
+            'content': '新公告',
+            'links': '[]',
+            'repeat_interval': 60,
+            'start_time': BASE_NOW.isoformat(),
+            'stop_time': None,
+            'delete_previous': False,
+            'auto_pin': False,
+            'target_type': 'group',
+        })
+        assert response.get_json()['status'] == 'ok'
+        db.session.refresh(copied)
+        assert copied.content == '新公告'
+        assert copied.last_sent_at == BASE_NOW
+        assert copied.next_send_at == BASE_NOW.replace(hour=13)
 
 
 @pytest.mark.usefixtures('db')
@@ -388,7 +437,7 @@ class TestFollowStatus:
         db.session.refresh(source)
         assert linked.is_active is False
         assert native.is_active is True
-        assert _conf(dest)['auto_reply_open'] is True
+        assert _conf(dest)['auto_reply_open'] is False
         assert _conf(source)['auto_reply_open'] is False
 
         # Turning the source switch back on resumes only the linked rule.
@@ -399,7 +448,7 @@ class TestFollowStatus:
         db.session.refresh(linked)
         assert linked.is_active is True
 
-    def test_dest_master_stays_local(self, db, admin):
+    def test_dest_master_follows_source(self, db, admin):
         source = _group(db, title='源', config={'auto_reply_open': True})
         dest = _group(db, title='目标', config={'auto_reply_open': False})
         src = _reply(db, source.id, is_active=True)
@@ -407,16 +456,16 @@ class TestFollowStatus:
         linked = AutoReply.query.filter_by(group_id=dest.id).one()
         assert linked.is_active is True
         db.session.refresh(dest)
-        assert _conf(dest)['auto_reply_open'] is False
+        assert _conf(dest)['auto_reply_open'] is True
 
         admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
         admin.post('/core/api/toggle_auto_reply', json={'id': src.id})
         db.session.refresh(dest)
         db.session.refresh(linked)
         assert linked.is_active is True
-        assert _conf(dest)['auto_reply_open'] is False
+        assert _conf(dest)['auto_reply_open'] is True
 
-        # Closing the dest switch locally is not overwritten by a later source pause/enable.
+        # A local target setting remains local until the source master setting changes.
         admin.post('/core/api/save_settings', json={
             'group_id': dest.id,
             'config': {'auto_reply_open': False, 'scheduled_msg_open': False},

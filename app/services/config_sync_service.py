@@ -319,6 +319,24 @@ def followed_is_active(source_item_active: bool, source_group: Optional[BotGroup
     return bool(source_item_active) and master_switch_open(source_group, kind)
 
 
+def set_target_master_switch(target: BotGroup, kind: str, enabled: bool) -> None:
+    """Make a synced target usable for the synced feature.
+
+    A sync action is intended to copy a working feature to every selected
+    target, so the target's corresponding module switch follows the source
+    instead of silently blocking the copied rules.
+    """
+    key = _master_switch_key(kind)
+    conf = _parse_json(target.config, {})
+    if not isinstance(conf, dict):
+        conf = {}
+    if isinstance(conf.get('config'), dict):
+        conf['config'][key] = bool(enabled)
+    else:
+        conf[key] = bool(enabled)
+    target.config = json.dumps(conf, ensure_ascii=False)
+
+
 def _set_followed_status(kind: str, item, want_active: bool, now) -> None:
     """Apply followed enable/pause. Never sends a message."""
     if kind == KIND_SCHEDULED_MESSAGES and want_active:
@@ -351,6 +369,7 @@ def upsert_linked_copies(kind: str, source: BotGroup, target: BotGroup, snapshot
     added = 0
     updated = 0
     now = _now()
+    set_target_master_switch(target, kind, master_switch_open(source, kind))
     for snap in snapshots:
         want = followed_is_active(snap['source_is_active'], source, kind)
         link = by_source.get(snap['source_item_id'])
@@ -474,8 +493,43 @@ def propagate_source_item_status(kind: str, source_item) -> int:
     return updated
 
 
+def propagate_source_item_fields(kind: str, source_item, *, reset_schedule: bool = False) -> int:
+    """Copy edited source fields to linked target rows.
+
+    Target rows are controlled copies, so editing the source must update their
+    content as well as their enabled state. Runtime delivery fields are not
+    copied. For scheduled messages, reset cadence only when the source's
+    schedule itself changed; a text/media edit keeps the target's current
+    cadence.
+    """
+    if source_item is None:
+        return 0
+    source_group = db.session.get(BotGroup, source_item.group_id)
+    model = _model_for_kind(kind)
+    snap = snapshot_auto_reply(source_item) if kind == KIND_AUTO_REPLIES else snapshot_scheduled_message(source_item)
+    want = followed_is_active(bool(source_item.is_active), source_group, kind)
+    now = _now()
+    updated = 0
+    links = ConfigSyncLink.query.filter_by(kind=kind, source_item_id=source_item.id).all()
+    for link in links:
+        item = db.session.get(model, link.target_item_id)
+        if item is None:
+            continue
+        if kind == KIND_AUTO_REPLIES:
+            _apply_auto_reply_fields(item, snap)
+            item.is_active = want
+        else:
+            _apply_scheduled_fields(item, snap)
+            if reset_schedule and want:
+                _set_followed_status(kind, item, True, now)
+            else:
+                item.is_active = want
+        updated += 1
+    return updated
+
+
 def propagate_source_group_master(kind: str, source_group: BotGroup) -> int:
-    """Source module switch only changes linked target *rules*, never the target switch."""
+    """Follow the source module switch on linked target groups and rules."""
     model = _model_for_kind(kind)
     now = _now()
     updated = 0
@@ -484,6 +538,14 @@ def propagate_source_group_master(kind: str, source_group: BotGroup) -> int:
         return 0
     source_ids = {link.source_item_id for link in links}
     sources = {row.id: row for row in model.query.filter(model.id.in_(source_ids)).all()}
+    target_ids = {link.target_group_id for link in links}
+    targets = {
+        group.id: group
+        for group in BotGroup.query.filter(BotGroup.id.in_(target_ids)).all()
+    }
+    source_enabled = master_switch_open(source_group, kind)
+    for target in targets.values():
+        set_target_master_switch(target, kind, source_enabled)
     for link in links:
         src = sources.get(link.source_item_id)
         if src is None:

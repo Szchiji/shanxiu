@@ -51,7 +51,7 @@
             <div class="modal-body">
                 <p class="mb-2" id="syncConfigSummary"></p>
                 <div class="alert alert-warning py-2 small mb-3" id="syncConfigWarning">
-                    会复制配置并跟随源规则当前的开启或停止状态；之后在源群开启或暂停时，已关联的目标规则会一起开启或暂停。再次同步会更新已关联的规则，不会重复新建，也不会把目标群原有的独立规则认领为跟随。不会打开或关闭目标群自己的功能总开关；目标群总开关关闭时，跟随规则也不会生效。已作为同步目标的群不能再作为源，也不能再接收形成链路。
+                    会把本群全部配置复制到已选目标，并跟随源规则当前的开启或停止状态；目标群对应的功能总开关会自动开启并跟随源群，确保复制后的规则可以直接使用。之后在源群修改内容、开启或暂停时，已关联的目标规则会一起更新。再次同步会更新已关联的规则，不会重复新建，也不会把目标群原有的独立规则认领为跟随。已作为同步目标的群不能再作为源，也不能再接收形成链路。
                 </div>
                 <div class="mb-2">
                     <input type="search" class="form-control form-control-sm" id="syncConfigTargetSearch" placeholder="搜索已添加的群" autocomplete="off">
@@ -227,7 +227,7 @@
     window.confirmSyncToGroups = function confirmSyncToGroups() {
         const ids = selectedIds();
         if (syncInFlight || !ids.length || syncSourceCount <= 0) return;
-        const message = '确定将本群全部 ' + syncSourceCount + ' 条' + SYNC_KIND_LABEL + '同步到已选的 ' + ids.length + ' 个群吗？会复制配置并跟随源规则当前的开启或停止，之后源群开启或暂停时关联目标会一起变化。再次同步会更新已关联规则，不会重复新建。不会打开或关闭目标群自己的功能总开关。';
+        const message = '确定将本群全部 ' + syncSourceCount + ' 条' + SYNC_KIND_LABEL + '同步到已选的 ' + ids.length + ' 个群吗？会复制配置并自动打开目标群对应功能，之后源群修改内容、开启或暂停时关联目标会一起变化。再次同步会更新已关联规则，不会重复新建。';
         if (typeof showConfirm === 'function') {
             showConfirm(message, function () { runSyncToGroups(ids); }, {
                 title: '同步到其他群',

@@ -3728,6 +3728,13 @@ def api_send_scheduled_message_now(message_id):
         if item.target_type == 'channel':
             item.message_thread_id = None
 
+        from app.services.config_sync_service import (
+            KIND_SCHEDULED_MESSAGES,
+            propagate_source_item_fields,
+        )
+        db.session.flush()
+        # 保存并立即发送也必须先把最新内容同步到所有关联目标。
+        propagate_source_item_fields(KIND_SCHEDULED_MESSAGES, item)
         db.session.commit()
 
         # 获取群组 chat_id
@@ -3866,6 +3873,54 @@ def api_send_scheduled_message_now(message_id):
             else:
                 item.next_send_at = None
             db.session.commit()
+
+            # 源群“保存并立即发送”成功后，关联目标也立即发送同一份配置。
+            target_links = ConfigSyncLink.query.filter_by(
+                kind='scheduled_messages', source_item_id=item.id
+            ).all()
+            for target_link in target_links:
+                target_item = db.session.get(ScheduledMessage, target_link.target_item_id)
+                target_group = db.session.get(BotGroup, target_link.target_group_id)
+                if target_item is None or target_group is None or not target_group.chat_id:
+                    continue
+                target_url_with_types = target_item.get_media_url_with_types()
+                msg_snapshot = {
+                    'media_type': target_item.media_type,
+                    'media_url': target_item.media_url,
+                    'media_urls': target_item.get_media_url_list(),
+                    'media_url_types': [t for _, t in target_url_with_types] if target_url_with_types else None,
+                    'content': target_item.content,
+                    'links': target_item.links,
+                    'delete_previous': target_item.delete_previous,
+                    'last_message_id': target_item.last_message_id,
+                    'last_message_ids': target_item.last_message_ids,
+                    'message_thread_id': target_item.message_thread_id,
+                    'auto_pin': target_item.auto_pin,
+                }
+                group = target_group
+                chat_id = target_group.chat_id
+                collected_ids.clear()
+                try:
+                    target_sent = future = asyncio.run_coroutine_threadsafe(
+                        _send_now_with_retry(), global_bot_loop
+                    ).result(timeout=30)
+                    if target_sent:
+                        target_now = get_beijing_now()
+                        target_item.last_sent_at = target_now
+                        target_item.last_message_id = target_sent.message_id
+                        target_item.last_message_ids = json.dumps(collected_ids) if collected_ids else None
+                        target_item.fail_count = 0
+                        target_item.next_send_at = (
+                            target_now + timedelta(minutes=target_item.repeat_interval)
+                            if target_item.repeat_interval > 0 else None
+                        )
+                        db.session.commit()
+                except Exception as target_err:
+                    db.session.rollback()
+                    print(
+                        f'Error sending scheduled message to synced target {target_group.id}: {target_err}',
+                        flush=True,
+                    )
 
         return jsonify({'status':'ok'})
     except Exception as e:

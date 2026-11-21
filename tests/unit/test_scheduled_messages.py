@@ -4,6 +4,7 @@ one-shot re-enable and multi-media album delivery."""
 import asyncio
 import json
 import itertools
+import threading
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -252,6 +253,54 @@ class TestApi:
         }).get_json()
         assert r['status'] == 'error' and '消息内容' in r['msg']
         assert sched.get(msg_id).content == 'hello'   # nothing persisted
+
+    def test_send_now_follows_synced_targets(self, sched, admin, monkeypatch):
+        from app import db
+        from app.models import BotGroup, ScheduledMessage
+        from app.modules.core import routes
+
+        source_id, source_group_id = sched.make_msg(content='旧内容', repeat_interval=60)
+        _, target_a_id = sched.make_msg(content='目标旧A')
+        _, target_b_id = sched.make_msg(content='目标旧B')
+        assert admin.post('/core/api/sync_config_to_groups', json={
+            'source_group_id': source_group_id,
+            'kind': 'scheduled_messages',
+            'target_group_ids': [target_a_id, target_b_id],
+        }).get_json()['status'] == 'ok'
+
+        bot = _make_bot()
+        loop = asyncio.new_event_loop()
+        worker = threading.Thread(target=loop.run_forever, daemon=True)
+        worker.start()
+        monkeypatch.setattr(routes, 'global_bot_loop', loop)
+        monkeypatch.setattr(routes, 'global_ptb_app', SimpleNamespace(bot=bot))
+        with sched.routes.global_flask_app.app_context():
+            source_chat = BotGroup.query.get(source_group_id).chat_id
+            target_chats = [BotGroup.query.get(gid).chat_id for gid in (target_a_id, target_b_id)]
+
+        try:
+            response = admin.post(f'/core/api/send_scheduled_message_now/{source_id}', json={
+                'group_id': source_group_id,
+                'media_type': 'text',
+                'content': '立即发送的新内容',
+                'repeat_interval': 60,
+                'target_type': 'group',
+            })
+            assert response.get_json()['status'] == 'ok'
+            sent_chats = [str(call.kwargs['chat_id']) for call in bot.send_message.await_args_list]
+            assert sent_chats.count(source_chat) == 1
+            for chat_id in target_chats:
+                assert sent_chats.count(chat_id) == 1
+            with sched.routes.global_flask_app.app_context():
+                copied = ScheduledMessage.query.filter(
+                    ScheduledMessage.group_id.in_([target_a_id, target_b_id]),
+                    ScheduledMessage.content == '立即发送的新内容',
+                ).all()
+                assert len(copied) == 2
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            worker.join(timeout=2)
+            loop.close()
 
     def test_save_splits_pasted_urls(self, sched, admin):
         _, gid = sched.make_msg()

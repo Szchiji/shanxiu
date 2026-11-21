@@ -15,7 +15,7 @@ from sqlalchemy import or_, and_
 from telegram.error import BadRequest
 
 from app import db
-from app.models import BotGroup, GroupLottery, LotteryDelivery, LotteryMessageCount, GroupUser, LotteryEntry, UserPoints, PointsLog
+from app.models import BotGroup, GroupLottery, LotteryDelivery, LotteryMessageCount, LotterySigninRecord, GroupUser, LotteryEntry, UserPoints, PointsLog
 from app.plugins import is_plugin_enabled
 from app.utils import get_beijing_now
 
@@ -23,7 +23,7 @@ MAX_WINNERS = 100
 DRAW_LEASE_SECONDS = 180
 MEMBERSHIP_TIMEOUT = 120
 DELIVERY_LEASE_SECONDS = 90
-LABELS = {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖'}
+LABELS = {'message_count': '发言加权抽奖', 'message_rank': '发言排行抽奖', 'random': '随机抽奖', 'points': '积分抽奖', 'signin': '签到抽奖'}
 
 
 MAX_PRIZE_NAME = 200
@@ -157,8 +157,9 @@ def validate_settings(data):
     start, end = stamp('start_time'), stamp('end_time')
     if start >= end:
         raise ValueError('开奖时间必须晚于开始时间')
-    minimum = _integer(data.get('min_messages', 10), 10, 1000000, '发言门槛必须在 1—1000000 之间')
     lottery_type = data.get('lottery_type', 'message_count')
+    minimum = _integer(data.get('min_messages', 10), 10, 1000000, '发言门槛必须在 1—1000000 之间')
+    min_signin_days = _integer(data.get('min_signin_days', 1), 1, 100, '最低签到天数必须在 1—100 之间')
     if 'prizes' in data:
         prizes = parse_prize_rows(data.get('prizes'))
         winners = sum(prize['winner_count'] for prize in prizes)
@@ -175,6 +176,38 @@ def validate_settings(data):
     if len(data.get('lottery_name', '')) > 255:
         raise ValueError('名称最多255字，奖品描述最多10000字')
     return start, end, minimum, winners, status, prizes
+
+
+def record_signin_lotteries(group_id, user_id, signin_date):
+    """Record one successful Beijing-local sign-in for active activities."""
+    now = get_beijing_now()
+    lottery_ids = [lid for (lid,) in db.session.query(GroupLottery.id).filter(
+        GroupLottery.group_id == group_id,
+        GroupLottery.lottery_type == 'signin',
+        GroupLottery.status.in_(['pending', 'active']),
+        GroupLottery.start_time <= now,
+        GroupLottery.end_time > now,
+    ).all()]
+    if not lottery_ids:
+        return 0
+    values = [dict(lottery_id=lid, group_id=group_id, user_id=user_id, signin_date=signin_date) for lid in lottery_ids]
+    dialect = db.session.get_bind().dialect.name
+    if dialect == 'postgresql':
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(LotterySigninRecord).values(values).on_conflict_do_nothing(
+            index_elements=['lottery_id', 'user_id', 'signin_date'])
+    elif dialect == 'sqlite':
+        from sqlalchemy.dialects.sqlite import insert
+        stmt = insert(LotterySigninRecord).values(values).on_conflict_do_nothing(
+            index_elements=['lottery_id', 'user_id', 'signin_date'])
+    else:
+        created = 0
+        for value in values:
+            if not LotterySigninRecord.query.filter_by(**value).first():
+                db.session.add(LotterySigninRecord(**value)); created += 1
+        return created
+    result = db.session.execute(stmt)
+    return result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
 
 
 def current_lotteries(group_id, now=None):
@@ -231,6 +264,13 @@ def _claim(lottery_id, group_id, automatic):
         if l.lottery_type == 'points':
             rows = LotteryEntry.query.filter_by(lottery_id=lottery_id, state='paid').all()
             l.draw_candidates = json.dumps([[int(row.user_id), 1] for row in rows])
+        elif l.lottery_type == 'signin':
+            rows = db.session.query(LotterySigninRecord.user_id).filter_by(
+                lottery_id=lottery_id, group_id=l.group_id
+            ).group_by(LotterySigninRecord.user_id).having(
+                db.func.count(LotterySigninRecord.signin_date) >= (l.min_signin_days or 1)
+            ).all()
+            l.draw_candidates = json.dumps([[int(uid), 1] for (uid,) in rows])
         else:
             rows = LotteryMessageCount.query.filter_by(lottery_id=lottery_id).filter(
                 LotteryMessageCount.message_count > 0).all()

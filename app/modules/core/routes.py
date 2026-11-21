@@ -8,7 +8,7 @@ from app.models import (BotGroup, GroupUser, DEFAULT_FIELDS, DEFAULT_SYSTEM, Aut
                         GroupEntryExitSettings, SpamProtection, TimedGroupControl, InvitationActivity, ForcedChannelSubscription,
                         PointsRule, PointsAutoReply, PointsAuction, PointsLog, UserPoints, GroupLottery, MemberLevel,
                         UserNameChange, GroupBottomButton, SyncGroupMessages, SyncMessageLog, OtherSettings, BotClone,
-                        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelPostButtonConfig, ChannelMessageStats, LotteryMessageCount,
+                        ChannelForwardRule, ChannelMessageTemplate, ChannelCoupon, ChannelPostButtonConfig, ChannelMessageStats, LotteryMessageCount, LotterySigninRecord,
                         InactiveUserSettings, KeywordFilter, MessageStatistics, GroupVote, VoteRecord, QuizGame, QuizSession, 
                         QuizAnswer, RedPacket, RedPacketClaim, AdminActionLog, GroupWarning, GroupMember, InvitationRecord, PendingReferral,
                         PointsExchangeItem, PointsExchangeRecord, ConfigSyncLink)
@@ -1936,6 +1936,7 @@ def page_group_lottery(gid):
             'lottery_type': l.lottery_type,
             'min_messages': l.min_messages,
             'top_n_winners': l.display_total,
+            'min_signin_days': l.min_signin_days or 1,
             'points_cost': l.points_cost,
             'prize_description': l.display_prizes or l.prize_description or '',
             'prizes': rows,
@@ -5903,7 +5904,7 @@ def api_save_group_lottery():
     if not lottery_name:
         return jsonify({'status':'error','msg':'抽奖名称不能为空'})
     lottery_type = d.get('lottery_type', 'message_count')
-    if lottery_type not in ('message_count', 'message_rank', 'random', 'points'):
+    if lottery_type not in ('message_count', 'message_rank', 'random', 'points', 'signin'):
         return jsonify({'status':'error','msg':'无效的抽奖类型'})
 
     group = BotGroup.query.get(d['group_id'])
@@ -5914,6 +5915,8 @@ def api_save_group_lottery():
     try:
         from app.services.lottery_workflow import prize_summary, validate_settings
         start, end, minimum, winners, status, prizes = validate_settings(d)
+        from app.services.lottery_workflow import _integer
+        min_signin_days = _integer(d.get('min_signin_days', 1), 1, 100, '最低签到天数必须在 1—100 之间')
         raw_cost = d.get('points_cost', 10)
         points_cost = int(raw_cost)
         if isinstance(raw_cost, bool) or str(raw_cost).strip() != str(points_cost):
@@ -5945,6 +5948,7 @@ def api_save_group_lottery():
         lottery.prizes = json.dumps(prizes, ensure_ascii=False)
         lottery.prize_description = prize_summary(prizes)
         lottery.min_messages, lottery.top_n_winners = minimum, winners
+        lottery.min_signin_days = min_signin_days
         lottery.points_cost = points_cost
         lottery.start_time, lottery.end_time, lottery.status = start, end, status
         lottery.announce_channel_id = (d.get('announce_channel_id') or '').strip() or None
@@ -5985,6 +5989,7 @@ def api_delete_group_lottery():
             return jsonify({'status':'error','msg':'中奖公告尚待发送，完成后再删除'})
         LotteryDelivery.query.filter_by(lottery_id=lottery.id).delete(synchronize_session=False)
         LotteryMessageCount.query.filter_by(lottery_id=lottery.id).delete(synchronize_session=False)
+        LotterySigninRecord.query.filter_by(lottery_id=lottery.id).delete(synchronize_session=False)
         db.session.delete(lottery)
         db.session.commit()
         return jsonify({'status':'ok'})
@@ -12634,6 +12639,8 @@ async def cmd_signin(update: Update, context):
                 reason='每日签到',
                 balance_after=cur_balance
             ))
+            from app.services.lottery_workflow import record_signin_lotteries
+            record_signin_lotteries(group.id, user.id, today.date())
             db.session.commit()
 
             raw_tpl = conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')
@@ -14137,6 +14144,13 @@ async def cmd_lottery(update: Update, context):
                 if lottery.lottery_type == 'points':
                     from app.models import LotteryEntry
                     participant_count = LotteryEntry.query.filter_by(lottery_id=lottery.id,state='paid').count()
+                elif lottery.lottery_type == 'signin':
+                    from app.models import LotterySigninRecord
+                    participant_count = db.session.query(LotterySigninRecord.user_id).filter_by(
+                        lottery_id=lottery.id, group_id=group.id
+                    ).group_by(LotterySigninRecord.user_id).having(
+                        db.func.count(LotterySigninRecord.signin_date) >= (lottery.min_signin_days or 1)
+                    ).count()
                 else:
                     participant_count = LotteryMessageCount.query.filter_by(lottery_id=lottery.id).filter(
                         LotteryMessageCount.message_count >= threshold).count()
@@ -16220,6 +16234,8 @@ async def on_message(update: Update, context):
                         balance_after=cur_balance
                     )
                     db.session.add(points_log)
+                    from app.services.lottery_workflow import record_signin_lotteries
+                    record_signin_lotteries(group.id, user.id, today.date())
                     db.session.commit()
 
                     raw_tpl = conf.get('msg_signin_success', '🎉 <b>签到成功！获得 {积分} 积分，当前余额：{余额}</b>')

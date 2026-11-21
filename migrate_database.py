@@ -212,6 +212,10 @@ def run_migrations():
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS draw_finished_at TIMESTAMP",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS prizes TEXT",
         "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS winner_awards TEXT",
+        "ALTER TABLE group_lottery ADD COLUMN IF NOT EXISTS min_signin_days INTEGER DEFAULT 1",
+        "CREATE TABLE IF NOT EXISTS lottery_signin_record (id INTEGER PRIMARY KEY AUTOINCREMENT, lottery_id INTEGER NOT NULL REFERENCES group_lottery(id), group_id INTEGER NOT NULL REFERENCES bot_groups(id), user_id BIGINT NOT NULL, signin_date DATE NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS _lottery_signin_user_day_uc ON lottery_signin_record(lottery_id, user_id, signin_date)",
+        "CREATE INDEX IF NOT EXISTS ix_lottery_signin_lookup ON lottery_signin_record(lottery_id, group_id, user_id, signin_date)",
     ]
 
     with app.app_context():

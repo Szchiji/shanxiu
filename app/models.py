@@ -547,13 +547,14 @@ class GroupLottery(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), index=True)
     lottery_name = db.Column(db.String(255), nullable=False)
-    lottery_type = db.Column(db.String(50), nullable=False)  # message_count, message_rank
+    lottery_type = db.Column(db.String(50), nullable=False)  # message_count, message_rank, random, points, signin
     prize_description = db.Column(db.Text, nullable=True)
     prizes = db.Column(db.Text, nullable=True)  # JSON [{name, winner_count}, ...]
     # 发言数量抽奖
     min_messages = db.Column(db.Integer, default=10)  # 最少发言数
     # 发言排行抽奖
     top_n_winners = db.Column(db.Integer, default=3)  # 前N名获奖，等于奖品人数合计
+    min_signin_days = db.Column(db.Integer, default=1)  # 签到抽奖最低签到天数
     points_cost = db.Column(db.Integer, default=10, nullable=False)  # points lottery entry fee
     # 通用设置
     start_time = db.Column(db.DateTime, nullable=True)
@@ -955,6 +956,23 @@ class LotteryMessageCount(db.Model):
     
     lottery = db.relationship('GroupLottery', backref='message_counts', lazy=True)
     group = db.relationship('BotGroup', backref='lottery_message_counts', lazy=True)
+
+
+class LotterySigninRecord(db.Model):
+    """签到抽奖资格：每个活动、用户、北京时间日期最多一条。"""
+    __tablename__ = 'lottery_signin_record'
+    id = db.Column(db.Integer, primary_key=True)
+    lottery_id = db.Column(db.Integer, db.ForeignKey('group_lottery.id'), nullable=False, index=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('bot_groups.id'), nullable=False, index=True)
+    user_id = db.Column(db.BigInteger, nullable=False, index=True)
+    signin_date = db.Column(db.Date, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    __table_args__ = (
+        db.UniqueConstraint('lottery_id', 'user_id', 'signin_date', name='_lottery_signin_user_day_uc'),
+        db.Index('ix_lottery_signin_lookup', 'lottery_id', 'group_id', 'user_id', 'signin_date'),
+    )
+    lottery = db.relationship('GroupLottery', backref='signin_records', lazy=True)
+    group = db.relationship('BotGroup', backref='lottery_signin_records', lazy=True)
 
 
 class InactiveUserSettings(db.Model):

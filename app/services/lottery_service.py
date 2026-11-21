@@ -86,7 +86,7 @@ def unfilled_prizes(prizes, awards):
 
 
 def validate_lottery_draw(lottery_type, participants, top_n_winners=1):
-    if lottery_type not in ('message_count', 'message_rank', 'random', 'points'):
+    if lottery_type not in ('message_count', 'message_rank', 'random', 'points', 'signin'):
         return False, f'未知的抽奖类型: {lottery_type}'
     if not 1 <= top_n_winners <= 100:
         return False, '获奖人数必须在1—100之间'
@@ -98,7 +98,7 @@ def validate_lottery_draw(lottery_type, participants, top_n_winners=1):
 def run_lottery_draw(lottery_type, participants, top_n_winners=1, fallback_pool=None):
     # Retain the obsolete parameter for callers of the pure helper, but NEVER
     # substitute an unrelated pool when no eligible participant exists.
-    if lottery_type in ('random', 'points'):
+    if lottery_type in ('random', 'points', 'signin'):
         return pick_winners_random([uid for uid,_ in participants], top_n_winners)
     if lottery_type == 'message_count':
         return pick_winners_weighted(participants, top_n_winners)

@@ -37,8 +37,8 @@
 
 {% call feature_description('group_lottery') %}
 <ul>
-    <li>在群内创建限时抽奖活动，成员通过发言或随机方式参与。</li>
-    <li>支持 <strong>积分抽奖</strong>（点击报名扣积分，每期一次，正常开奖未中奖不退款）、<strong>发言数量抽奖</strong>（发言越多中奖概率越高，加权不放回抽取）、<strong>发言排行抽奖</strong>（按发言从高到低分配奖品）和 <strong>随机抽奖</strong>（从本期活动期间发过言、开奖时仍在群内且未被封禁的用户中均匀抽取，不要求认证）四种方式。四种抽奖都可添加多个奖品，并分别设置中奖人数。</li>
+    <li>在群内创建限时抽奖活动，成员通过发言、签到或随机方式参与。</li>
+    <li>支持 <strong>积分抽奖</strong>、<strong>发言数量抽奖</strong>、<strong>发言排行抽奖</strong>、<strong>随机抽奖</strong>和<strong>签到抽奖</strong>（活动期间签到达到最低天数即可获得一次资格）。五种抽奖都可添加多个奖品，并分别设置中奖人数。</li>
     <li>支持<strong>手动开奖</strong>和<strong>定时自动开奖</strong>两种方式。</li>
     <li>创建好抽奖后，点击列表中的 <i class="fa-solid fa-bullhorn"></i> 按钮可立即将公告发送到 Telegram 群组。</li>
     <li>开奖后自动结束本期活动；公告发送失败会保留原结果重试，网络超时可能导致当前消息分段重复。</li>
@@ -69,7 +69,7 @@
                         <small class="text-muted list-text-preview" title="{{ (lottery.display_prizes or lottery.prize_description or '暂无奖品描述')|e }}">{{ lottery.display_prizes or lottery.prize_description or '暂无奖品描述' }}</small>
                     </td>
                     <td>
-                        {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else ('积分抽奖' if lottery.lottery_type == 'points' else '随机抽奖')) }}
+                        {{ '发言数量' if lottery.lottery_type == 'message_count' else ('发言排行' if lottery.lottery_type == 'message_rank' else ('积分抽奖' if lottery.lottery_type == 'points' else ('签到抽奖' if lottery.lottery_type == 'signin' else '随机抽奖'))) }}
                     </td>
                     <td class="hide-mobile">
                         {% set total = lottery.display_total if lottery.display_total is defined else lottery.top_n_winners %}
@@ -79,6 +79,8 @@
                         前{{ total }}名（同分按用户ID升序，奖品从高到低分配）
                         {% elif lottery.lottery_type == 'points' %}
                         报名 {{ lottery.points_cost }} 积分 · 共{{ total }}人
+                        {% elif lottery.lottery_type == 'signin' %}
+                        至少签到 {{ lottery.min_signin_days or 1 }}天 · 共{{ total }}人
                         {% else %}
                         共{{ total }}人 · 本期发言且开奖时仍在群内
                         {% endif %}
@@ -142,6 +144,7 @@
                         <option value="message_rank">🏆 发言排行抽奖</option>
                         <option value="random">🎲 随机抽奖</option>
                         <option value="points">💎 积分抽奖</option>
+                        <option value="signin">✅ 签到抽奖</option>
                     </select>
                 </div>
                 <div class="mb-3" id="points_cost_field" style="display:none;">
@@ -152,6 +155,11 @@
                 <div class="mb-3" id="min_messages_field">
                     <label class="form-label">最少发言数</label>
                     <input type="number" class="form-control" id="min_messages" value="10" min="1">
+                </div>
+                <div class="mb-3" id="min_signin_days_field" style="display:none;">
+                    <label class="form-label">最低签到天数</label>
+                    <input type="number" class="form-control" id="min_signin_days" value="1" min="1" max="100">
+                    <div class="form-text">活动期间每天最多计1次签到，达到该天数后获得一次抽奖资格。</div>
                 </div>
                 <div class="mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -204,6 +212,7 @@ function prizeRuleHint(type) {
     if (type === 'message_rank') return '排行抽奖：奖品从高到低分配，第一行对应排名最前的若干人。';
     if (type === 'message_count') return '发言加权：按发言数加权、不放回抽取，抽出顺序按奖品行依次分配。';
     if (type === 'points') return '积分抽奖：从已付款报名者中均匀不放回抽取，抽出顺序按奖品行依次分配。';
+    if (type === 'signin') return '签到抽奖：活动期间签到达到最低天数的用户均匀不放回抽取，每人最多一份。';
     return '随机抽奖：从合格用户中均匀不放回抽取，抽出顺序按奖品行依次分配。';
 }
 
@@ -211,6 +220,7 @@ function toggleLotteryFields() {
     const type = document.getElementById('lottery_type').value;
     document.getElementById('points_cost_field').style.display = type === 'points' ? 'block' : 'none';
     document.getElementById('min_messages_field').style.display = (type === 'message_count') ? 'block' : 'none';
+    document.getElementById('min_signin_days_field').style.display = type === 'signin' ? 'block' : 'none';
     document.getElementById('prize_rule_hint').textContent = prizeRuleHint(type);
 }
 
@@ -282,6 +292,7 @@ function showAddModal() {
     document.getElementById('lottery_name').value = '';
     document.getElementById('lottery_type').value = 'message_count';
     document.getElementById('min_messages').value = '10';
+    document.getElementById('min_signin_days').value = '1';
     document.getElementById('points_cost').value = '10';
     document.getElementById('start_time').value = '';
     document.getElementById('end_time').value = '';
@@ -301,6 +312,7 @@ function editLottery(id) {
     document.getElementById('lottery_name').value = lottery.lottery_name || '';
     document.getElementById('lottery_type').value = lottery.lottery_type || 'message_count';
     document.getElementById('min_messages').value = lottery.min_messages || 10;
+    document.getElementById('min_signin_days').value = lottery.min_signin_days || 1;
     document.getElementById('points_cost').value = lottery.points_cost || 10;
     document.getElementById('start_time').value = lottery.start_time || '';
     document.getElementById('end_time').value = lottery.end_time || '';
@@ -322,11 +334,12 @@ function saveLottery() {
     const start = document.getElementById('start_time').value;
     const end = document.getElementById('end_time').value;
     const minimum = Number(document.getElementById('min_messages').value);
+    const minSigninDays = Number(document.getElementById('min_signin_days').value);
     const pointsCost = Number(document.getElementById('points_cost').value);
     const prizes = collectPrizes();
     const winners = prizes.reduce((sum, prize) => sum + (Number.isInteger(prize.winner_count) ? prize.winner_count : 0), 0);
-    if (!Number.isInteger(pointsCost) || pointsCost < 1 || pointsCost > 1000000 || !start || !end || start >= end || !Number.isInteger(minimum) || minimum < 1 || minimum > 1000000 || !prizes.length || prizes.some(prize => !prize.name || !Number.isInteger(prize.winner_count) || prize.winner_count < 1 || prize.winner_count > 100) || winners < 1 || winners > 100) {
-        showToast('请填写合法起止时间；开奖晚于开始，发言门槛1—1000000，奖品名称不能为空，每项人数为正整数，总人数1—100', 'warning');
+    if (!Number.isInteger(pointsCost) || pointsCost < 1 || pointsCost > 1000000 || !start || !end || start >= end || !Number.isInteger(minimum) || minimum < 1 || minimum > 1000000 || !Number.isInteger(minSigninDays) || minSigninDays < 1 || minSigninDays > 100 || !prizes.length || prizes.some(prize => !prize.name || !Number.isInteger(prize.winner_count) || prize.winner_count < 1 || prize.winner_count > 100) || winners < 1 || winners > 100) {
+        showToast('请填写合法起止时间；发言门槛1—1000000，签到天数1—100，奖品名称不能为空，每项人数为正整数，总人数1—100', 'warning');
         return;
     }
     const data = {
@@ -335,6 +348,7 @@ function saveLottery() {
         lottery_name: lotteryName,
         lottery_type: document.getElementById('lottery_type').value,
         min_messages: minimum,
+        min_signin_days: minSigninDays,
         top_n_winners: winners,
         points_cost: pointsCost,
         prizes: prizes,

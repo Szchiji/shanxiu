@@ -560,6 +560,19 @@ def propagate_new_source_item(kind: str, source_item) -> int:
         if target is None:
             continue
         target_added, _ = upsert_linked_copies(kind, source_group, target, [snapshot])
+        if kind == KIND_SCHEDULED_MESSAGES and target_added:
+            # A newly-created target must enter the same delivery slot as the
+            # source. Recomputing from a second clock can otherwise leave the
+            # source due while the target waits for a later slot.
+            target_item = ConfigSyncLink.query.filter_by(
+                kind=kind,
+                source_item_id=source_item.id,
+                target_group_id=target.id,
+            ).order_by(ConfigSyncLink.id.desc()).first()
+            if target_item is not None:
+                copied = db.session.get(ScheduledMessage, target_item.target_item_id)
+                if copied is not None:
+                    copied.next_send_at = source_item.next_send_at
         added += target_added
     return added
 

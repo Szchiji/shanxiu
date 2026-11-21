@@ -436,12 +436,16 @@ class TestScheduledSync:
             'remark': '新增定时消息',
         })
         assert response.get_json()['status'] == 'ok'
+        new_source = ScheduledMessage.query.filter_by(
+            group_id=source.id, content='新增公告'
+        ).one()
         for target in (target_a, target_b):
             copied = ScheduledMessage.query.filter_by(
                 group_id=target.id, content='新增公告'
             ).one()
             assert copied.repeat_interval == 120
             assert copied.remark == '新增定时消息'
+            assert copied.next_send_at == new_source.next_send_at
 
 
 @pytest.mark.usefixtures('db')

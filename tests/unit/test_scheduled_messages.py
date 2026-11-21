@@ -93,6 +93,16 @@ def _sends_to(bot, chat_id):
     return [c for c in bot.send_message.await_args_list if str(c.kwargs.get('chat_id')) == str(chat_id)]
 
 
+def test_standalone_clone_scheduler_uses_its_context_bot(flask_app, monkeypatch):
+    from app.modules.core import routes
+
+    bot = _make_bot()
+    monkeypatch.setattr(routes.bot_clone_manager, 'active_clones', {})
+
+    assert routes._get_bot_for_clone(17, bot, context_clone_id=17) is bot
+    assert routes._get_bot_for_clone(17, bot, context_clone_id=18) is None
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------

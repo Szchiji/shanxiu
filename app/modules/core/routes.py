@@ -7825,7 +7825,7 @@ def logout():
 # 🤖 机器人逻辑 (核心)
 # =======================
 
-def _get_bot_for_clone(clone_id, default_bot):
+def _get_bot_for_clone(clone_id, default_bot, *, context_clone_id=None):
     """Return the correct Telegram Bot instance for a group.
 
     All periodic background jobs run on the main bot's scheduler.  For groups
@@ -7841,6 +7841,10 @@ def _get_bot_for_clone(clone_id, default_bot):
         registered but not currently running (caller should skip the group).
     """
     if clone_id is None:
+        return default_bot
+    # A standalone clone process does not populate the main process's
+    # active_clones registry; its own scheduler must use its context bot.
+    if context_clone_id is not None and clone_id == context_clone_id:
         return default_bot
     clone_info = bot_clone_manager.active_clones.get(clone_id)
     if clone_info:
@@ -8273,7 +8277,13 @@ async def check_scheduled_messages(context):
             message_thread_id = None if (msg_data.get('target_type') == 'channel' or (not msg_data.get('target_type') and msg_data.get('target_channel_id'))) else msg_data.get('message_thread_id')
 
             # Resolve which bot should send to this group
-            bot = _get_bot_for_clone(msg_data.get('clone_id'), context.bot)
+            application = getattr(context, 'application', None)
+            bot_data = getattr(application, 'bot_data', {}) or {}
+            bot = _get_bot_for_clone(
+                msg_data.get('clone_id'),
+                context.bot,
+                context_clone_id=bot_data.get('clone_id'),
+            )
             if bot is None:
                 _warn_clone_not_running_for_scheduled(msg_data.get('clone_id'), msg_data['id'])
                 continue
@@ -13009,10 +13019,17 @@ def setup_clone_handlers(app, flask_app, clone_id):
     app.add_handler(CommandHandler("checkin", cmd_checkin))  # 每日打卡
     app.add_handler(CommandHandler("signin", cmd_signin))  # 每日签到
 
-    # Note: Periodic background jobs are intentionally NOT registered here.
-    # All system-wide jobs (check_expired_users, check_scheduled_messages, etc.)
-    # are registered only on the main bot (see run_bot()). Registering them on
-    # every clone bot would cause each job to fire N+1 times per interval.
+    # The main process owns the in-process clone bots and runs the shared
+    # scheduler once. A standalone clone process has no main-process
+    # ``active_clones`` registry, so it must run its own scheduled-message
+    # checker; ``_get_bot_for_clone`` will bind that job to this clone's bot.
+    if is_clone_instance():
+        app.job_queue.run_repeating(
+            check_scheduled_messages,
+            interval=SCHEDULED_MESSAGE_CHECK_INTERVAL,
+            first=15,
+            name='scheduled_messages',
+        )
 
 
 async def start_all_clone_bots(flask_app):

@@ -3331,6 +3331,7 @@ def api_save_auto_reply():
     
     try:
         item_id = d.get('id')
+        is_new = not item_id
         if item_id:
             # 编辑现有规则
             item = AutoReply.query.get(item_id)
@@ -3373,8 +3374,16 @@ def api_save_auto_reply():
         item.delete_after = safe_int(d.get('delete_after'), 0)
         item.remark = d.get('remark', '').strip() or None
 
-        from app.services.config_sync_service import KIND_AUTO_REPLIES, propagate_source_item_fields
-        propagate_source_item_fields(KIND_AUTO_REPLIES, item)
+        from app.services.config_sync_service import (
+            KIND_AUTO_REPLIES,
+            propagate_new_source_item,
+            propagate_source_item_fields,
+        )
+        db.session.flush()
+        if is_new:
+            propagate_new_source_item(KIND_AUTO_REPLIES, item)
+        else:
+            propagate_source_item_fields(KIND_AUTO_REPLIES, item)
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:
@@ -3592,6 +3601,7 @@ def api_save_scheduled_message():
 
     try:
         item_id = d.get('id')
+        is_new = not item_id
         if item_id:
             # 编辑现有消息
             item = ScheduledMessage.query.get(item_id)
@@ -3655,12 +3665,20 @@ def api_save_scheduled_message():
             item.message_thread_id = None
 
         schedule_changed = old_schedule != (item.repeat_interval, item.start_time, item.stop_time)
-        from app.services.config_sync_service import KIND_SCHEDULED_MESSAGES, propagate_source_item_fields
-        propagate_source_item_fields(
+        from app.services.config_sync_service import (
             KIND_SCHEDULED_MESSAGES,
-            item,
-            reset_schedule=schedule_changed,
+            propagate_new_source_item,
+            propagate_source_item_fields,
         )
+        db.session.flush()
+        if is_new:
+            propagate_new_source_item(KIND_SCHEDULED_MESSAGES, item)
+        else:
+            propagate_source_item_fields(
+                KIND_SCHEDULED_MESSAGES,
+                item,
+                reset_schedule=schedule_changed,
+            )
         db.session.commit()
         return jsonify({'status':'ok'})
     except Exception as e:

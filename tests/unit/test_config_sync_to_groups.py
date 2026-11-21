@@ -261,6 +261,37 @@ class TestAutoReplySync:
         assert copied.delete_after == 8
         assert copied.remark == '已更新'
 
+    def test_adding_source_reply_propagates_to_all_existing_targets(self, db, admin):
+        source = _group(db, title='源', config={'auto_reply_open': True})
+        target_a = _group(db, title='目标甲', config={'auto_reply_open': False})
+        target_b = _group(db, title='目标乙', config={'auto_reply_open': False})
+        _reply(db, source.id, trigger_keyword='已有', content='已有内容')
+        assert _sync(admin, source.id, 'auto_replies', [target_a.id, target_b.id]).get_json()['status'] == 'ok'
+
+        response = admin.post('/core/api/save_auto_reply', json={
+            'group_id': source.id,
+            'trigger_keyword': '新增关键词',
+            'media_type': 'text',
+            'media_urls': [],
+            'content': '新增内容',
+            'links': '[]',
+            'delete_after': 0,
+            'remark': '新增备注',
+        })
+        assert response.get_json()['status'] == 'ok'
+        for target in (target_a, target_b):
+            copied = AutoReply.query.filter_by(
+                group_id=target.id, trigger_keyword='新增关键词'
+            ).one()
+            assert copied.content == '新增内容'
+            assert copied.remark == '新增备注'
+        new_source = AutoReply.query.filter_by(
+            group_id=source.id, trigger_keyword='新增关键词'
+        ).one()
+        assert ConfigSyncLink.query.filter_by(
+            kind='auto_replies', source_item_id=new_source.id
+        ).count() == 2
+
 
 @pytest.mark.usefixtures('db')
 class TestScheduledSync:
@@ -382,6 +413,35 @@ class TestScheduledSync:
         assert copied.content == '新公告'
         assert copied.last_sent_at == BASE_NOW
         assert copied.next_send_at == BASE_NOW.replace(hour=13)
+
+    def test_adding_source_schedule_propagates_to_all_existing_targets(self, db, admin):
+        source = _group(db, title='源', config={'scheduled_msg_open': True})
+        target_a = _group(db, title='目标甲', config={'scheduled_msg_open': False})
+        target_b = _group(db, title='目标乙', config={'scheduled_msg_open': False})
+        _sched(db, source.id, content='已有公告')
+        assert _sync(admin, source.id, 'scheduled_messages', [target_a.id, target_b.id]).get_json()['status'] == 'ok'
+
+        response = admin.post('/core/api/save_scheduled_message', json={
+            'group_id': source.id,
+            'media_type': 'text',
+            'media_urls': [],
+            'content': '新增公告',
+            'links': '[]',
+            'repeat_interval': 120,
+            'start_time': BASE_NOW.isoformat(),
+            'stop_time': None,
+            'delete_previous': False,
+            'auto_pin': False,
+            'target_type': 'group',
+            'remark': '新增定时消息',
+        })
+        assert response.get_json()['status'] == 'ok'
+        for target in (target_a, target_b):
+            copied = ScheduledMessage.query.filter_by(
+                group_id=target.id, content='新增公告'
+            ).one()
+            assert copied.repeat_interval == 120
+            assert copied.remark == '新增定时消息'
 
 
 @pytest.mark.usefixtures('db')

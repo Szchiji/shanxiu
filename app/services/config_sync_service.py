@@ -1,10 +1,11 @@
 """Copy auto-reply / scheduled-message config to other groups, with status follow.
 
 This is a unidirectional source→target link, not live message forwarding.
-First sync creates target rows and mapping records.  Later syncs update the
-already-linked rows instead of inserting duplicates.  Enable/pause of a source
-rule (and the source group's module switch) is propagated only to linked
-target rows; the target group's own module switch and native rules stay local.
+First sync creates target rows and mapping records.  Later source edits and
+new rules are automatically propagated to the already-linked targets, without
+inserting duplicates.  Enable/pause of a source rule (and the source group's
+module switch) is propagated only to linked target rows; native target rules
+stay local.
 """
 
 from __future__ import annotations
@@ -526,6 +527,41 @@ def propagate_source_item_fields(kind: str, source_item, *, reset_schedule: bool
                 item.is_active = want
         updated += 1
     return updated
+
+
+def propagate_new_source_item(kind: str, source_item) -> int:
+    """Copy a newly-created source rule to every existing sync target.
+
+    Existing links are discovered from any rule already synced from the same
+    source group.  ``upsert_linked_copies`` keeps this operation idempotent if
+    a request is retried or concurrent saves race with one another.
+    """
+    if source_item is None or source_item.id is None:
+        return 0
+    source_group = db.session.get(BotGroup, source_item.group_id)
+    if source_group is None:
+        return 0
+    target_ids = {
+        target_id for (target_id,) in db.session.query(ConfigSyncLink.target_group_id)
+        .filter_by(kind=kind, source_group_id=source_group.id)
+        .distinct()
+        .all()
+    }
+    if not target_ids:
+        return 0
+    snapshot = (
+        snapshot_auto_reply(source_item)
+        if kind == KIND_AUTO_REPLIES
+        else snapshot_scheduled_message(source_item)
+    )
+    added = 0
+    for target_id in target_ids:
+        target = db.session.get(BotGroup, target_id)
+        if target is None:
+            continue
+        target_added, _ = upsert_linked_copies(kind, source_group, target, [snapshot])
+        added += target_added
+    return added
 
 
 def propagate_source_group_master(kind: str, source_group: BotGroup) -> int:
